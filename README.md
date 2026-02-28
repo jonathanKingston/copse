@@ -1,4 +1,6 @@
-# Approval
+# copse
+
+Tools for managing agent-created PRs. Available at [copse.dev](https://copse.dev).
 
 Five commands for managing agent-created PRs:
 
@@ -13,10 +15,43 @@ Five commands for managing agent-created PRs:
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
 - Node.js 18+
 
+## Installation
+
+```bash
+npm install -g copse
+```
+
 ## Usage
 
+Run `copse` to see available commands:
+
+```bash
+copse
 ```
-approval <repo> [agent] [query] [--dry-run] [--all]
+
+Run `copse <command>` to see arguments for a specific command:
+
+```bash
+copse approval
+copse create-prs
+```
+
+### Tab Completion
+
+Enable bash tab completion by adding this to your `~/.bashrc` or `~/.bash_profile`:
+
+```bash
+eval "$(copse completion)"
+```
+
+## Commands
+
+### copse approval
+
+Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue).
+
+```
+copse approval <repo> [agent] [query] [--dry-run] [--all]
 ```
 
 | Argument | Description |
@@ -28,7 +63,7 @@ approval <repo> [agent] [query] [--dry-run] [--all]
 | `--mine` | Only your PRs (default) |
 | `--all` | Include PRs from all authors |
 
-## How PRs are matched
+#### How PRs are matched
 
 A PR matches when it:
 
@@ -39,34 +74,32 @@ A PR matches when it:
    - Has label `cursor`, `cursor-pr`, `claude`, or `claude-pr`
 4. **Query** – If provided, title or body contains the query (case insensitive)
 
-## Examples
+#### Examples
 
 ```bash
 # Enable merge when ready on all cursor PRs in acme/cool-project
-node index.js acme/cool-project cursor
+copse approval acme/cool-project cursor
 
 # Mark all claude PRs with "fix login" in title or body
-node index.js acme/cool-project claude "fix login"
+copse approval acme/cool-project claude "fix login"
 
 # Preview without making changes
-node index.js acme/cool-project cursor --dry-run
+copse approval acme/cool-project cursor --dry-run
 
 # Include PRs from all authors
-node index.js acme/cool-project cursor --all
+copse approval acme/cool-project cursor --all
 ```
 
-## Merge when ready
+#### Merge when ready
 
 Uses `gh pr merge --auto` to trigger the merge-queue/auto-merge action on matching PRs. The repo must have auto-merge and/or merge queue enabled in branch protection (Settings → Branches).
 
-## create-prs
+### copse create-prs
 
 Finds agent branches (`cursor/*`, `claude/*`) recently created or updated and creates PRs from them. PR title comes from the latest commit subject; PR body combines an optional template with the commit body (including co-authorship lines).
 
-### Usage
-
 ```
-create-prs <repo> <agent> [options]
+copse create-prs <repo> <agent> [options]
 ```
 
 | Argument | Description |
@@ -81,33 +114,31 @@ create-prs <repo> <agent> [options]
 | `--all` | Include branches from all authors |
 | `--dry-run` | Show branches and PRs that would be created |
 
-### Examples
+#### Examples
 
 ```bash
 # Create PRs from cursor branches (base: main, last 6 hours)
-create-prs acme/cool-project cursor
+copse create-prs acme/cool-project cursor
 
 # Target pr-releases/<branch> instead
-create-prs acme/cool-project claude --base pr-releases
+copse create-prs acme/cool-project claude --base pr-releases
 
 # Custom template and time window
-create-prs acme/cool-project cursor --template .github/PULL_REQUEST_TEMPLATE.md --hours 12
+copse create-prs acme/cool-project cursor --template .github/PULL_REQUEST_TEMPLATE.md --hours 12
 
 # Preview branches from last 48 hours
-create-prs acme/cool-project cursor --hours 48 --dry-run
+copse create-prs acme/cool-project cursor --hours 48 --dry-run
 
 # Include branches from all authors
-create-prs acme/cool-project cursor --all
+copse create-prs acme/cool-project cursor --all
 ```
 
-## pr-status
+### copse pr-status
 
 Lists open agent PRs and outlines their CI/test status: failed workflow runs and rerun counts.
 
-### Usage
-
 ```
-pr-status <repo> [agent] [options]
+copse pr-status <repo> [agent] [options]
 ```
 
 | Argument | Description |
@@ -117,28 +148,26 @@ pr-status <repo> [agent] [options]
 | `--mine` | Only your PRs (default) |
 | `--all` | Include PRs from all authors |
 
-### Examples
+#### Examples
 
 ```bash
 # List all your open agent PRs with test status
-pr-status acme/cool-project
+copse pr-status acme/cool-project
 
 # Filter by agent
-pr-status acme/cool-project cursor
-pr-status acme/cool-project claude --all
+copse pr-status acme/cool-project cursor
+copse pr-status acme/cool-project claude --all
 
 # Same as pr-status (npm test runs this)
-npm test acme/cool-project cursor
+npm test
 ```
 
-## rerun-failed
+### copse rerun-failed
 
 Finds recent agent branches (`cursor/*`, `claude/*`) and reruns any failed GitHub Actions workflow runs on them.
 
-### Usage
-
 ```
-rerun-failed <repo> <agent> [options]
+copse rerun-failed <repo> <agent> [options]
 ```
 
 | Argument | Description |
@@ -150,24 +179,22 @@ rerun-failed <repo> <agent> [options]
 | `--all` | Include branches from all authors |
 | `--dry-run` | Show branches and runs that would be rerun without triggering |
 
-### Examples
+#### Examples
 
 ```bash
 # Rerun failed tests on cursor branches from last 24 hours
-rerun-failed acme/cool-project cursor
+copse rerun-failed acme/cool-project cursor
 
 # Check claude branches from last 48 hours
-rerun-failed acme/cool-project claude --hours 48 --dry-run
+copse rerun-failed acme/cool-project claude --hours 48 --dry-run
 ```
 
-## update-main
+### copse update-main
 
 Merges the base branch (default: `main`) into open PR branches matching the repo and agent filter. Keeps PRs up to date with the latest main.
 
-### Usage
-
 ```
-update-main <repo> [agent] [options]
+copse update-main <repo> [agent] [options]
 ```
 
 | Argument | Description |
@@ -179,18 +206,18 @@ update-main <repo> [agent] [options]
 | `--all` | Include PRs from all authors |
 | `--dry-run` | Show PRs that would be updated without merging |
 
-### Examples
+#### Examples
 
 ```bash
 # Update all agent PRs with main
-update-main acme/cool-project
+copse update-main acme/cool-project
 
 # Update only cursor PRs
-update-main acme/cool-project cursor
+copse update-main acme/cool-project cursor
 
 # Preview without merging
-update-main acme/cool-project cursor --dry-run
+copse update-main acme/cool-project cursor --dry-run
 
 # Update all authors' PRs
-update-main acme/cool-project cursor --all
+copse update-main acme/cool-project cursor --all
 ```
