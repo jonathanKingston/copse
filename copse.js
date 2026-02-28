@@ -113,7 +113,12 @@ Arguments:`);
 
 function generateCompletion(shell) {
   const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
-  const opts = "--dry-run --all --mine --help";
+  const commandList = Object.keys(COMMANDS).join("|");
+  
+  const commonOpts = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const baseOpts = { "--base": "Base branch", ...commonOpts };
+  const templateOpts = { "--template": "PR template path", "--no-template": "Skip template", ...commonOpts };
+  const hoursOpts = { "--hours": "Time window in hours", ...commonOpts };
 
   if (shell === "zsh") {
     const subcmds = [
@@ -122,22 +127,17 @@ function generateCompletion(shell) {
     ]
       .map((s) => `'${s.replace(/'/g, "'\\''")}'`)
       .join(" ");
-    const optArgs = opts
-      .split(" ")
-      .map((o) => `'${o}'`)
+    
+    const formatOptArgs = (opts) => Object.entries(opts)
+      .map(([o, d]) => `'${o}[${d.replace(/'/g, "'\\''")}]'`)
       .join(" ");
-    const script = `#compdef copse cop cops
-# Zsh completion for copse (also completes cop/cops to copse)
+
+    const script = `#compdef copse
+# Zsh completion for copse
 
 _copse() {
   local state line
   typeset -A opt_args
-
-  # When completing command name (cop/cops → copse)
-  if [[ \$#words -eq 1 && "\${words[1]}" != copse ]]; then
-    _values 'command' 'copse[Tools for managing agent-created PRs]'
-    return
-  fi
 
   _arguments -C \\
     '1: :->subcmd' \\
@@ -149,15 +149,24 @@ _copse() {
       ;;
     args)
       case \$line[1] in
-        approval|create-prs|pr-status|rerun-failed|update-main)
-          _arguments ${optArgs}
+        approval|pr-status)
+          _arguments ${formatOptArgs(commonOpts)}
+          ;;
+        update-main)
+          _arguments ${formatOptArgs(baseOpts)}
+          ;;
+        create-prs)
+          _arguments ${formatOptArgs({ ...baseOpts, ...templateOpts })}
+          ;;
+        rerun-failed)
+          _arguments ${formatOptArgs(hoursOpts)}
           ;;
       esac
       ;;
   esac
 }
 
-compdef _copse copse cop cops
+compdef _copse copse
 
 # Usage: Add to your ~/.zshrc:
 #   eval "\\$(copse completion zsh)"
@@ -167,17 +176,13 @@ compdef _copse copse cop cops
   }
 
   // bash
-  const script = `# Bash completion for copse (also completes cop/cops to copse)
+  const script = `# Bash completion for copse
 _copse_completion() {
-    local cur commands
+    local cur prev commands
     COMPREPLY=()
     cur="\${COMP_WORDS[COMP_CWORD]}"
+    prev="\${COMP_WORDS[COMP_CWORD-1]}"
     commands="${commands}"
-
-    if [ $COMP_CWORD -eq 0 ]; then
-        COMPREPLY=( $(compgen -W "copse" -- "$cur") )
-        return 0
-    fi
 
     if [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
@@ -185,13 +190,13 @@ _copse_completion() {
     fi
 
     case "\${COMP_WORDS[1]}" in
-        approval|create-prs|pr-status|rerun-failed|update-main)
-            COMPREPLY=( $(compgen -W "${opts}" -- "$cur") )
+        ${commandList})
+            COMPREPLY=( $(compgen -W "--dry-run --all --mine --help" -- "$cur") )
             ;;
     esac
 }
 
-complete -F _copse_completion copse cop cops
+complete -F _copse_completion copse
 
 # Usage: Add to your ~/.bashrc or ~/.bash_profile:
 #   eval "\$(copse completion bash)"
@@ -212,8 +217,12 @@ function runCommand(command, args) {
     stdio: "inherit",
   });
 
-  child.on("exit", (code) => {
-    process.exit(code || 0);
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+    } else {
+      process.exit(code || 0);
+    }
   });
 }
 

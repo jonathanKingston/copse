@@ -19,6 +19,7 @@
  */
 
 import { execSync } from "child_process";
+import { getOriginRepo } from "../lib/utils.js";
 
 const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -41,19 +42,6 @@ const AGENT_PATTERNS = {
 
 function exec(cmd, options = {}) {
   return execSync(cmd, { encoding: "utf-8", ...options });
-}
-
-function getOriginRepo() {
-  try {
-    const url = exec("git remote get-url origin", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "ignore"],
-    }).trim();
-    const match = url.match(/github\.com[:/]([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+?)(?:\.git)?$/);
-    return match ? match[1] : null;
-  } catch {
-    return null;
-  }
 }
 
 function getCurrentUser() {

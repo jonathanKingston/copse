@@ -54,9 +54,10 @@ eval "$(copse completion bash)"
 
 Or use `eval "$(copse completion)"` to auto-detect your shell from `$SHELL`.
 
-Apply the change by sourcing your config or opening a new terminal:
+Apply the change by opening a new terminal or sourcing your config:
 
 ```bash
+# Open a new terminal (recommended), or:
 source ~/.zshrc   # for zsh
 source ~/.bashrc  # for bash
 ```
@@ -65,7 +66,6 @@ source ~/.bashrc  # for bash
 
 | Type this | Tab completes to |
 |-----------|------------------|
-| `cop` or `cops` | `copse` |
 | `copse pr-` | `pr-status` |
 | `copse ` (with space) | subcommands: `approval`, `create-prs`, `pr-status`, etc. |
 | After a subcommand | `--dry-run`, `--all`, `--mine`, `--help` |
