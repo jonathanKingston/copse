@@ -3,11 +3,13 @@
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import type { CommandDef } from "./lib/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const COMMANDS = {
+// File references use .js extensions — these point to the tsc-compiled output in dist/
+const COMMANDS: Record<string, CommandDef> = {
   approval: {
     file: "approval.js",
     description: "Triggers merge when ready on matching PRs",
@@ -71,7 +73,7 @@ const COMMANDS = {
   },
 };
 
-function showHelp() {
+function showHelp(): void {
   console.log(`copse - Tools for managing agent-created PRs
 
 Usage: copse <command> [arguments]
@@ -92,7 +94,7 @@ Tab completion: eval "\$(copse completion)"   # or "copse completion zsh" for zs
 `);
 }
 
-function showCommandHelp(command) {
+function showCommandHelp(command: string): void {
   const cmd = COMMANDS[command];
   if (!cmd) {
     console.error(`Unknown command: ${command}`);
@@ -112,15 +114,13 @@ Arguments:`);
   console.log();
 }
 
-function generateCompletion(shell) {
+function generateCompletion(shell: "bash" | "zsh"): void {
   const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
-  const commandList = Object.keys(COMMANDS).join("|");
   
-  const commonOpts = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
-  const baseOpts = { "--base": "Base branch", ...commonOpts };
-  const hoursOpts = { "--hours": "Time window in hours", ...commonOpts };
-  const createPrsOpts = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
-  const rerunFailedOpts = hoursOpts;
+  const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
+  const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
+  const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };
 
   if (shell === "zsh") {
     const subcmds = [
@@ -130,7 +130,7 @@ function generateCompletion(shell) {
       .map((s) => `'${s.replace(/'/g, "'\\''")}'`)
       .join(" ");
     
-    const formatOptArgs = (opts) => Object.entries(opts)
+    const formatOptArgs = (opts: Record<string, string>): string => Object.entries(opts)
       .map(([o, d]) => `'${o}[${d.replace(/'/g, "'\\''")}]'`)
       .join(" ");
 
@@ -178,7 +178,7 @@ compdef _copse copse
   }
 
   // bash
-  const formatBashOpts = (opts) => Object.keys(opts).join(" ");
+  const formatBashOpts = (opts: Record<string, string>): string => Object.keys(opts).join(" ");
   
   const script = `# Bash completion for copse
 _copse_completion() {
@@ -216,7 +216,7 @@ complete -F _copse_completion copse
   console.log(script);
 }
 
-function runCommand(command, args) {
+function runCommand(command: string, args: string[]): void {
   const cmd = COMMANDS[command];
   if (!cmd) {
     console.error(`Unknown command: ${command}`);
@@ -238,7 +238,7 @@ function runCommand(command, args) {
   });
 }
 
-function main() {
+function main(): void {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {

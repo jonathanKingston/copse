@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Triggers "merge when ready" on PRs matching repo, agent filter, and optional query.
  * Uses gh pr merge --auto to enable auto-merge or add PRs to the merge queue.
@@ -18,57 +16,13 @@
  *   - Optionally contain the query in title or body
  */
 
-import { execSync } from "child_process";
 import { getOriginRepo } from "../lib/utils.js";
+import type { PR, ExecError } from "../lib/types.js";
+import {
+  REPO_PATTERN, validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+} from "../lib/gh.js";
 
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo) {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS = {
-  cursor: {
-    branch: /cursor/i,
-    labels: ["cursor", "cursor-pr"],
-  },
-  claude: {
-    branch: /claude/i,
-    labels: ["claude", "claude-pr"],
-  },
-};
-
-function exec(cmd, options = {}) {
-  return execSync(cmd, { encoding: "utf-8", ...options });
-}
-
-function getCurrentUser() {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-function listOpenPRs(repo) {
-  const out = exec(
-    `gh pr list --repo ${repo} --state open --limit 200 --json number,headRefName,labels,title,body,author`
-  );
-  return JSON.parse(out);
-}
-
-function matchesAgent(pr, agent) {
-  if (agent) {
-    const pattern = AGENT_PATTERNS[agent];
-    if (!pattern) return false;
-    const branchMatch = pattern.branch.test(pr.headRefName);
-    const labelNames = (pr.labels || []).map((l) => l.name?.toLowerCase());
-    const labelMatch = pattern.labels.some((l) => labelNames.includes(l));
-    return branchMatch || labelMatch;
-  }
-  return Object.keys(AGENT_PATTERNS).some((a) => matchesAgent(pr, a));
-}
-
-function matchesQuery(pr, query) {
+function matchesQuery(pr: PR, query: string | null): boolean {
   if (!query) return true;
   const q = query.toLowerCase();
   const title = (pr.title || "").toLowerCase();
@@ -76,19 +30,20 @@ function matchesQuery(pr, query) {
   return title.includes(q) || body.includes(q);
 }
 
-function formatGhError(e, context = "") {
-  const stderr = e.stderr ?? e.output?.[2] ?? "";
+function formatGhError(e: ExecError, context: string = ""): string {
+  const stderr = e.stderr ?? (e.output?.[2] ?? "");
   const msg = (stderr || e.message || "").trim();
   const prefix = context ? `${context}: ` : "";
   return prefix + (msg || "Unknown error");
 }
 
-function enableMergeWhenReady(repo, prNumber) {
+function enableMergeWhenReady(repo: string, prNumber: number): boolean {
   try {
-    exec(`gh pr merge --repo ${repo} ${prNumber} --auto`);
+    gh("pr", "merge", "--repo", repo, String(prNumber), "--auto");
     return true;
-  } catch (e) {
-    const msg = (e.stderr || e.output?.[2] || e.message || "").toLowerCase();
+  } catch (e: unknown) {
+    const err = e as ExecError;
+    const msg = (err.stderr || err.output?.[2] || err.message || "").toLowerCase();
     if (
       (msg.includes("already") && msg.includes("auto")) ||
       msg.includes("already in") ||
@@ -101,11 +56,11 @@ function enableMergeWhenReady(repo, prNumber) {
         `Cannot enable merge when ready on #${prNumber}: PR is still in draft. Mark it as ready for review first.`
       );
     }
-    throw new Error(formatGhError(e, `gh pr merge failed for #${prNumber}`));
+    throw new Error(formatGhError(err, `gh pr merge failed for #${prNumber}`));
   }
 }
 
-function main() {
+function main(): void {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const all = args.includes("--all");
@@ -113,9 +68,9 @@ function main() {
     (a) => !["--dry-run", "--all", "--mine"].includes(a)
   );
 
-  let repo;
-  let agent = null;
-  let query = null;
+  let repo: string | undefined;
+  let agent: string | null = null;
+  let query: string | null = null;
 
   if (filtered.length >= 1 && REPO_PATTERN.test(filtered[0])) {
     repo = filtered[0];
@@ -126,7 +81,7 @@ function main() {
       query = filtered[1] ?? null;
     }
   } else {
-    repo = getOriginRepo();
+    repo = getOriginRepo() ?? undefined;
     if (!repo) {
       console.error(`Usage: approval [repo] [agent] [query] [--dry-run] [--all]
 
@@ -160,7 +115,7 @@ Examples:
   const agentLower = agent;
   const mineOnly = !all;
 
-  let currentUser = null;
+  let currentUser: string | null = null;
   if (mineOnly) {
     currentUser = getCurrentUser();
     console.error(
@@ -171,7 +126,7 @@ Examples:
       `Fetching open PRs from ${repo}${agentLower ? ` (agent: ${agentLower})` : " (cursor + claude)"} (all authors)...`
     );
   }
-  const prs = listOpenPRs(repo);
+  const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "body", "author"]);
 
   const matching = prs.filter((pr) => {
     if (!matchesAgent(pr, agentLower) || !matchesQuery(pr, query)) return false;
@@ -213,7 +168,7 @@ Examples:
 
 try {
   main();
-} catch (e) {
-  console.error(`\x1b[31merror\x1b[0m ${e.message}`);
+} catch (e: unknown) {
+  console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
   process.exit(1);
 }

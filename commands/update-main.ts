@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Merges main into open PR branches matching repo and agent filter.
  * Keeps PRs up to date with the latest main.
@@ -7,72 +5,27 @@
  * Usage: update-main <repo> <agent> [options]
  */
 
-import { execSync } from "child_process";
+import type { ExecError, MergeResult } from "../lib/types.js";
+import {
+  validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+} from "../lib/gh.js";
 
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo) {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS = {
-  cursor: {
-    branch: /cursor/i,
-    labels: ["cursor", "cursor-pr"],
-  },
-  claude: {
-    branch: /claude/i,
-    labels: ["claude", "claude-pr"],
-  },
-};
-
-function exec(cmd, options = {}) {
-  return execSync(cmd, { encoding: "utf-8", ...options });
-}
-
-function getCurrentUser() {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-function listOpenPRs(repo) {
-  const out = exec(
-    `gh pr list --repo ${repo} --state open --limit 200 --json number,headRefName,labels,title,author`
-  );
-  return JSON.parse(out);
-}
-
-function matchesAgent(pr, agent) {
-  if (agent) {
-    const pattern = AGENT_PATTERNS[agent];
-    if (!pattern) return false;
-    const branchMatch = pattern.branch.test(pr.headRefName);
-    const labelNames = (pr.labels || []).map((l) => l.name?.toLowerCase());
-    const labelMatch = pattern.labels.some((l) => labelNames.includes(l));
-    return branchMatch || labelMatch;
-  }
-  return Object.keys(AGENT_PATTERNS).some((a) => matchesAgent(pr, a));
-}
-
-function mergeMainIntoBranch(repo, headRef, baseRef, dryRun) {
+function mergeMainIntoBranch(repo: string, headRef: string, baseRef: string, dryRun: boolean): MergeResult {
   if (dryRun) return { ok: true, skipped: true };
   try {
-    exec(
-      `gh api repos/${repo}/merges -f base=${headRef} -f head=${baseRef}`
-    );
+    gh("api", `repos/${repo}/merges`, "-f", `base=${headRef}`, "-f", `head=${baseRef}`);
     return { ok: true };
-  } catch (e) {
-    const msg = (e.stderr || e.message || "").toLowerCase();
+  } catch (e: unknown) {
+    const err = e as ExecError;
+    const msg = (err.stderr || err.message || "").toLowerCase();
     if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
       return { ok: true, alreadyUpToDate: true };
     }
-    return { ok: false, error: e.message };
+    return { ok: false, error: err.message };
   }
 }
 
-function main() {
+function main(): void {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const all = args.includes("--all");
@@ -103,7 +56,7 @@ Examples:
 
   const repo = filtered[0];
   validateRepo(repo);
-  let agent = null;
+  let agent: string | null = null;
   let rest = filtered.slice(1);
 
   if (rest.length >= 1 && !rest[0].startsWith("--") && ["cursor", "claude"].includes(rest[0].toLowerCase())) {
@@ -126,7 +79,7 @@ Examples:
 
   const agentLower = agent;
 
-  let currentUser = null;
+  let currentUser: string | null = null;
   if (mineOnly) {
     currentUser = getCurrentUser();
     console.error(
@@ -137,7 +90,7 @@ Examples:
       `Fetching open PRs from ${repo}${agentLower ? ` (agent: ${agentLower})` : " (cursor + claude)"} (all authors)...`
     );
   }
-  const prs = listOpenPRs(repo);
+  const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "author"]);
   const matching = prs.filter((pr) => {
     if (!matchesAgent(pr, agentLower)) return false;
     if (mineOnly) {

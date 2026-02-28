@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Lists open agent PRs and their test/CI status: failed workflow runs and reruns.
  *
@@ -7,70 +5,29 @@
  *        Omit repo when run inside a git repo to use origin remote.
  */
 
-import { execSync } from "child_process";
 import { getOriginRepo } from "../lib/utils.js";
+import type { WorkflowRun } from "../lib/types.js";
+import {
+  REPO_PATTERN, validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+} from "../lib/gh.js";
 
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo) {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS = {
-  cursor: {
-    branch: /cursor/i,
-    labels: ["cursor", "cursor-pr"],
-  },
-  claude: {
-    branch: /claude/i,
-    labels: ["claude", "claude-pr"],
-  },
-};
-
-function exec(cmd, options = {}) {
-  return execSync(cmd, { encoding: "utf-8", ...options });
-}
-
-function getCurrentUser() {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-function listOpenPRs(repo) {
-  const out = exec(
-    `gh pr list --repo ${repo} --state open --limit 200 --json number,headRefName,labels,title,author`
-  );
-  return JSON.parse(out);
-}
-
-function matchesAgent(pr, agent) {
-  if (agent) {
-    const pattern = AGENT_PATTERNS[agent];
-    if (!pattern) return false;
-    const branchMatch = pattern.branch.test(pr.headRefName);
-    const labelNames = (pr.labels || []).map((l) => l.name?.toLowerCase());
-    const labelMatch = pattern.labels.some((l) => labelNames.includes(l));
-    return branchMatch || labelMatch;
-  }
-  return Object.keys(AGENT_PATTERNS).some((a) => matchesAgent(pr, a));
-}
-
-function listWorkflowRuns(repo, branch) {
+function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
   try {
-    const branchEsc = branch.replace(/"/g, '\\"');
-    const out = exec(
-      `gh run list --repo ${repo} --branch "${branchEsc}" --limit 100 --json databaseId,name,conclusion,attempt,status,displayTitle`
+    const out = gh(
+      "run", "list",
+      "--repo", repo,
+      "--branch", branch,
+      "--limit", "100",
+      "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
     );
     const runs = JSON.parse(out || "[]");
-    return Array.isArray(runs) ? runs : [];
-  } catch (e) {
+    return Array.isArray(runs) ? (runs as WorkflowRun[]) : [];
+  } catch {
     return [];
   }
 }
 
-function main() {
+function main(): void {
   const args = process.argv.slice(2);
   const all = args.includes("--all");
   const filtered = args.filter((a) => !["--all", "--mine"].includes(a));
@@ -92,15 +49,15 @@ Examples:
   pr-status acme/cool-project claude --all
 `;
 
-  let repo;
-  let agent = null;
-  let afterRepo;
+  let repo: string | undefined;
+  let agent: string | null = null;
+  let afterRepo: string[];
 
   if (filtered.length >= 1 && REPO_PATTERN.test(filtered[0])) {
     repo = filtered[0];
     afterRepo = filtered.slice(1);
   } else {
-    repo = getOriginRepo();
+    repo = getOriginRepo() ?? undefined;
     if (!repo) {
       console.error(help);
       process.exit(1);
@@ -119,7 +76,7 @@ Examples:
   validateRepo(repo);
 
   const mineOnly = !all;
-  let currentUser = null;
+  let currentUser: string | null = null;
   if (mineOnly) {
     currentUser = getCurrentUser();
     console.error(
@@ -131,7 +88,7 @@ Examples:
     );
   }
 
-  const prs = listOpenPRs(repo);
+  const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "author"]);
   const matching = prs.filter((pr) => {
     if (!matchesAgent(pr, agent)) return false;
     if (mineOnly) {
@@ -169,13 +126,13 @@ Examples:
         console.log(`  CI: ${lastSuccess ? "passing" : "no runs"}`);
       }
     } else {
-      const byWorkflow = new Map();
+      const byWorkflow = new Map<string, WorkflowRun[]>();
       for (const r of failed) {
         const key = r.name || r.displayTitle || `Run #${r.databaseId}`;
         if (!byWorkflow.has(key)) {
           byWorkflow.set(key, []);
         }
-        byWorkflow.get(key).push(r);
+        byWorkflow.get(key)!.push(r);
       }
       for (const [workflow, workflowRuns] of byWorkflow) {
         const attempts = workflowRuns

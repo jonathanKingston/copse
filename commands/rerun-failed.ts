@@ -1,46 +1,19 @@
-#!/usr/bin/env node
-
 /**
  * Finds recent agent branches (cursor/*, claude/*) and reruns failed workflow runs.
  *
  * Usage: rerun-failed <repo> <agent> [options]
  */
 
-import { execSync } from "child_process";
+import type { WorkflowRun } from "../lib/types.js";
+import {
+  validateRepo, gh, getCurrentUser, AGENT_BRANCH_PATTERNS, listBranches,
+} from "../lib/gh.js";
 
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo) {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS = {
-  cursor: /^cursor\//i,
-  claude: /^claude\//i,
-};
-
-function exec(cmd, options = {}) {
-  return execSync(cmd, { encoding: "utf-8", ...options });
-}
-
-function listBranches(repo) {
-  const out = exec(
-    `gh api "repos/${repo}/branches" --paginate -q '.[].name'`
-  );
-  return out.trim() ? out.trim().split("\n") : [];
-}
-
-function getCurrentUser() {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-function getLatestCommitInfo(repo, branchRef) {
+function getLatestCommitInfo(repo: string, branchRef: string): { date: Date | null; authorLogin: string } {
   const ref = encodeURIComponent(branchRef);
-  const out = exec(
-    `gh api "repos/${repo}/commits/${ref}" -q '.commit.author.date + "\x01" + (.author.login // "")'`
+  const out = gh(
+    "api", `repos/${repo}/commits/${ref}`,
+    "-q", '.commit.author.date + "\u0001" + (.author.login // "")'
   );
   const [dateStr, authorLogin] = out.trim().split("\x01");
   return {
@@ -49,29 +22,34 @@ function getLatestCommitInfo(repo, branchRef) {
   };
 }
 
-function listFailedRuns(repo, branch) {
+function listFailedRuns(repo: string, branch: string): WorkflowRun[] {
   try {
-    const out = exec(
-      `gh run list --repo ${repo} --branch "${branch.replace(/"/g, '\\"')}" --status failure --limit 50 --json databaseId,name,conclusion`
+    const out = gh(
+      "run", "list",
+      "--repo", repo,
+      "--branch", branch,
+      "--status", "failure",
+      "--limit", "50",
+      "--json", "databaseId,name,conclusion"
     );
     const runs = JSON.parse(out || "[]");
-    return Array.isArray(runs) ? runs : [];
-  } catch (e) {
+    return Array.isArray(runs) ? (runs as WorkflowRun[]) : [];
+  } catch {
     return [];
   }
 }
 
-function rerunWorkflow(repo, runId, dryRun) {
+function rerunWorkflow(repo: string, runId: number, dryRun: boolean): boolean {
   if (dryRun) return true;
   try {
-    exec(`gh run rerun ${runId} --repo ${repo} --failed`);
+    gh("run", "rerun", String(runId), "--repo", repo, "--failed");
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
 
-function main() {
+function main(): void {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const all = args.includes("--all");
@@ -126,12 +104,12 @@ Examples:
     }
   }
 
-  let currentUser = null;
+  let currentUser: string | null = null;
   if (mineOnly) {
     currentUser = getCurrentUser();
   }
 
-  const pattern = AGENT_PATTERNS[agent.toLowerCase()];
+  const pattern = AGENT_BRANCH_PATTERNS[agent.toLowerCase()];
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
   if (mineOnly) {
@@ -147,7 +125,7 @@ Examples:
     process.exit(0);
   }
 
-  const recentBranches = [];
+  const recentBranches: string[] = [];
   for (const branch of agentBranches) {
     try {
       const { date, authorLogin } = getLatestCommitInfo(repo, branch);
@@ -159,8 +137,8 @@ Examples:
         }
       }
       recentBranches.push(branch);
-    } catch (e) {
-      console.error(`  Skipping ${branch}: ${e.message}`);
+    } catch (e: unknown) {
+      console.error(`  Skipping ${branch}: ${(e as Error).message}`);
     }
   }
 

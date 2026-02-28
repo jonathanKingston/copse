@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Finds agent branches (cursor/*, claude/*) recently created/updated and creates PRs from them.
  *
@@ -13,55 +11,23 @@
  *   - claude/fix-any-overlay-messages-bINaq → base: pr-releases/claude/fix-any-overlay-messages-bINaq
  */
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import {
+  validateRepo, gh, getCurrentUser, AGENT_BRANCH_PATTERNS, listBranches,
+} from "../lib/gh.js";
 
 const DEFAULT_TEMPLATE_URL =
   "https://raw.githubusercontent.com/duckduckgo/content-scope-scripts/main/.github/pull_request_template.md";
 
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo) {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS = {
-  cursor: /^cursor\//i,
-  claude: /^claude\//i,
-};
-
-function exec(cmd, options = {}) {
-  return execSync(cmd, { encoding: "utf-8", ...options });
-}
-
-function listBranches(repo) {
-  const out = exec(
-    `gh api "repos/${repo}/branches" --paginate -q '.[].name'`
-  );
-  return out.trim() ? out.trim().split("\n") : [];
-}
-
-function listOpenPRHeadBranches(repo) {
-  const out = exec(
-    `gh pr list --repo ${repo} --state open --limit 500 --json headRefName -q '.[].headRefName'`
-  );
-  return out.trim() ? out.trim().split("\n") : [];
-}
-
 const COMMIT_DELIM = "\x01";
 
-function getCurrentUser() {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-function getLatestCommit(repo, branchRef) {
+function getLatestCommit(repo: string, branchRef: string): { message: string; date: Date | null; authorLogin: string } {
   const ref = encodeURIComponent(branchRef);
-  const out = exec(
-    `gh api "repos/${repo}/commits/${ref}" -q '.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")'`
+  const out = gh(
+    "api", `repos/${repo}/commits/${ref}`,
+    "-q", `.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`
   );
   const parts = out.trim().split(COMMIT_DELIM);
   const [message, dateStr, authorLogin] = parts;
@@ -72,26 +38,38 @@ function getLatestCommit(repo, branchRef) {
   };
 }
 
-function parseCommitMessage(message) {
+function listOpenPRHeadBranches(repo: string): string[] {
+  const out = gh(
+    "pr", "list",
+    "--repo", repo,
+    "--state", "open",
+    "--limit", "500",
+    "--json", "headRefName",
+    "-q", ".[].headRefName"
+  );
+  return out.trim() ? out.trim().split("\n") : [];
+}
+
+function parseCommitMessage(message: string): { title: string; body: string } {
   const lines = (message || "").split("\n");
   const title = (lines[0] || "").trim();
   const body = lines.slice(1).join("\n").trim();
   return { title, body };
 }
 
-async function fetchTemplate(url) {
+async function fetchTemplate(url: string): Promise<string | null> {
   const res = await fetch(url);
   if (!res.ok) return null;
   return (await res.text()).trim();
 }
 
-async function resolveTemplate(templatePath) {
+async function resolveTemplate(templatePath: string): Promise<string> {
   let body = "";
   if (templatePath) {
     try {
       body = readFileSync(resolve(templatePath), "utf-8").trim();
-    } catch (e) {
-      if (e.code !== "ENOENT") throw e;
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       console.error(`Warning: template file not found: ${templatePath}`);
     }
   }
@@ -101,7 +79,7 @@ async function resolveTemplate(templatePath) {
   return body;
 }
 
-function buildPRBody(templateContent, commitBody) {
+function buildPRBody(templateContent: string, commitBody: string): string | undefined {
   if (commitBody) {
     return templateContent
       ? `${templateContent}\n\n---\n\n${commitBody}`
@@ -110,32 +88,30 @@ function buildPRBody(templateContent, commitBody) {
   return templateContent || undefined;
 }
 
-function escapeShell(s) {
-  return (s || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function createPR(repo, headBranch, baseBranch, title, body, dryRun) {
+function createPR(repo: string, headBranch: string, baseBranch: string, title: string, body: string | undefined, dryRun: boolean): void {
   if (dryRun) {
     console.log(
       `Would create PR: ${headBranch} → ${baseBranch}\n  Title: ${title}`
     );
-    return null;
+    return;
   }
-  const cmd = [
-    "gh pr create",
-    `--repo ${repo}`,
-    `--base "${escapeShell(baseBranch)}"`,
-    `--head "${escapeShell(headBranch)}"`,
-    `--title "${escapeShell(title || "Update")}"`,
-    body ? "--body-file -" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  exec(cmd, body ? { input: body } : {});
-  return true;
+  const args = [
+    "pr", "create",
+    "--repo", repo,
+    "--base", baseBranch,
+    "--head", headBranch,
+    "--title", title || "Update",
+  ];
+  if (body) {
+    args.push("--body-file", "-");
+  }
+  execFileSync("gh", args, {
+    encoding: "utf-8",
+    ...(body ? { input: body } : {}),
+  });
 }
 
-async function main() {
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const all = args.includes("--all");
@@ -177,7 +153,7 @@ Examples:
   }
 
   let baseBranch = "main";
-  let templatePath = ".github/PULL_REQUEST_TEMPLATE.md";
+  let templatePath: string | null = ".github/PULL_REQUEST_TEMPLATE.md";
   let hours = 6;
   let mineOnly = true;
 
@@ -202,13 +178,13 @@ Examples:
     }
   }
 
-  let currentUser = null;
+  let currentUser: string | null = null;
   if (mineOnly) {
     currentUser = getCurrentUser();
     console.error(`Filtering to your branches (@${currentUser})`);
   }
 
-  const pattern = AGENT_PATTERNS[agent.toLowerCase()];
+  const pattern = AGENT_BRANCH_PATTERNS[agent.toLowerCase()];
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
   console.error(`Fetching branches from ${repo}...`);
@@ -223,7 +199,7 @@ Examples:
   console.error(`Fetching open PR head branches...`);
   const prHeads = new Set(listOpenPRHeadBranches(repo));
 
-  const withCommits = [];
+  const withCommits: { branch: string; message: string }[] = [];
   for (const branch of agentBranches) {
     if (prHeads.has(branch)) {
       console.error(`  Skipping ${branch} (PR already exists)`);
@@ -242,8 +218,8 @@ Examples:
         }
       }
       withCommits.push({ branch, message });
-    } catch (e) {
-      console.error(`  Skipping ${branch}: ${e.message}`);
+    } catch (e: unknown) {
+      console.error(`  Skipping ${branch}: ${(e as Error).message}`);
     }
   }
 
@@ -276,8 +252,8 @@ Examples:
       try {
         createPR(repo, branch, base, title, prBody, false);
         console.log(`Created PR: ${branch} → ${base}`);
-      } catch (e) {
-        console.error(`Failed to create PR for ${branch}: ${e.message}`);
+      } catch (e: unknown) {
+        console.error(`Failed to create PR for ${branch}: ${(e as Error).message}`);
         process.exit(1);
       }
     }
@@ -286,7 +262,7 @@ Examples:
   console.error(dryRun ? "(dry run - no PRs created)" : "Done.");
 }
 
-main().catch((e) => {
+main().catch((e: unknown) => {
   console.error(e);
   process.exit(1);
 });
