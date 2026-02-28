@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Triggers "merge when ready" on PRs matching repo, agent filter, and optional query.
  * Uses gh pr merge --auto to enable auto-merge or add PRs to the merge queue.
@@ -18,56 +16,11 @@
  *   - Optionally contain the query in title or body
  */
 
-import { execSync, type ExecSyncOptions } from "child_process";
 import { getOriginRepo } from "../lib/utils.js";
-import type { PR, AgentPatternWithLabels } from "../lib/types.js";
-
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo: string): void {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS: Record<string, AgentPatternWithLabels> = {
-  cursor: {
-    branch: /cursor/i,
-    labels: ["cursor", "cursor-pr"],
-  },
-  claude: {
-    branch: /claude/i,
-    labels: ["claude", "claude-pr"],
-  },
-};
-
-function exec(cmd: string, options: ExecSyncOptions = {}): string {
-  return execSync(cmd, { encoding: "utf-8", ...options }) as string;
-}
-
-function getCurrentUser(): string {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-function listOpenPRs(repo: string): PR[] {
-  const out = exec(
-    `gh pr list --repo ${repo} --state open --limit 200 --json number,headRefName,labels,title,body,author`
-  );
-  return JSON.parse(out) as PR[];
-}
-
-function matchesAgent(pr: PR, agent: string | null): boolean {
-  if (agent) {
-    const pattern = AGENT_PATTERNS[agent];
-    if (!pattern) return false;
-    const branchMatch = pattern.branch.test(pr.headRefName);
-    const labelNames = (pr.labels || []).map((l) => l.name?.toLowerCase());
-    const labelMatch = pattern.labels.some((l) => labelNames.includes(l));
-    return branchMatch || labelMatch;
-  }
-  return Object.keys(AGENT_PATTERNS).some((a) => matchesAgent(pr, a));
-}
+import type { PR, ExecError } from "../lib/types.js";
+import {
+  REPO_PATTERN, validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+} from "../lib/gh.js";
 
 function matchesQuery(pr: PR, query: string | null): boolean {
   if (!query) return true;
@@ -75,12 +28,6 @@ function matchesQuery(pr: PR, query: string | null): boolean {
   const title = (pr.title || "").toLowerCase();
   const body = (pr.body || "").toLowerCase();
   return title.includes(q) || body.includes(q);
-}
-
-interface ExecError {
-  stderr?: string;
-  output?: (string | null)[];
-  message?: string;
 }
 
 function formatGhError(e: ExecError, context: string = ""): string {
@@ -92,7 +39,7 @@ function formatGhError(e: ExecError, context: string = ""): string {
 
 function enableMergeWhenReady(repo: string, prNumber: number): boolean {
   try {
-    exec(`gh pr merge --repo ${repo} ${prNumber} --auto`);
+    gh("pr", "merge", "--repo", repo, String(prNumber), "--auto");
     return true;
   } catch (e: unknown) {
     const err = e as ExecError;
@@ -179,7 +126,7 @@ Examples:
       `Fetching open PRs from ${repo}${agentLower ? ` (agent: ${agentLower})` : " (cursor + claude)"} (all authors)...`
     );
   }
-  const prs = listOpenPRs(repo);
+  const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "body", "author"]);
 
   const matching = prs.filter((pr) => {
     if (!matchesAgent(pr, agentLower) || !matchesQuery(pr, query)) return false;

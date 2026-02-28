@@ -28,6 +28,12 @@ export interface MergeResult {
   error?: string;
 }
 
+export interface ExecError {
+  stderr?: string;
+  output?: (string | null)[];
+  message?: string;
+}
+
 export interface CommandArg {
   name: string;
   description: string;

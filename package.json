@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "pretest": "npm run build",
     "start": "node dist/copse.js",
     "test": "node dist/copse.js pr-status",
     "prepublishOnly": "npm run build"

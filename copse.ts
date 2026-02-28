@@ -8,6 +8,7 @@ import type { CommandDef } from "./lib/types.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// File references use .js extensions — these point to the tsc-compiled output in dist/
 const COMMANDS: Record<string, CommandDef> = {
   approval: {
     file: "approval.js",
