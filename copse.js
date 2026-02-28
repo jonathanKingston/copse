@@ -29,6 +29,7 @@ const COMMANDS = {
       { name: "agent", description: '"cursor" or "claude" to filter branches' },
       { name: "--base BRANCH", description: "Base branch (default: main)" },
       { name: "--template PATH", description: "Path to PR template" },
+      { name: "--no-template", description: "Skip template, use only commit body" },
       { name: "--hours N", description: "Only branches with commits in last N hours (default: 6)" },
       { name: "--dry-run", description: "Show branches without creating PRs" },
       { name: "--all", description: "Include branches from all authors" },
@@ -117,8 +118,9 @@ function generateCompletion(shell) {
   
   const commonOpts = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const baseOpts = { "--base": "Base branch", ...commonOpts };
-  const templateOpts = { "--template": "PR template path", "--no-template": "Skip template", ...commonOpts };
   const hoursOpts = { "--hours": "Time window in hours", ...commonOpts };
+  const createPrsOpts = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
+  const rerunFailedOpts = hoursOpts;
 
   if (shell === "zsh") {
     const subcmds = [
@@ -156,10 +158,10 @@ _copse() {
           _arguments ${formatOptArgs(baseOpts)}
           ;;
         create-prs)
-          _arguments ${formatOptArgs({ ...baseOpts, ...templateOpts })}
+          _arguments ${formatOptArgs(createPrsOpts)}
           ;;
         rerun-failed)
-          _arguments ${formatOptArgs(hoursOpts)}
+          _arguments ${formatOptArgs(rerunFailedOpts)}
           ;;
       esac
       ;;
@@ -176,12 +178,13 @@ compdef _copse copse
   }
 
   // bash
+  const formatBashOpts = (opts) => Object.keys(opts).join(" ");
+  
   const script = `# Bash completion for copse
 _copse_completion() {
-    local cur prev commands
+    local cur commands
     COMPREPLY=()
     cur="\${COMP_WORDS[COMP_CWORD]}"
-    prev="\${COMP_WORDS[COMP_CWORD-1]}"
     commands="${commands}"
 
     if [ $COMP_CWORD -eq 1 ]; then
@@ -190,8 +193,17 @@ _copse_completion() {
     fi
 
     case "\${COMP_WORDS[1]}" in
-        ${commandList})
-            COMPREPLY=( $(compgen -W "--dry-run --all --mine --help" -- "$cur") )
+        approval|pr-status)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(commonOpts)}" -- "$cur") )
+            ;;
+        update-main)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(baseOpts)}" -- "$cur") )
+            ;;
+        create-prs)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(createPrsOpts)}" -- "$cur") )
+            ;;
+        rerun-failed)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(rerunFailedOpts)}" -- "$cur") )
             ;;
     esac
 }
