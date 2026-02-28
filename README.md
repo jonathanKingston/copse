@@ -38,11 +38,37 @@ copse create-prs
 
 ### Tab Completion
 
-Enable bash tab completion by adding this to your `~/.bashrc` or `~/.bash_profile`:
+Tab completion works with both Bash and Zsh. After installing, add this to your shell config:
+
+**Zsh** (add to `~/.zshrc`):
 
 ```bash
-eval "$(copse completion)"
+eval "$(copse completion zsh)"
 ```
+
+**Bash** (add to `~/.bashrc` or `~/.bash_profile`):
+
+```bash
+eval "$(copse completion bash)"
+```
+
+Or use `eval "$(copse completion)"` to auto-detect your shell from `$SHELL`.
+
+Apply the change by sourcing your config or opening a new terminal:
+
+```bash
+source ~/.zshrc   # for zsh
+source ~/.bashrc  # for bash
+```
+
+#### Completion behavior
+
+| Type this | Tab completes to |
+|-----------|------------------|
+| `cop` or `cops` | `copse` |
+| `copse pr-` | `pr-status` |
+| `copse ` (with space) | subcommands: `approval`, `create-prs`, `pr-status`, etc. |
+| After a subcommand | `--dry-run`, `--all`, `--mine`, `--help` |
 
 ## Commands
 
@@ -138,12 +164,12 @@ copse create-prs acme/cool-project cursor --all
 Lists open agent PRs and outlines their CI/test status: failed workflow runs and rerun counts.
 
 ```
-copse pr-status <repo> [agent] [options]
+copse pr-status [repo] [agent] [options]
 ```
 
 | Argument | Description |
 |----------|-------------|
-| `repo` | GitHub repo in `owner/name` format |
+| `repo` | GitHub repo in `owner/name` format. Omit when run inside a git repo to use origin remote. |
 | `agent` | Optional: `cursor` or `claude` to filter PRs. Omit to match both. |
 | `--mine` | Only your PRs (default) |
 | `--all` | Include PRs from all authors |
@@ -151,7 +177,8 @@ copse pr-status <repo> [agent] [options]
 #### Examples
 
 ```bash
-# List all your open agent PRs with test status
+# List all your open agent PRs with test status (uses origin when run inside a git repo)
+copse pr-status
 copse pr-status acme/cool-project
 
 # Filter by agent

@@ -37,9 +37,9 @@ const COMMANDS = {
   "pr-status": {
     file: "pr-status.js",
     description: "Lists open agent PRs with test failures and rerun info",
-    usage: "copse pr-status <repo> [agent] [options]",
+    usage: "copse pr-status [repo] [agent] [options]",
     args: [
-      { name: "repo", description: "GitHub repo in owner/name format" },
+      { name: "repo", description: "GitHub repo in owner/name format (default: origin)" },
       { name: "agent", description: 'Optional: "cursor" or "claude"' },
       { name: "--all", description: "Include PRs from all authors" },
     ],
@@ -81,12 +81,13 @@ Commands:`);
   for (const [name, cmd] of Object.entries(COMMANDS)) {
     console.log(`  ${name.padEnd(maxLen)}  ${cmd.description}`);
   }
+  console.log(`  ${"completion".padEnd(maxLen)}  Output shell completion script (bash/zsh)`);
 
   console.log(`
 Run 'copse <command>' to see arguments for that command.
 Run 'copse <command> --help' for detailed help.
 
-Tab completion: Run 'copse completion' to get bash completion script.
+Tab completion: eval "\$(copse completion)"   # or "copse completion zsh" for zsh
 `);
 }
 
@@ -110,31 +111,90 @@ Arguments:`);
   console.log();
 }
 
-function generateCompletion() {
-  const script = `# Bash completion for copse
+function generateCompletion(shell) {
+  const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
+  const opts = "--dry-run --all --mine --help";
+
+  if (shell === "zsh") {
+    const subcmds = [
+      ...Object.keys(COMMANDS).map((c) => `${c}[${COMMANDS[c].description}]`),
+      "completion[Output shell completion script]",
+    ]
+      .map((s) => `'${s.replace(/'/g, "'\\''")}'`)
+      .join(" ");
+    const optArgs = opts
+      .split(" ")
+      .map((o) => `'${o}'`)
+      .join(" ");
+    const script = `#compdef copse cop cops
+# Zsh completion for copse (also completes cop/cops to copse)
+
+_copse() {
+  local state line
+  typeset -A opt_args
+
+  # When completing command name (cop/cops → copse)
+  if [[ \$#words -eq 1 && "\${words[1]}" != copse ]]; then
+    _values 'command' 'copse[Tools for managing agent-created PRs]'
+    return
+  fi
+
+  _arguments -C \\
+    '1: :->subcmd' \\
+    '*:: :->args'
+
+  case \$state in
+    subcmd)
+      _values 'command' ${subcmds}
+      ;;
+    args)
+      case \$line[1] in
+        approval|create-prs|pr-status|rerun-failed|update-main)
+          _arguments ${optArgs}
+          ;;
+      esac
+      ;;
+  esac
+}
+
+compdef _copse copse cop cops
+
+# Usage: Add to your ~/.zshrc:
+#   eval "\\$(copse completion zsh)"
+`;
+    console.log(script);
+    return;
+  }
+
+  // bash
+  const script = `# Bash completion for copse (also completes cop/cops to copse)
 _copse_completion() {
-    local cur prev commands
+    local cur commands
     COMPREPLY=()
     cur="\${COMP_WORDS[COMP_CWORD]}"
-    prev="\${COMP_WORDS[COMP_CWORD-1]}"
-    commands="${Object.keys(COMMANDS).join(" ")}"
+    commands="${commands}"
+
+    if [ $COMP_CWORD -eq 0 ]; then
+        COMPREPLY=( $(compgen -W "copse" -- "$cur") )
+        return 0
+    fi
 
     if [ $COMP_CWORD -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "$commands completion" -- "$cur") )
+        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
         return 0
     fi
 
     case "\${COMP_WORDS[1]}" in
         approval|create-prs|pr-status|rerun-failed|update-main)
-            COMPREPLY=( $(compgen -W "--dry-run --all --mine --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "${opts}" -- "$cur") )
             ;;
     esac
 }
 
-complete -F _copse_completion copse
+complete -F _copse_completion copse cop cops
 
-# Usage: Add this to your ~/.bashrc or ~/.bash_profile:
-#   eval "$(copse completion)"
+# Usage: Add to your ~/.bashrc or ~/.bash_profile:
+#   eval "\$(copse completion bash)"
 `;
   console.log(script);
 }
@@ -168,7 +228,26 @@ function main() {
   const command = args[0];
 
   if (command === "completion") {
-    generateCompletion();
+    if (args[1] === "--help" || args[1] === "-h") {
+      console.log(`Output shell completion script. Detects zsh vs bash from $SHELL when no arg given.
+
+Usage: copse completion [bash|zsh]
+
+Add to your shell config (~/.zshrc or ~/.bashrc):
+  eval "$(copse completion)"
+`);
+      process.exit(0);
+    }
+    let shell = args[1];
+    if (!shell) {
+      const envShell = process.env.SHELL || "";
+      shell = envShell.endsWith("zsh") ? "zsh" : "bash";
+    }
+    if (shell !== "bash" && shell !== "zsh") {
+      console.error("Usage: copse completion [bash|zsh]");
+      process.exit(1);
+    }
+    generateCompletion(shell);
     process.exit(0);
   }
 
@@ -177,7 +256,7 @@ function main() {
     process.exit(0);
   }
 
-  if (args.length === 1 || args[1] === "--help" || args[1] === "-h") {
+  if (args[1] === "--help" || args[1] === "-h") {
     showCommandHelp(command);
     process.exit(0);
   }
