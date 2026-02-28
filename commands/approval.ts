@@ -17,25 +17,12 @@
  */
 
 import { getOriginRepo } from "../lib/utils.js";
-import type { PR, ExecError } from "../lib/types.js";
+import type { ExecError } from "../lib/types.js";
 import {
-  REPO_PATTERN, validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+  REPO_PATTERN, validateRepo, gh, formatGhError, listOpenPRs,
 } from "../lib/gh.js";
-
-function matchesQuery(pr: PR, query: string | null): boolean {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  const title = (pr.title || "").toLowerCase();
-  const body = (pr.body || "").toLowerCase();
-  return title.includes(q) || body.includes(q);
-}
-
-function formatGhError(e: ExecError, context: string = ""): string {
-  const stderr = e.stderr ?? (e.output?.[2] ?? "");
-  const msg = (stderr || e.message || "").trim();
-  const prefix = context ? `${context}: ` : "";
-  return prefix + (msg || "Unknown error");
-}
+import { parseStandardFlags } from "../lib/args.js";
+import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 
 function enableMergeWhenReady(repo: string, prNumber: number): boolean {
   try {
@@ -61,12 +48,8 @@ function enableMergeWhenReady(repo: string, prNumber: number): boolean {
 }
 
 function main(): void {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-  const all = args.includes("--all");
-  const filtered = args.filter(
-    (a) => !["--dry-run", "--all", "--mine"].includes(a)
-  );
+  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
+  const { dryRun, mineOnly } = flags;
 
   let repo: string | undefined;
   let agent: string | null = null;
@@ -112,30 +95,11 @@ Examples:
 
   validateRepo(repo);
 
-  const agentLower = agent;
-  const mineOnly = !all;
-
-  let currentUser: string | null = null;
-  if (mineOnly) {
-    currentUser = getCurrentUser();
-    console.error(
-      `Fetching open PRs from ${repo}${agentLower ? ` (agent: ${agentLower})` : " (cursor + claude)"} (only yours, @${currentUser})...`
-    );
-  } else {
-    console.error(
-      `Fetching open PRs from ${repo}${agentLower ? ` (agent: ${agentLower})` : " (cursor + claude)"} (all authors)...`
-    );
-  }
+  const currentUser = getUserForDisplay(mineOnly);
+  console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
+  
   const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "body", "author"]);
-
-  const matching = prs.filter((pr) => {
-    if (!matchesAgent(pr, agentLower) || !matchesQuery(pr, query)) return false;
-    if (mineOnly) {
-      const authorLogin = pr.author?.login ?? "";
-      return authorLogin === currentUser;
-    }
-    return true;
-  });
+  const matching = filterPRs(prs, { agent, mineOnly, query });
 
   if (matching.length === 0) {
     console.error("No matching PRs found.");
