@@ -4,10 +4,11 @@
  * Triggers "merge when ready" on PRs matching repo, agent filter, and optional query.
  * Uses gh pr merge --auto to enable auto-merge or add PRs to the merge queue.
  *
- * Usage: approval <repo> [agent] [query]
+ * Usage: approval [repo] [agent] [query]
  *
  * Arguments:
- *   repo   - GitHub repo in owner/name format (e.g. acme/cool-project)
+ *   repo   - GitHub repo in owner/name format (e.g. acme/cool-project).
+ *            Omit when run inside a git repo to use origin remote.
  *   agent  - Optional: "cursor" or "claude" to filter by agent. Omit to match both.
  *   query  - Optional text to match in PR title or body
  *
@@ -40,6 +41,19 @@ const AGENT_PATTERNS = {
 
 function exec(cmd, options = {}) {
   return execSync(cmd, { encoding: "utf-8", ...options });
+}
+
+function getOriginRepo() {
+  try {
+    const url = exec("git remote get-url origin", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+    const match = url.match(/github\.com[:/]([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+?)(?:\.git)?$/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 function getCurrentUser() {
@@ -111,36 +125,49 @@ function main() {
     (a) => !["--dry-run", "--all", "--mine"].includes(a)
   );
 
-  if (filtered.length < 1) {
-    console.error(`Usage: approval <repo> [agent] [query] [--dry-run] [--all]
+  let repo;
+  let agent = null;
+  let query = null;
 
-  repo      GitHub repo in owner/name format (e.g. acme/cool-project)
+  if (filtered.length >= 1 && REPO_PATTERN.test(filtered[0])) {
+    repo = filtered[0];
+    if (filtered.length >= 2 && ["cursor", "claude"].includes(filtered[1].toLowerCase())) {
+      agent = filtered[1].toLowerCase();
+      query = filtered[2] ?? null;
+    } else {
+      query = filtered[1] ?? null;
+    }
+  } else {
+    repo = getOriginRepo();
+    if (!repo) {
+      console.error(`Usage: approval [repo] [agent] [query] [--dry-run] [--all]
+
+  repo      GitHub repo in owner/name format (e.g. acme/cool-project).
+            Omit when run inside a git repo to use origin remote.
   agent     Optional: "cursor" or "claude". Omit to match both.
   query     Optional text to match in PR title or body
   --dry-run Show matching PRs without enabling merge when ready
   --all     Include PRs from all authors (default: only yours)
 
 Examples:
+  approval                    # Uses origin when run inside a git repo
   approval acme/cool-project
   approval acme/cool-project cursor
   approval acme/cool-project claude "fix login"
   approval acme/cool-project cursor --dry-run
   approval acme/cool-project cursor --all
 `);
-    process.exit(1);
+      process.exit(1);
+    }
+    if (filtered.length >= 1 && ["cursor", "claude"].includes(filtered[0].toLowerCase())) {
+      agent = filtered[0].toLowerCase();
+      query = filtered[1] ?? null;
+    } else {
+      query = filtered[0] ?? null;
+    }
   }
 
-  const repo = filtered[0];
   validateRepo(repo);
-  let agent = null;
-  let query = null;
-
-  if (filtered.length >= 2 && ["cursor", "claude"].includes(filtered[1].toLowerCase())) {
-    agent = filtered[1].toLowerCase();
-    query = filtered[2] ?? null;
-  } else {
-    query = filtered[1] ?? null;
-  }
 
   const agentLower = agent;
   const mineOnly = !all;
