@@ -7,8 +7,10 @@
 
 import type { ExecError, MergeResult } from "../lib/types.js";
 import {
-  validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+  validateRepo, gh, listOpenPRs,
 } from "../lib/gh.js";
+import { parseStandardFlags, parseBaseOption } from "../lib/args.js";
+import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 
 function mergeMainIntoBranch(repo: string, headRef: string, baseRef: string, dryRun: boolean): MergeResult {
   if (dryRun) return { ok: true, skipped: true };
@@ -26,10 +28,8 @@ function mergeMainIntoBranch(repo: string, headRef: string, baseRef: string, dry
 }
 
 function main(): void {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-  const all = args.includes("--all");
-  const filtered = args.filter((a) => a !== "--dry-run" && a !== "--all");
+  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
+  const { dryRun, mineOnly } = flags;
 
   const help = `Usage: update-main <repo> [agent] [options]
 
@@ -65,40 +65,19 @@ Examples:
   }
 
   let baseBranch = "main";
-  let mineOnly = !all;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--base" && rest[i + 1]) {
-      baseBranch = rest[++i];
-    } else if (a === "--all") {
-      mineOnly = false;
-    } else if (a === "--mine") {
-      mineOnly = true;
+      baseBranch = parseBaseOption(rest, i);
+      i++;
     }
   }
 
-  const agentLower = agent;
-
-  let currentUser: string | null = null;
-  if (mineOnly) {
-    currentUser = getCurrentUser();
-    console.error(
-      `Fetching open PRs from ${repo}${agentLower ? ` (agent: ${agentLower})` : " (cursor + claude)"} (only yours, @${currentUser})...`
-    );
-  } else {
-    console.error(
-      `Fetching open PRs from ${repo}${agentLower ? ` (agent: ${agentLower})` : " (cursor + claude)"} (all authors)...`
-    );
-  }
+  const currentUser = getUserForDisplay(mineOnly);
+  console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
+  
   const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "author"]);
-  const matching = prs.filter((pr) => {
-    if (!matchesAgent(pr, agentLower)) return false;
-    if (mineOnly) {
-      const authorLogin = pr.author?.login ?? "";
-      return authorLogin === currentUser;
-    }
-    return true;
-  });
+  const matching = filterPRs(prs, { agent, mineOnly });
 
   if (matching.length === 0) {
     console.error("No matching PRs found.");

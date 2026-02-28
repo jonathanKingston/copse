@@ -50,10 +50,10 @@ const COMMANDS: Record<string, CommandDef> = {
   "rerun-failed": {
     file: "rerun-failed.js",
     description: "Reruns failed workflow runs on recent agent branches",
-    usage: "copse rerun-failed <repo> <agent> [options]",
+    usage: "copse rerun-failed [repo] [agent] [options]",
     args: [
-      { name: "repo", description: "GitHub repo in owner/name format" },
-      { name: "agent", description: '"cursor" or "claude" to filter branches' },
+      { name: "repo", description: "GitHub repo (default: origin when in a git repo)" },
+      { name: "agent", description: 'Optional: "cursor" or "claude" (default: both)' },
       { name: "--hours N", description: "Only branches with commits in last N hours (default: 24)" },
       { name: "--dry-run", description: "Show branches without triggering reruns" },
       { name: "--all", description: "Include branches from all authors" },

@@ -8,8 +8,10 @@
 import { getOriginRepo } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
 import {
-  REPO_PATTERN, validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+  REPO_PATTERN, validateRepo, gh, listOpenPRs,
 } from "../lib/gh.js";
+import { parseStandardFlags } from "../lib/args.js";
+import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 
 function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
   try {
@@ -28,9 +30,8 @@ function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
 }
 
 function main(): void {
-  const args = process.argv.slice(2);
-  const all = args.includes("--all");
-  const filtered = args.filter((a) => !["--all", "--mine"].includes(a));
+  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
+  const { mineOnly } = flags;
 
   const help = `Usage: pr-status [repo] [agent] [options]
 
@@ -75,28 +76,11 @@ Examples:
 
   validateRepo(repo);
 
-  const mineOnly = !all;
-  let currentUser: string | null = null;
-  if (mineOnly) {
-    currentUser = getCurrentUser();
-    console.error(
-      `Fetching open agent PRs from ${repo}${agent ? ` (agent: ${agent})` : " (cursor + claude)"} (only yours, @${currentUser})...`
-    );
-  } else {
-    console.error(
-      `Fetching open agent PRs from ${repo}${agent ? ` (agent: ${agent})` : " (cursor + claude)"} (all authors)...`
-    );
-  }
+  const currentUser = getUserForDisplay(mineOnly);
+  console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
 
   const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "author"]);
-  const matching = prs.filter((pr) => {
-    if (!matchesAgent(pr, agent)) return false;
-    if (mineOnly) {
-      const authorLogin = pr.author?.login ?? "";
-      return authorLogin === currentUser;
-    }
-    return true;
-  });
+  const matching = filterPRs(prs, { agent, mineOnly });
 
   if (matching.length === 0) {
     console.error("No matching PRs found.");

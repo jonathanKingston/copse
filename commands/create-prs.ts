@@ -15,28 +15,13 @@ import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import {
-  validateRepo, gh, getCurrentUser, AGENT_BRANCH_PATTERNS, listBranches,
+  validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
 } from "../lib/gh.js";
+import { parseStandardFlags, parseHoursOption, parseBaseOption, parseTemplateOption, calculateSinceDate } from "../lib/args.js";
+import { getUserForDisplay } from "../lib/filters.js";
 
 const DEFAULT_TEMPLATE_URL =
   "https://raw.githubusercontent.com/duckduckgo/content-scope-scripts/main/.github/pull_request_template.md";
-
-const COMMIT_DELIM = "\x01";
-
-function getLatestCommit(repo: string, branchRef: string): { message: string; date: Date | null; authorLogin: string } {
-  const ref = encodeURIComponent(branchRef);
-  const out = gh(
-    "api", `repos/${repo}/commits/${ref}`,
-    "-q", `.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`
-  );
-  const parts = out.trim().split(COMMIT_DELIM);
-  const [message, dateStr, authorLogin] = parts;
-  return {
-    message: (message || "").trim(),
-    date: dateStr ? new Date(dateStr.trim()) : null,
-    authorLogin: (authorLogin || "").trim(),
-  };
-}
 
 function listOpenPRHeadBranches(repo: string): string[] {
   const out = gh(
@@ -112,10 +97,8 @@ function createPR(repo: string, headBranch: string, baseBranch: string, title: s
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-  const all = args.includes("--all");
-  const filtered = args.filter((a) => a !== "--dry-run" && a !== "--all");
+  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
+  const { dryRun, mineOnly } = flags;
 
   const help = `Usage: create-prs <repo> <agent> [options]
 
@@ -143,49 +126,38 @@ Examples:
     process.exit(1);
   }
 
-  const [repo, agent] = filtered.slice(0, 2);
+  const [repo, agentRaw] = filtered.slice(0, 2);
   validateRepo(repo);
+  const agent = validateAgent(agentRaw);
   const rest = filtered.slice(2);
-
-  if (!["cursor", "claude"].includes(agent.toLowerCase())) {
-    console.error(`Error: agent must be "cursor" or "claude", got "${agent}"`);
-    process.exit(1);
-  }
 
   let baseBranch = "main";
   let templatePath: string | null = ".github/PULL_REQUEST_TEMPLATE.md";
   let hours = 6;
-  let mineOnly = true;
 
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--base" && rest[i + 1]) {
-      baseBranch = rest[++i];
+      baseBranch = parseBaseOption(rest, i);
+      i++;
     } else if (a === "--template" && rest[i + 1]) {
-      templatePath = rest[++i];
+      templatePath = parseTemplateOption(rest, i);
+      i++;
     } else if (a === "--no-template") {
       templatePath = null;
     } else if (a === "--hours" && rest[i + 1]) {
-      hours = parseInt(rest[++i], 10);
-      if (Number.isNaN(hours) || hours < 1) {
-        console.error("Error: --hours must be a positive number");
-        process.exit(1);
-      }
-    } else if (a === "--all") {
-      mineOnly = false;
-    } else if (a === "--mine") {
-      mineOnly = true;
+      hours = parseHoursOption(rest, i);
+      i++;
     }
   }
 
-  let currentUser: string | null = null;
-  if (mineOnly) {
-    currentUser = getCurrentUser();
+  const currentUser = getUserForDisplay(mineOnly);
+  if (currentUser) {
     console.error(`Filtering to your branches (@${currentUser})`);
   }
 
-  const pattern = AGENT_BRANCH_PATTERNS[agent.toLowerCase()];
-  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const pattern = AGENT_BRANCH_PATTERNS[agent];
+  const since = calculateSinceDate(hours);
 
   console.error(`Fetching branches from ${repo}...`);
   const allBranches = listBranches(repo);
@@ -206,7 +178,7 @@ Examples:
       continue;
     }
     try {
-      const { message, date, authorLogin } = getLatestCommit(repo, branch);
+      const { message, date, authorLogin } = getCommitInfo(repo, branch, true);
       if (date && date < since) {
         console.error(`  Skipping ${branch} (last commit ${date.toISOString()} outside --hours ${hours})`);
         continue;
@@ -217,7 +189,7 @@ Examples:
           continue;
         }
       }
-      withCommits.push({ branch, message });
+      withCommits.push({ branch, message: message! });
     } catch (e: unknown) {
       console.error(`  Skipping ${branch}: ${(e as Error).message}`);
     }
