@@ -73,7 +73,7 @@ function listWorkflowRuns(repo, branch) {
 function main() {
   const args = process.argv.slice(2);
   const all = args.includes("--all");
-  const filtered = args.filter((a) => a !== "--all");
+  const filtered = args.filter((a) => !["--all", "--mine"].includes(a));
 
   const help = `Usage: pr-status [repo] [agent] [options]
 
