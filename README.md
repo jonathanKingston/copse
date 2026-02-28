@@ -1,9 +1,10 @@
 # Approval
 
-Four commands for managing agent-created PRs:
+Five commands for managing agent-created PRs:
 
 - **approval** – Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue)
 - **create-prs** – Finds recent agent branches and creates PRs from them
+- **pr-status** – Outlines open agent PRs with test failures and rerun info (also available as `npm test`)
 - **rerun-failed** – Reruns failed workflow runs on recent agent branches
 - **update-main** – Merges main (or specified base) into open PR branches to keep them up to date
 
@@ -97,6 +98,37 @@ create-prs acme/cool-project cursor --hours 48 --dry-run
 
 # Include branches from all authors
 create-prs acme/cool-project cursor --all
+```
+
+## pr-status
+
+Lists open agent PRs and outlines their CI/test status: failed workflow runs and rerun counts.
+
+### Usage
+
+```
+pr-status <repo> [agent] [options]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `repo` | GitHub repo in `owner/name` format |
+| `agent` | Optional: `cursor` or `claude` to filter PRs. Omit to match both. |
+| `--mine` | Only your PRs (default) |
+| `--all` | Include PRs from all authors |
+
+### Examples
+
+```bash
+# List all your open agent PRs with test status
+pr-status acme/cool-project
+
+# Filter by agent
+pr-status acme/cool-project cursor
+pr-status acme/cool-project claude --all
+
+# Same as pr-status (npm test runs this)
+npm test acme/cool-project cursor
 ```
 
 ## rerun-failed
