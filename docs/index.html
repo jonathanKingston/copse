@@ -17,13 +17,13 @@
                 </svg>
                 <h1>Copse</h1>
             </div>
-            <p class="tagline">Five commands for managing agent-created PRs</p>
+            <p class="tagline">Tools for managing agent-created PRs</p>
         </header>
 
         <main>
             <section class="hero">
                 <h2>Streamline your AI workflow</h2>
-                <p>Copse helps you manage pull requests created by Cursor and Claude agents with simple, powerful commands.</p>
+                <p>Copse helps you manage pull requests created by Cursor and Claude agents with a simple, powerful CLI tool.</p>
             </section>
 
             <section class="features">
@@ -89,8 +89,8 @@
                             </div>
                             <p class="alt-text">Or clone and use directly:</p>
                             <div class="code-block">
-                                <code>git clone https://github.com/YOUR_USERNAME/copse.git</code>
-                                <button class="copy-btn" onclick="copyToClipboard('git clone https://github.com/YOUR_USERNAME/copse.git')">Copy</button>
+                                <code>git clone https://github.com/jonathanKingston/copse.git</code>
+                                <button class="copy-btn" onclick="copyToClipboard('git clone https://github.com/jonathanKingston/copse.git')">Copy</button>
                             </div>
                         </div>
                     </div>
@@ -100,13 +100,37 @@
                         <div class="step-content">
                             <h4>Start Using</h4>
                             <div class="code-block">
-                                <code>approval owner/repo cursor</code>
-                                <button class="copy-btn" onclick="copyToClipboard('approval owner/repo cursor')">Copy</button>
+                                <code>copse approval owner/repo cursor</code>
+                                <button class="copy-btn" onclick="copyToClipboard('copse approval owner/repo cursor')">Copy</button>
                             </div>
                             <p>Enable auto-merge on all your Cursor agent PRs</p>
                         </div>
                     </div>
                 </div>
+            </section>
+
+            <section class="completion">
+                <h2>Tab Completion</h2>
+                <p class="completion-intro">Copse includes built-in tab completion for Bash and Zsh. Add one line to your shell config:</p>
+                <div class="completion-grid">
+                    <div class="completion-option">
+                        <h4>Zsh</h4>
+                        <p>Add to <code class="inline-code">~/.zshrc</code>:</p>
+                        <div class="code-block">
+                            <code>eval "$(copse completion zsh)"</code>
+                            <button class="copy-btn" onclick="copyToClipboard('eval &quot;$(copse completion zsh)&quot;')">Copy</button>
+                        </div>
+                    </div>
+                    <div class="completion-option">
+                        <h4>Bash</h4>
+                        <p>Add to <code class="inline-code">~/.bashrc</code>:</p>
+                        <div class="code-block">
+                            <code>eval "$(copse completion bash)"</code>
+                            <button class="copy-btn" onclick="copyToClipboard('eval &quot;$(copse completion bash)&quot;')">Copy</button>
+                        </div>
+                    </div>
+                </div>
+                <p class="completion-note">Then open a new terminal or run <code class="inline-code">source ~/.zshrc</code> (or <code class="inline-code">~/.bashrc</code>)</p>
             </section>
 
             <section class="examples">
@@ -115,42 +139,42 @@
                     <div class="example">
                         <h4>Enable merge when ready</h4>
                         <div class="code-block">
-                            <code>approval acme/project cursor</code>
+                            <code>copse approval acme/project cursor</code>
                         </div>
                     </div>
 
                     <div class="example">
                         <h4>Create PRs from recent branches</h4>
                         <div class="code-block">
-                            <code>create-prs acme/project claude</code>
+                            <code>copse create-prs acme/project claude</code>
                         </div>
                     </div>
 
                     <div class="example">
                         <h4>Check PR test status</h4>
                         <div class="code-block">
-                            <code>pr-status acme/project</code>
+                            <code>copse pr-status</code>
                         </div>
                     </div>
 
                     <div class="example">
                         <h4>Rerun failed tests</h4>
                         <div class="code-block">
-                            <code>rerun-failed acme/project cursor</code>
+                            <code>copse rerun-failed acme/project cursor</code>
                         </div>
                     </div>
 
                     <div class="example">
                         <h4>Update PRs with main</h4>
                         <div class="code-block">
-                            <code>update-main acme/project</code>
+                            <code>copse update-main acme/project</code>
                         </div>
                     </div>
 
                     <div class="example">
                         <h4>Preview without changes</h4>
                         <div class="code-block">
-                            <code>approval acme/project cursor --dry-run</code>
+                            <code>copse approval acme/project cursor --dry-run</code>
                         </div>
                     </div>
                 </div>
@@ -168,6 +192,10 @@
                         <p>Five commands that do exactly what you need, nothing more</p>
                     </div>
                     <div class="why-item">
+                        <h4>Tab completion</h4>
+                        <p>Built-in autocomplete for Bash and Zsh shells</p>
+                    </div>
+                    <div class="why-item">
                         <h4>GitHub native</h4>
                         <p>Uses GitHub CLI for reliable, authenticated operations</p>
                     </div>
@@ -177,9 +205,9 @@
 
         <footer>
             <p>
-                <a href="https://github.com/YOUR_USERNAME/copse" target="_blank">GitHub</a>
+                <a href="https://github.com/jonathanKingston/copse" target="_blank">GitHub</a>
                 <span class="separator">•</span>
-                <a href="https://github.com/YOUR_USERNAME/copse#readme" target="_blank">Documentation</a>
+                <a href="https://github.com/jonathanKingston/copse#readme" target="_blank">Documentation</a>
             </p>
             <p class="copyright">Made with care for better AI workflows</p>
         </footer>
