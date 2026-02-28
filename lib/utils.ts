@@ -1,6 +1,6 @@
 import { execSync } from "child_process";
 
-export function getOriginRepo() {
+export function getOriginRepo(): string | null {
   try {
     const url = execSync("git remote get-url origin", {
       encoding: "utf-8",

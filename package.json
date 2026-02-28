@@ -4,15 +4,21 @@
   "description": "Tools for managing agent-created PRs",
   "type": "module",
   "bin": {
-    "copse": "./copse.js"
+    "copse": "./dist/copse.js"
   },
   "scripts": {
-    "start": "node copse.js",
-    "test": "node copse.js pr-status"
+    "build": "tsc",
+    "start": "node dist/copse.js",
+    "test": "node dist/copse.js pr-status",
+    "prepublishOnly": "npm run build"
   },
   "homepage": "https://copse.dev",
   "repository": {
     "type": "git",
     "url": "https://github.com/jonathanKingston/copse.git"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.2",
+    "typescript": "^5.9.3"
   }
 }
