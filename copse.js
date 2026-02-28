@@ -221,7 +221,7 @@ function runCommand(command, args) {
     if (signal) {
       process.kill(process.pid, signal);
     } else {
-      process.exit(code || 0);
+      process.exit(code ?? 0);
     }
   });
 }
