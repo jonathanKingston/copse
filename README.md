@@ -2,12 +2,13 @@
 
 Tools for managing agent-created PRs. Available at [copse.dev](https://copse.dev).
 
-Five commands for managing agent-created PRs:
+Six commands for managing agent-created PRs:
 
 - **approval** – Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue)
 - **create-prs** – Finds recent agent branches and creates PRs from them
 - **pr-status** – Outlines open agent PRs with test failures and rerun info (also available as `npm test`)
 - **rerun-failed** – Reruns failed workflow runs on recent agent branches
+- **spin-up-issue** – Creates an issue and comments to instruct the specified agent (cursor or claude) to build it
 - **update-main** – Merges main (or specified base) into open PR branches to keep them up to date
 
 ## Requirements
@@ -219,6 +220,61 @@ copse rerun-failed acme/cool-project cursor
 
 # Check claude branches from last 48 hours
 copse rerun-failed acme/cool-project claude --hours 48 --dry-run
+```
+
+### copse spin-up-issue
+
+Creates a GitHub issue and adds a comment instructing the specified agent (cursor or claude) to go and build it.
+
+```
+copse spin-up-issue <repo> <agent> <title> [body] [options]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `repo` | GitHub repo in `owner/name` format. Omit when run inside a git repo to use origin remote. |
+| `agent` | `cursor` or `claude` (required) – the agent to instruct |
+| `title` | Issue title |
+| `body` | Optional issue body (omit to open editor with template for interactive fill-in) |
+| `--body-file PATH` | Read issue body from file |
+| `--template PATH` | Path to issue template (default: look in several locations) |
+| `--no-template` | Skip template, use only body |
+| `--no-comment` | Do not add the agent instruction comment |
+| `--dry-run` | Show what would be created without creating |
+
+On success, prints the issue URL to stdout (e.g. for piping: `copse spin-up-issue ... | xargs open`).
+
+#### Issue template lookup
+
+By default, looks for a template in the following locations (relative to current directory, first found wins):
+
+- `.github/issue_template.md`
+- `.github/ISSUE_TEMPLATE/issue_template.md`
+- `issue_template.md` (root)
+- `docs/issue_template.md`
+- First `.md` file in `.github/ISSUE_TEMPLATE/` (if no `issue_template.md`)
+
+YAML frontmatter (e.g. from GitHub issue template builder) is stripped before use. If a template is found and you provide a body, they are merged with `---` as separator.
+
+When no body is provided in an interactive terminal, the template (or an empty buffer) is opened in your `$EDITOR` so you can fill it in. When not interactive (e.g. in a pipeline), you must use `--body` or `--body-file`.
+
+#### Examples
+
+```bash
+# Create issue and instruct Cursor to build it
+copse spin-up-issue acme/cool-project cursor "Add dark mode"
+
+# With body
+copse spin-up-issue acme/cool-project claude "Fix login bug" "User cannot log in after password reset"
+
+# Body from file
+copse spin-up-issue acme/cool-project cursor "Implement feature X" --body-file spec.md
+
+# Use specific template
+copse spin-up-issue acme/cool-project cursor "Bug in login" --template .github/ISSUE_TEMPLATE/bug_report.md
+
+# Skip template, body only
+copse spin-up-issue acme/cool-project cursor "Add tests" --no-template --dry-run
 ```
 
 ### copse update-main
