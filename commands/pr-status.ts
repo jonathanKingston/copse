@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Lists open agent PRs and their test/CI status: failed workflow runs and reruns.
  *
@@ -7,62 +5,20 @@
  *        Omit repo when run inside a git repo to use origin remote.
  */
 
-import { execSync, type ExecSyncOptions } from "child_process";
 import { getOriginRepo } from "../lib/utils.js";
-import type { PR, AgentPatternWithLabels, WorkflowRun } from "../lib/types.js";
-
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo: string): void {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS: Record<string, AgentPatternWithLabels> = {
-  cursor: {
-    branch: /cursor/i,
-    labels: ["cursor", "cursor-pr"],
-  },
-  claude: {
-    branch: /claude/i,
-    labels: ["claude", "claude-pr"],
-  },
-};
-
-function exec(cmd: string, options: ExecSyncOptions = {}): string {
-  return execSync(cmd, { encoding: "utf-8", ...options }) as string;
-}
-
-function getCurrentUser(): string {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-function listOpenPRs(repo: string): PR[] {
-  const out = exec(
-    `gh pr list --repo ${repo} --state open --limit 200 --json number,headRefName,labels,title,author`
-  );
-  return JSON.parse(out) as PR[];
-}
-
-function matchesAgent(pr: PR, agent: string | null): boolean {
-  if (agent) {
-    const pattern = AGENT_PATTERNS[agent];
-    if (!pattern) return false;
-    const branchMatch = pattern.branch.test(pr.headRefName);
-    const labelNames = (pr.labels || []).map((l) => l.name?.toLowerCase());
-    const labelMatch = pattern.labels.some((l) => labelNames.includes(l));
-    return branchMatch || labelMatch;
-  }
-  return Object.keys(AGENT_PATTERNS).some((a) => matchesAgent(pr, a));
-}
+import type { WorkflowRun } from "../lib/types.js";
+import {
+  REPO_PATTERN, validateRepo, gh, getCurrentUser, matchesAgent, listOpenPRs,
+} from "../lib/gh.js";
 
 function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
   try {
-    const branchEsc = branch.replace(/"/g, '\\"');
-    const out = exec(
-      `gh run list --repo ${repo} --branch "${branchEsc}" --limit 100 --json databaseId,name,conclusion,attempt,status,displayTitle`
+    const out = gh(
+      "run", "list",
+      "--repo", repo,
+      "--branch", branch,
+      "--limit", "100",
+      "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
     );
     const runs = JSON.parse(out || "[]");
     return Array.isArray(runs) ? (runs as WorkflowRun[]) : [];
@@ -132,7 +88,7 @@ Examples:
     );
   }
 
-  const prs = listOpenPRs(repo);
+  const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "author"]);
   const matching = prs.filter((pr) => {
     if (!matchesAgent(pr, agent)) return false;
     if (mineOnly) {

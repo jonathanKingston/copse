@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Finds agent branches (cursor/*, claude/*) recently created/updated and creates PRs from them.
  *
@@ -13,61 +11,23 @@
  *   - claude/fix-any-overlay-messages-bINaq → base: pr-releases/claude/fix-any-overlay-messages-bINaq
  */
 
-import { execSync, type ExecSyncOptions } from "child_process";
+import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import {
+  validateRepo, gh, getCurrentUser, AGENT_BRANCH_PATTERNS, listBranches,
+} from "../lib/gh.js";
 
 const DEFAULT_TEMPLATE_URL =
   "https://raw.githubusercontent.com/duckduckgo/content-scope-scripts/main/.github/pull_request_template.md";
 
-const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-
-function validateRepo(repo: string): void {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
-  }
-}
-
-const AGENT_PATTERNS: Record<string, RegExp> = {
-  cursor: /^cursor\//i,
-  claude: /^claude\//i,
-};
-
-function exec(cmd: string, options: ExecSyncOptions = {}): string {
-  return execSync(cmd, { encoding: "utf-8", ...options }) as string;
-}
-
-function listBranches(repo: string): string[] {
-  const out = exec(
-    `gh api "repos/${repo}/branches" --paginate -q '.[].name'`
-  );
-  return out.trim() ? out.trim().split("\n") : [];
-}
-
-function listOpenPRHeadBranches(repo: string): string[] {
-  const out = exec(
-    `gh pr list --repo ${repo} --state open --limit 500 --json headRefName -q '.[].headRefName'`
-  );
-  return out.trim() ? out.trim().split("\n") : [];
-}
-
 const COMMIT_DELIM = "\x01";
 
-function getCurrentUser(): string {
-  const out = exec(`gh api user -q '.login'`);
-  return out.trim();
-}
-
-interface CommitInfo {
-  message: string;
-  date: Date | null;
-  authorLogin: string;
-}
-
-function getLatestCommit(repo: string, branchRef: string): CommitInfo {
+function getLatestCommit(repo: string, branchRef: string): { message: string; date: Date | null; authorLogin: string } {
   const ref = encodeURIComponent(branchRef);
-  const out = exec(
-    `gh api "repos/${repo}/commits/${ref}" -q '.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")'`
+  const out = gh(
+    "api", `repos/${repo}/commits/${ref}`,
+    "-q", `.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`
   );
   const parts = out.trim().split(COMMIT_DELIM);
   const [message, dateStr, authorLogin] = parts;
@@ -76,6 +36,18 @@ function getLatestCommit(repo: string, branchRef: string): CommitInfo {
     date: dateStr ? new Date(dateStr.trim()) : null,
     authorLogin: (authorLogin || "").trim(),
   };
+}
+
+function listOpenPRHeadBranches(repo: string): string[] {
+  const out = gh(
+    "pr", "list",
+    "--repo", repo,
+    "--state", "open",
+    "--limit", "500",
+    "--json", "headRefName",
+    "-q", ".[].headRefName"
+  );
+  return out.trim() ? out.trim().split("\n") : [];
 }
 
 function parseCommitMessage(message: string): { title: string; body: string } {
@@ -116,29 +88,27 @@ function buildPRBody(templateContent: string, commitBody: string): string | unde
   return templateContent || undefined;
 }
 
-function escapeShell(s: string): string {
-  return (s || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function createPR(repo: string, headBranch: string, baseBranch: string, title: string, body: string | undefined, dryRun: boolean): true | null {
+function createPR(repo: string, headBranch: string, baseBranch: string, title: string, body: string | undefined, dryRun: boolean): void {
   if (dryRun) {
     console.log(
       `Would create PR: ${headBranch} → ${baseBranch}\n  Title: ${title}`
     );
-    return null;
+    return;
   }
-  const cmd = [
-    "gh pr create",
-    `--repo ${repo}`,
-    `--base "${escapeShell(baseBranch)}"`,
-    `--head "${escapeShell(headBranch)}"`,
-    `--title "${escapeShell(title || "Update")}"`,
-    body ? "--body-file -" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  exec(cmd, body ? { input: body } : {});
-  return true;
+  const args = [
+    "pr", "create",
+    "--repo", repo,
+    "--base", baseBranch,
+    "--head", headBranch,
+    "--title", title || "Update",
+  ];
+  if (body) {
+    args.push("--body-file", "-");
+  }
+  execFileSync("gh", args, {
+    encoding: "utf-8",
+    ...(body ? { input: body } : {}),
+  });
 }
 
 async function main(): Promise<void> {
@@ -214,7 +184,7 @@ Examples:
     console.error(`Filtering to your branches (@${currentUser})`);
   }
 
-  const pattern = AGENT_PATTERNS[agent.toLowerCase()];
+  const pattern = AGENT_BRANCH_PATTERNS[agent.toLowerCase()];
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
   console.error(`Fetching branches from ${repo}...`);
