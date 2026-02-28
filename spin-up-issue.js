@@ -3,14 +3,14 @@
 /**
  * Creates a GitHub issue and comments on it to instruct the specified agent to build it.
  *
- * Usage: spin-up-issue <repo> <agent> <title> [body] [options]
+ * Usage: spin-up-issue <repo> <title> [body] [agent] [options]
  *
  * Arguments:
  *   repo   - GitHub repo in owner/name format (e.g. acme/cool-project).
  *            Omit when run inside a git repo to use origin remote.
- *   agent  - "cursor" or "claude" (required) – the agent to instruct
  *   title  - Issue title
  *   body   - Optional issue body (omit to open editor with template for interactive fill-in)
+ *   agent  - "cursor" or "claude" (default: cursor) – the agent to instruct
  *
  * Options:
  *   --body-file PATH  Read issue body from file
@@ -195,13 +195,13 @@ function main() {
     return true;
   });
 
-  const help = `Usage: spin-up-issue <repo> <agent> <title> [body] [options]
+  const help = `Usage: spin-up-issue <repo> <title> [body] [agent] [options]
 
   repo         GitHub repo in owner/name format (e.g. acme/cool-project).
                Omit when run inside a git repo to use origin remote.
-  agent        "cursor" or "claude" (required) – the agent to instruct
   title        Issue title
   body         Optional issue body (omit for empty)
+  agent        "cursor" or "claude" (default: cursor)
 
 Options:
   --body-file PATH   Read issue body from file
@@ -212,48 +212,94 @@ Options:
   --dry-run          Show what would be created without creating
 
 Examples:
-  spin-up-issue acme/cool-project cursor "Add dark mode"
-  spin-up-issue acme/cool-project claude "Fix login bug" "User cannot log in after password reset"
-  spin-up-issue acme/cool-project cursor "Implement feature X" --body-file spec.md
-  spin-up-issue acme/cool-project cursor "Add tests" --template .github/ISSUE_TEMPLATE/bug_report.md
-  spin-up-issue acme/cool-project cursor "Add tests" --no-template --dry-run
-  spin-up-issue acme/cool-project cursor "Add feature" --no-comment   # create issue only, no comment
+  spin-up-issue acme/cool-project "Add dark mode"
+  spin-up-issue acme/cool-project "Add dark mode" cursor
+  spin-up-issue acme/cool-project "Fix login bug" "User cannot log in" claude
+  spin-up-issue acme/cool-project "Implement feature X" --body-file spec.md
+  spin-up-issue acme/cool-project "Add feature" --no-comment
 `;
 
-  let repo, agent, title, body;
-  if (bodyFilePath) {
-    if (filtered.length < 3) {
+  let repo, title, body, agent;
+
+  const inferredRepo = !REPO_PATTERN.test(filtered[0]) && getOriginRepo();
+
+  function parsePositional(positionals) {
+    if (positionals.length < 2) return null;
+    const last = positionals[positionals.length - 1]?.toLowerCase();
+    const isLastAgent = last === "cursor" || last === "claude";
+    if (positionals.length === 2) {
+      return { repo: positionals[0], title: positionals[1], body: undefined, agent: "cursor" };
+    }
+    if (positionals.length === 3) {
+      if (isLastAgent) {
+        return { repo: positionals[0], title: positionals[1], body: undefined, agent: last };
+      }
+      return { repo: positionals[0], title: positionals[1], body: positionals[2], agent: "cursor" };
+    }
+    return {
+      repo: positionals[0],
+      title: positionals[1],
+      body: positionals[2],
+      agent: isLastAgent ? last : "cursor",
+    };
+  }
+
+  if (inferredRepo) {
+    if (filtered.length < 1) {
       console.error(help);
       process.exit(1);
     }
-    [repo, agent, title] = filtered.slice(0, 3);
-    try {
-      body = readFileSync(bodyFilePath, "utf-8").trim();
-    } catch (e) {
-      if (e.code === "ENOENT") {
-        console.error(`Error: body file not found: ${bodyFilePath}`);
-        process.exit(1);
+    repo = inferredRepo;
+    const [a, b, c] = filtered;
+    const bIsAgent = ["cursor", "claude"].includes(b?.toLowerCase());
+    const cIsAgent = ["cursor", "claude"].includes(c?.toLowerCase());
+    title = a;
+    if (filtered.length === 1) {
+      body = undefined;
+      agent = "cursor";
+    } else if (filtered.length === 2) {
+      body = bIsAgent ? undefined : b;
+      agent = bIsAgent ? b.toLowerCase() : "cursor";
+    } else {
+      body = bIsAgent ? undefined : b;
+      agent = cIsAgent ? c.toLowerCase() : "cursor";
+    }
+    if (bodyFilePath) {
+      try {
+        body = readFileSync(bodyFilePath, "utf-8").trim();
+      } catch (e) {
+        if (e.code === "ENOENT") {
+          console.error(`Error: body file not found: ${bodyFilePath}`);
+          process.exit(1);
+        }
+        throw e;
       }
-      throw e;
     }
   } else {
     if (filtered.length < 2) {
       console.error(help);
       process.exit(1);
     }
-    [repo, agent, title, body] = filtered.slice(0, 4);
-  }
-
-  if (!REPO_PATTERN.test(repo)) {
-    const inferred = getOriginRepo();
-    if (!inferred) {
+    const pos = parsePositional(filtered);
+    if (!pos) {
       console.error(help);
       process.exit(1);
     }
-    repo = inferred;
-    agent = filtered[0]?.toLowerCase();
-    title = filtered[1];
-    body = filtered[2] ?? body;
+    repo = pos.repo;
+    title = pos.title;
+    body = pos.body;
+    agent = pos.agent;
+    if (bodyFilePath) {
+      try {
+        body = readFileSync(bodyFilePath, "utf-8").trim();
+      } catch (e) {
+        if (e.code === "ENOENT") {
+          console.error(`Error: body file not found: ${bodyFilePath}`);
+          process.exit(1);
+        }
+        throw e;
+      }
+    }
   }
 
   validateRepo(repo);

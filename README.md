@@ -227,15 +227,15 @@ copse rerun-failed acme/cool-project claude --hours 48 --dry-run
 Creates a GitHub issue and adds a comment instructing the specified agent (cursor or claude) to go and build it.
 
 ```
-copse spin-up-issue <repo> <agent> <title> [body] [options]
+copse spin-up-issue <repo> <title> [body] [agent] [options]
 ```
 
 | Argument | Description |
 |----------|-------------|
 | `repo` | GitHub repo in `owner/name` format. Omit when run inside a git repo to use origin remote. |
-| `agent` | `cursor` or `claude` (required) – the agent to instruct |
 | `title` | Issue title |
 | `body` | Optional issue body (omit to open editor with template for interactive fill-in) |
+| `agent` | `cursor` or `claude` (default: cursor) – the agent to instruct |
 | `--body-file PATH` | Read issue body from file |
 | `--template PATH` | Path to issue template (default: look in several locations) |
 | `--no-template` | Skip template, use only body |
@@ -261,20 +261,21 @@ When no body is provided in an interactive terminal, the template (or an empty b
 #### Examples
 
 ```bash
-# Create issue and instruct Cursor to build it
-copse spin-up-issue acme/cool-project cursor "Add dark mode"
+# Create issue (default: cursor)
+copse spin-up-issue acme/cool-project "Add dark mode"
 
-# With body
-copse spin-up-issue acme/cool-project claude "Fix login bug" "User cannot log in after password reset"
+# Specify agent
+copse spin-up-issue acme/cool-project "Add dark mode" cursor
+copse spin-up-issue acme/cool-project "Fix login bug" "User cannot log in" claude
 
 # Body from file
-copse spin-up-issue acme/cool-project cursor "Implement feature X" --body-file spec.md
+copse spin-up-issue acme/cool-project "Implement feature X" --body-file spec.md
 
 # Use specific template
-copse spin-up-issue acme/cool-project cursor "Bug in login" --template .github/ISSUE_TEMPLATE/bug_report.md
+copse spin-up-issue acme/cool-project "Bug in login" --template .github/ISSUE_TEMPLATE/bug_report.md
 
 # Skip template, body only
-copse spin-up-issue acme/cool-project cursor "Add tests" --no-template --dry-run
+copse spin-up-issue acme/cool-project "Add tests" --no-template --dry-run
 ```
 
 ### copse update-main
