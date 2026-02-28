@@ -1,23 +1,18 @@
 {
-  "name": "approval",
+  "name": "copse",
   "version": "1.0.0",
-  "description": "Mark matching PRs as merge when ready",
+  "description": "Tools for managing agent-created PRs",
   "type": "module",
   "bin": {
-    "approval": "./index.js",
-    "create-prs": "./create-prs.js",
-    "pr-status": "./pr-status.js",
-    "rerun-failed": "./rerun-failed.js",
-    "update-main": "./update-main.js"
+    "copse": "./copse.js"
   },
   "scripts": {
-    "start": "node index.js",
-    "approval": "node index.js",
-    "merge-when-ready": "node index.js",
-    "create-prs": "node create-prs.js",
-    "pr-status": "node pr-status.js",
-    "rerun-failed": "node rerun-failed.js",
-    "test": "node pr-status.js",
-    "update-main": "node update-main.js"
+    "start": "node copse.js",
+    "test": "node copse.js pr-status"
+  },
+  "homepage": "https://copse.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jonathanKingston/copse.git"
   }
 }

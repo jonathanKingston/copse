@@ -3,10 +3,12 @@
 /**
  * Lists open agent PRs and their test/CI status: failed workflow runs and reruns.
  *
- * Usage: pr-status <repo> [agent] [options]
+ * Usage: pr-status [repo] [agent] [options]
+ *        Omit repo when run inside a git repo to use origin remote.
  */
 
 import { execSync } from "child_process";
+import { getOriginRepo } from "../lib/utils.js";
 
 const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -71,11 +73,12 @@ function listWorkflowRuns(repo, branch) {
 function main() {
   const args = process.argv.slice(2);
   const all = args.includes("--all");
-  const filtered = args.filter((a) => a !== "--all");
+  const filtered = args.filter((a) => !["--all", "--mine"].includes(a));
 
-  const help = `Usage: pr-status <repo> [agent] [options]
+  const help = `Usage: pr-status [repo] [agent] [options]
 
-  repo       GitHub repo in owner/name format (e.g. acme/cool-project)
+  repo       GitHub repo in owner/name format (e.g. acme/cool-project).
+             Omit when run inside a git repo to use origin remote.
   agent      Optional: "cursor" or "claude" to filter PRs. Omit to match both.
 
 Options:
@@ -83,28 +86,37 @@ Options:
   --all      Include PRs from all authors
 
 Examples:
+  pr-status                    # Uses origin when run inside a git repo
   pr-status acme/cool-project
   pr-status acme/cool-project cursor
   pr-status acme/cool-project claude --all
 `;
 
-  if (filtered.length < 1) {
-    console.error(help);
-    process.exit(1);
-  }
-
-  const repo = filtered[0];
-  validateRepo(repo);
+  let repo;
   let agent = null;
-  const rest = filtered.slice(1);
+  let afterRepo;
+
+  if (filtered.length >= 1 && REPO_PATTERN.test(filtered[0])) {
+    repo = filtered[0];
+    afterRepo = filtered.slice(1);
+  } else {
+    repo = getOriginRepo();
+    if (!repo) {
+      console.error(help);
+      process.exit(1);
+    }
+    afterRepo = filtered;
+  }
 
   if (
-    rest.length >= 1 &&
-    !rest[0].startsWith("--") &&
-    ["cursor", "claude"].includes(rest[0].toLowerCase())
+    afterRepo.length >= 1 &&
+    !afterRepo[0].startsWith("--") &&
+    ["cursor", "claude"].includes(afterRepo[0].toLowerCase())
   ) {
-    agent = rest[0].toLowerCase();
+    agent = afterRepo[0].toLowerCase();
   }
+
+  validateRepo(repo);
 
   const mineOnly = !all;
   let currentUser = null;
