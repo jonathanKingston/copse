@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Copse - Manage Your Agent PRs</title>
+    <meta name="description" content="Five simple commands for managing agent-created pull requests with GitHub CLI">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="24" cy="24" r="20" fill="#A8D8EA" stroke="#7FB3D5" stroke-width="2"/>
+                    <path d="M18 24L22 28L30 20" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <h1>Copse</h1>
+            </div>
+            <p class="tagline">Tools for managing agent-created PRs</p>
+        </header>
+
+        <main>
+            <section class="hero">
+                <h2>Streamline your AI workflow</h2>
+                <p>Copse helps you manage pull requests created by Cursor and Claude agents with a simple, powerful CLI tool.</p>
+            </section>
+
+            <section class="features">
+                <div class="feature">
+                    <div class="feature-icon" style="background: #FFE5E5;">
+                        <span>✓</span>
+                    </div>
+                    <h3>approval</h3>
+                    <p>Enable merge when ready on matching PRs</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: #E5F3FF;">
+                        <span>+</span>
+                    </div>
+                    <h3>create-prs</h3>
+                    <p>Find recent agent branches and create PRs</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: #F0E5FF;">
+                        <span>◉</span>
+                    </div>
+                    <h3>pr-status</h3>
+                    <p>View open agent PRs with test failures</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: #E5FFE5;">
+                        <span>↻</span>
+                    </div>
+                    <h3>rerun-failed</h3>
+                    <p>Rerun failed workflow runs on branches</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: #FFF5E5;">
+                        <span>⇄</span>
+                    </div>
+                    <h3>update-main</h3>
+                    <p>Merge main into PR branches to keep them current</p>
+                </div>
+            </section>
+
+            <section class="install">
+                <h2>Get Started</h2>
+                <div class="install-steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h4>Install Prerequisites</h4>
+                            <p>You'll need <a href="https://cli.github.com/" target="_blank">GitHub CLI</a> and Node.js 18+</p>
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h4>Install Copse</h4>
+                            <div class="code-block">
+                                <code>npm install -g copse</code>
+                                <button class="copy-btn" onclick="copyToClipboard('npm install -g copse')">Copy</button>
+                            </div>
+                            <p class="alt-text">Or clone and use directly:</p>
+                            <div class="code-block">
+                                <code>git clone https://github.com/jonathanKingston/copse.git</code>
+                                <button class="copy-btn" onclick="copyToClipboard('git clone https://github.com/jonathanKingston/copse.git')">Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h4>Start Using</h4>
+                            <div class="code-block">
+                                <code>copse approval owner/repo cursor</code>
+                                <button class="copy-btn" onclick="copyToClipboard('copse approval owner/repo cursor')">Copy</button>
+                            </div>
+                            <p>Enable auto-merge on all your Cursor agent PRs</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="completion">
+                <h2>Tab Completion</h2>
+                <p class="completion-intro">Copse includes built-in tab completion for Bash and Zsh. Add one line to your shell config:</p>
+                <div class="completion-grid">
+                    <div class="completion-option">
+                        <h4>Zsh</h4>
+                        <p>Add to <code class="inline-code">~/.zshrc</code>:</p>
+                        <div class="code-block">
+                            <code>eval "$(copse completion zsh)"</code>
+                            <button class="copy-btn" onclick="copyToClipboard('eval &quot;$(copse completion zsh)&quot;')">Copy</button>
+                        </div>
+                    </div>
+                    <div class="completion-option">
+                        <h4>Bash</h4>
+                        <p>Add to <code class="inline-code">~/.bashrc</code>:</p>
+                        <div class="code-block">
+                            <code>eval "$(copse completion bash)"</code>
+                            <button class="copy-btn" onclick="copyToClipboard('eval &quot;$(copse completion bash)&quot;')">Copy</button>
+                        </div>
+                    </div>
+                </div>
+                <p class="completion-note">Then open a new terminal or run <code class="inline-code">source ~/.zshrc</code> (or <code class="inline-code">~/.bashrc</code>)</p>
+            </section>
+
+            <section class="examples">
+                <h2>Quick Examples</h2>
+                <div class="example-grid">
+                    <div class="example">
+                        <h4>Enable merge when ready</h4>
+                        <div class="code-block">
+                            <code>copse approval acme/project cursor</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Create PRs from recent branches</h4>
+                        <div class="code-block">
+                            <code>copse create-prs acme/project claude</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Check PR test status</h4>
+                        <div class="code-block">
+                            <code>copse pr-status</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Rerun failed tests</h4>
+                        <div class="code-block">
+                            <code>copse rerun-failed acme/project cursor</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Update PRs with main</h4>
+                        <div class="code-block">
+                            <code>copse update-main acme/project</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Preview without changes</h4>
+                        <div class="code-block">
+                            <code>copse approval acme/project cursor --dry-run</code>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="why">
+                <h2>Why Copse?</h2>
+                <div class="why-grid">
+                    <div class="why-item">
+                        <h4>Built for AI workflows</h4>
+                        <p>Specifically designed for managing PRs created by Cursor and Claude agents</p>
+                    </div>
+                    <div class="why-item">
+                        <h4>Simple & focused</h4>
+                        <p>Five commands that do exactly what you need, nothing more</p>
+                    </div>
+                    <div class="why-item">
+                        <h4>Tab completion</h4>
+                        <p>Built-in autocomplete for Bash and Zsh shells</p>
+                    </div>
+                    <div class="why-item">
+                        <h4>GitHub native</h4>
+                        <p>Uses GitHub CLI for reliable, authenticated operations</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>
+                <a href="https://github.com/jonathanKingston/copse" target="_blank">GitHub</a>
+                <span class="separator">•</span>
+                <a href="https://github.com/jonathanKingston/copse#readme" target="_blank">Documentation</a>
+            </p>
+            <p class="copyright">Made with care for better AI workflows</p>
+        </footer>
+    </div>
+
+    <script>
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        }
+    </script>
+</body>
+</html>
