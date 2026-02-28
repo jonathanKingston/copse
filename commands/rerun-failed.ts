@@ -1,12 +1,15 @@
 /**
  * Finds recent agent branches (cursor/*, claude/*) and reruns failed workflow runs.
  *
- * Usage: rerun-failed <repo> <agent> [options]
+ * Usage: rerun-failed [repo] [agent] [options]
+ *        Omit repo when run inside a git repo to use origin remote.
+ *        Omit agent to include both cursor and claude branches.
  */
 
+import { getOriginRepo } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
 import {
-  validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
+  REPO_PATTERN, validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
 } from "../lib/gh.js";
 import { parseStandardFlags, parseHoursOption, calculateSinceDate } from "../lib/args.js";
 import { getUserForDisplay } from "../lib/filters.js";
@@ -42,10 +45,11 @@ function main(): void {
   const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
   const { dryRun, mineOnly } = flags;
 
-  const help = `Usage: rerun-failed <repo> <agent> [options]
+  const help = `Usage: rerun-failed [repo] [agent] [options]
 
-  repo       GitHub repo in owner/name format (e.g. acme/cool-project)
-  agent      "cursor" or "claude" to filter branches
+  repo       GitHub repo in owner/name format (e.g. acme/cool-project).
+             Omit when run inside a git repo to use origin remote.
+  agent      Optional: "cursor" or "claude" to filter branches. Omit to match both.
 
 Options:
   --hours N   Only branches with commits in last N hours (default: 24)
@@ -54,20 +58,40 @@ Options:
   --dry-run   Show branches and runs that would be rerun without triggering
 
 Examples:
+  rerun-failed                         # Uses origin, both agents
+  rerun-failed acme/cool-project       # Both agents
   rerun-failed acme/cool-project cursor
   rerun-failed acme/cool-project claude --hours 48 --dry-run
   rerun-failed acme/cool-project cursor --all
 `;
 
-  if (filtered.length < 2) {
-    console.error(help);
-    process.exit(1);
+  let repo: string;
+  let agent: string | null = null;
+  let rest: string[];
+
+  if (filtered.length >= 1 && REPO_PATTERN.test(filtered[0])) {
+    repo = filtered[0];
+    if (filtered.length >= 2 && ["cursor", "claude"].includes(filtered[1].toLowerCase())) {
+      agent = validateAgent(filtered[1]);
+      rest = filtered.slice(2);
+    } else {
+      rest = filtered.slice(1);
+    }
+  } else {
+    repo = getOriginRepo() ?? "";
+    if (!repo) {
+      console.error(help);
+      process.exit(1);
+    }
+    if (filtered.length >= 1 && ["cursor", "claude"].includes(filtered[0].toLowerCase())) {
+      agent = validateAgent(filtered[0]);
+      rest = filtered.slice(1);
+    } else {
+      rest = filtered;
+    }
   }
 
-  const [repo, agentRaw] = filtered.slice(0, 2);
   validateRepo(repo);
-  const agent = validateAgent(agentRaw);
-  const rest = filtered.slice(2);
 
   let hours = 24;
 
@@ -80,7 +104,10 @@ Examples:
   }
 
   const currentUser = getUserForDisplay(mineOnly);
-  const pattern = AGENT_BRANCH_PATTERNS[agent];
+  const pattern = agent
+    ? AGENT_BRANCH_PATTERNS[agent]
+    : /^(cursor|claude)\//i;
+  const agentLabel = agent ? `${agent}/*` : "cursor/* or claude/*";
   const since = calculateSinceDate(hours);
 
   if (mineOnly) {
@@ -92,7 +119,7 @@ Examples:
   const agentBranches = allBranches.filter((b) => pattern.test(b));
 
   if (agentBranches.length === 0) {
-    console.error(`No agent branches (${agent}/*) found.`);
+    console.error(`No agent branches (${agentLabel}) found.`);
     process.exit(0);
   }
 

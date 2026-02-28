@@ -194,13 +194,15 @@ npm test
 Finds recent agent branches (`cursor/*`, `claude/*`) and reruns any failed GitHub Actions workflow runs on them.
 
 ```
-copse rerun-failed <repo> <agent> [options]
+copse rerun-failed [repo] [agent] [options]
 ```
+
+Omit `repo` when run inside a git repo to use the origin remote. Omit `agent` to include both cursor and claude branches.
 
 | Argument | Description |
 |----------|--------------|
-| `repo` | GitHub repo in `owner/name` format |
-| `agent` | `cursor` or `claude` to filter branches |
+| `repo` | GitHub repo in `owner/name` format (default: origin when in a git repo) |
+| `agent` | Optional: `cursor` or `claude` to filter branches. Omit to match both. |
 | `--hours N` | Only branches with commits in last N hours (default: 24) |
 | `--mine` | Only your branches (default) |
 | `--all` | Include branches from all authors |
@@ -209,6 +211,9 @@ copse rerun-failed <repo> <agent> [options]
 #### Examples
 
 ```bash
+# Uses origin repo, both agents
+copse rerun-failed
+
 # Rerun failed tests on cursor branches from last 24 hours
 copse rerun-failed acme/cool-project cursor
 
