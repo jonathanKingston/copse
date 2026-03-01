@@ -34,6 +34,20 @@ export interface ExecError {
   message?: string;
 }
 
+export interface PRReviewComment {
+  id: number;
+  body: string;
+  path: string;
+  line: number | null;
+  original_line: number | null;
+  diff_hunk: string;
+  user: { login: string };
+  created_at: string;
+  html_url: string;
+  pull_request_url: string;
+  in_reply_to_id?: number | null;
+}
+
 export interface CommandArg {
   name: string;
   description: string;

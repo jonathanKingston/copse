@@ -1,5 +1,5 @@
 import { execFileSync } from "child_process";
-import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun } from "./types.js";
+import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment } from "./types.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -111,6 +111,36 @@ export interface CommitInfo {
   message?: string;
   date: Date | null;
   authorLogin: string;
+}
+
+export function listPRReviewComments(repo: string, prNumber: number): PRReviewComment[] {
+  try {
+    const out = gh(
+      "api",
+      `repos/${repo}/pulls/${prNumber}/comments`,
+      "--method", "GET",
+      "-f", "per_page=100"
+    );
+    const arr = JSON.parse(out) as unknown;
+    return Array.isArray(arr) ? (arr as PRReviewComment[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function replyToPRComment(
+  repo: string,
+  prNumber: number,
+  inReplyToId: number,
+  body: string
+): void {
+  gh(
+    "api",
+    `repos/${repo}/pulls/${prNumber}/comments`,
+    "-X", "POST",
+    "-f", `body=${body}`,
+    "-f", `in_reply_to=${inReplyToId}`
+  );
 }
 
 export function getCommitInfo(repo: string, branchRef: string, includeMessage: boolean = false): CommitInfo {
