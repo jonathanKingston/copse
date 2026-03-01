@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Copse - Manage Your Agent PRs</title>
-    <meta name="description" content="Five simple commands for managing agent-created pull requests with GitHub CLI">
+    <meta name="description" content="Eight commands for managing agent-created pull requests with GitHub CLI">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -65,6 +65,30 @@
                     </div>
                     <h3>update-main</h3>
                     <p>Merge main into PR branches to keep them current</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: #E5EEFF;">
+                        <span>💬</span>
+                    </div>
+                    <h3>pr-comments</h3>
+                    <p>View and reply to PR review comments interactively</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: #FFE5F0;">
+                        <span>🎫</span>
+                    </div>
+                    <h3>spin-up-issue</h3>
+                    <p>Create issues and instruct agents to build them</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: #E5FFF0;">
+                        <span>📊</span>
+                    </div>
+                    <h3>status</h3>
+                    <p>Unified dashboard of agent PRs across all repos</p>
                 </div>
             </section>
 
@@ -177,6 +201,27 @@
                             <code>copse approval acme/project cursor --dry-run</code>
                         </div>
                     </div>
+
+                    <div class="example">
+                        <h4>Reply to PR review comments</h4>
+                        <div class="code-block">
+                            <code>copse pr-comments acme/project cursor</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Create an issue for an agent</h4>
+                        <div class="code-block">
+                            <code>copse spin-up-issue acme/project "Add dark mode"</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Live dashboard of all agent PRs</h4>
+                        <div class="code-block">
+                            <code>copse status --watch</code>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -189,7 +234,7 @@
                     </div>
                     <div class="why-item">
                         <h4>Simple & focused</h4>
-                        <p>Five commands that do exactly what you need, nothing more</p>
+                        <p>Eight commands that do exactly what you need, nothing more</p>
                     </div>
                     <div class="why-item">
                         <h4>Tab completion</h4>
