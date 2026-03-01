@@ -17,12 +17,18 @@ export function validateAgent(agent: string): string {
   return agentLower;
 }
 
+const GH_TIMEOUT_MS = 30_000;
+
 export function gh(...args: string[]): string {
-  return execFileSync("gh", args, { encoding: "utf-8" });
+  return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS });
 }
 
+let _cachedUser: string | null = null;
 export function getCurrentUser(): string {
-  return gh("api", "user", "-q", ".login").trim();
+  if (!_cachedUser) {
+    _cachedUser = gh("api", "user", "-q", ".login").trim();
+  }
+  return _cachedUser;
 }
 
 export function formatGhError(e: ExecError, context: string = ""): string {
@@ -71,6 +77,72 @@ export function getAgentForPR(pr: PR): string | null {
     if (matchesAgent(pr, agent)) return agent;
   }
   return null;
+}
+
+/**
+ * Batched check: for a set of PRs that didn't match by branch/label,
+ * fetch only the last commit's authors via a single GraphQL query
+ * and test against agent patterns. Returns PR numbers that matched.
+ */
+export function checkPRsForAgentCoAuthors(
+  repo: string,
+  prs: PR[],
+  agent: string | null
+): Set<number> {
+  if (prs.length === 0) return new Set();
+
+  const [owner, name] = repo.split("/");
+
+  const prFragments = prs.map(
+    (pr) =>
+      `pr_${pr.number}: pullRequest(number: ${pr.number}) {
+        commits(last: 1) {
+          nodes { commit { authors(first: 10) { nodes { name user { login } } } } }
+        }
+      }`
+  );
+
+  const query = `query($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      ${prFragments.join("\n      ")}
+    }
+  }`;
+
+  try {
+    const out = gh(
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-f", `owner=${owner}`,
+      "-f", `name=${name}`
+    );
+
+    const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+      .data?.repository ?? {};
+
+    const patterns = agent
+      ? [AGENT_PATTERNS_WITH_LABELS[agent]].filter(Boolean)
+      : Object.values(AGENT_PATTERNS_WITH_LABELS);
+
+    const matched = new Set<number>();
+    for (const pr of prs) {
+      const prData = repoData[`pr_${pr.number}`] as {
+        commits?: { nodes: Array<{ commit: { authors: { nodes: Array<{ name: string; user: { login: string } | null }> } } }> };
+      } | undefined;
+      const commits = prData?.commits?.nodes ?? [];
+      for (const node of commits) {
+        for (const author of node.commit?.authors?.nodes ?? []) {
+          const login = author.user?.login ?? "";
+          const authorName = author.name ?? "";
+          if (patterns.some((p) => p.branch.test(login) || p.branch.test(authorName))) {
+            matched.add(pr.number);
+          }
+        }
+      }
+    }
+    return matched;
+  } catch {
+    return new Set();
+  }
 }
 
 export function listOpenPRs(repo: string, fields: string[]): PR[] {

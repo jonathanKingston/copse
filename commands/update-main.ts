@@ -77,7 +77,7 @@ Examples:
   console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
   
   const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "author"]);
-  const matching = filterPRs(prs, { agent, mineOnly });
+  const matching = filterPRs(prs, { repo, agent, mineOnly });
 
   if (matching.length === 0) {
     console.error("No matching PRs found.");
