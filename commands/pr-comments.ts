@@ -205,6 +205,7 @@ Examples:
     const currentUser = getUserForDisplay(mineOnly);
     console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
     prs = filterPRs(listOpenPRs(repo, ["number", "headRefName", "labels", "title", "author"]), {
+      repo,
       agent,
       mineOnly,
     });

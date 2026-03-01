@@ -1,14 +1,33 @@
 import type { PR } from "./types.js";
-import { getCurrentUser, matchesAgent } from "./gh.js";
+import { getCurrentUser, matchesAgent, checkPRsForAgentCoAuthors } from "./gh.js";
 
 export interface FilterOptions {
+  repo: string;
   agent: string | null;
   mineOnly: boolean;
   query?: string | null;
 }
 
-export function filterPRsByAgent(prs: PR[], agent: string | null): PR[] {
-  return prs.filter((pr) => matchesAgent(pr, agent));
+export function filterPRsByAgent(prs: PR[], agent: string | null, repo: string): PR[] {
+  const matched: PR[] = [];
+  const unmatched: PR[] = [];
+
+  for (const pr of prs) {
+    if (matchesAgent(pr, agent)) {
+      matched.push(pr);
+    } else {
+      unmatched.push(pr);
+    }
+  }
+
+  if (unmatched.length > 0) {
+    const coAuthorHits = checkPRsForAgentCoAuthors(repo, unmatched, agent);
+    for (const pr of unmatched) {
+      if (coAuthorHits.has(pr.number)) matched.push(pr);
+    }
+  }
+
+  return matched;
 }
 
 export function filterPRsByAuthor(prs: PR[], currentUser: string): PR[] {
@@ -20,11 +39,13 @@ export function filterPRsByAuthor(prs: PR[], currentUser: string): PR[] {
 
 export function filterPRs(prs: PR[], options: FilterOptions): PR[] {
   let filtered = prs;
-  
-  if (options.agent || options.agent === null) {
-    filtered = filterPRsByAgent(filtered, options.agent);
+
+  // Apply cheap filters first to reduce the set before the co-author check
+  if (options.mineOnly) {
+    const currentUser = getCurrentUser();
+    filtered = filterPRsByAuthor(filtered, currentUser);
   }
-  
+
   if (options.query) {
     filtered = filtered.filter((pr) => {
       const q = options.query!.toLowerCase();
@@ -33,12 +54,9 @@ export function filterPRs(prs: PR[], options: FilterOptions): PR[] {
       return title.includes(q) || body.includes(q);
     });
   }
-  
-  if (options.mineOnly) {
-    const currentUser = getCurrentUser();
-    filtered = filterPRsByAuthor(filtered, currentUser);
-  }
-  
+
+  filtered = filterPRsByAgent(filtered, options.agent, options.repo);
+
   return filtered;
 }
 

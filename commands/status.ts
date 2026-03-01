@@ -50,43 +50,28 @@ function getUrgency(pr: PRWithStatus): Urgency {
   return "green";
 }
 
-function fetchPRsWithStatus(
-  repos: string[],
-  mineOnly: boolean
-): PRWithStatus[] {
+function sortPRs(prs: PRWithStatus[]): PRWithStatus[] {
+  return prs.sort((a, b) => {
+    return a.ageDays - b.ageDays;
+  });
+}
+
+function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
   const result: PRWithStatus[] = [];
   const now = Date.now();
 
   for (const repo of repos) {
     validateRepo(repo);
     const rawPRs = listOpenPRs(repo, STATUS_FIELDS);
-    const matching = filterPRs(rawPRs, { agent: null, mineOnly });
+    const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly });
 
     for (const pr of matching) {
-      const agent = getAgentForPR(pr);
-      const runs = listWorkflowRuns(repo, pr.headRefName);
-      const failed = runs.filter((r) => r.conclusion === "failure");
-      const inProgress = runs.filter(
-        (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
-      );
-
-      let ciStatus: PRWithStatus["ciStatus"] = "none";
-      if (failed.length > 0) ciStatus = "fail";
-      else if (inProgress.length > 0) ciStatus = "pending";
-      else if (runs.some((r) => r.conclusion === "success")) ciStatus = "pass";
-
       const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
-      const conflicts = mergeStateStatus === "HAS_CONFLICTS";
       const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
       const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
       const ageDays = updatedAt
         ? Math.floor((now - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000))
         : 0;
-      const stale = ageDays >= STALE_DAYS;
-      const readyToMerge =
-        ciStatus === "pass" &&
-        !conflicts &&
-        (reviewDecision === "APPROVED" || reviewDecision === null);
 
       result.push({
         repo,
@@ -98,23 +83,43 @@ function fetchPRsWithStatus(
         mergeable: (pr as { mergeable?: string }).mergeable ?? "UNKNOWN",
         reviewDecision,
         updatedAt,
-        agent,
-        ciStatus,
-        conflicts,
+        agent: getAgentForPR(pr),
+        ciStatus: "pending",
+        conflicts: mergeStateStatus === "HAS_CONFLICTS",
         ageDays,
-        stale,
-        readyToMerge,
+        stale: ageDays >= STALE_DAYS,
+        readyToMerge: false,
       });
     }
   }
 
-  return result.sort((a, b) => {
-    const ua = getUrgency(a);
-    const ub = getUrgency(b);
-    const order = { red: 0, amber: 1, green: 2 };
-    if (order[ua] !== order[ub]) return order[ua] - order[ub];
-    return b.ageDays - a.ageDays;
-  });
+  return sortPRs(result);
+}
+
+function updatePRCIStatus(pr: PRWithStatus): void {
+  const runs = listWorkflowRuns(pr.repo, pr.headRefName);
+  const failed = runs.filter((r) => r.conclusion === "failure");
+  const inProgress = runs.filter(
+    (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
+  );
+
+  if (failed.length > 0) pr.ciStatus = "fail";
+  else if (inProgress.length > 0) pr.ciStatus = "pending";
+  else if (runs.some((r) => r.conclusion === "success")) pr.ciStatus = "pass";
+  else pr.ciStatus = "none";
+
+  pr.readyToMerge =
+    pr.ciStatus === "pass" &&
+    !pr.conflicts &&
+    (pr.reviewDecision === "APPROVED" || pr.reviewDecision === null);
+}
+
+function fetchPRsWithStatus(repos: string[], mineOnly: boolean): PRWithStatus[] {
+  const prs = fetchPRsBase(repos, mineOnly);
+  for (const pr of prs) {
+    try { updatePRCIStatus(pr); } catch { /* leave as pending */ }
+  }
+  return sortPRs(prs);
 }
 
 const ANSI = {
@@ -140,27 +145,32 @@ function formatReview(pr: PRWithStatus): string {
   return `${ANSI.dim}○${ANSI.reset}`;
 }
 
+function formatPRRow(pr: PRWithStatus): string {
+  const urgency = getUrgency(pr);
+  const color = ANSI[urgency];
+  const repoShort = pr.repo.length > 18 ? pr.repo.slice(0, 15) + "…" : pr.repo.padEnd(18);
+  const agent = (pr.agent ?? "?").padEnd(7);
+  const ci = formatCI(pr);
+  const rev = formatReview(pr);
+  const con = pr.conflicts ? `${ANSI.red}✗${ANSI.reset}` : `${ANSI.green}—${ANSI.reset}`;
+  const age = pr.ageDays >= STALE_DAYS ? `${ANSI.amber}${pr.ageDays}d${ANSI.reset}` : `${pr.ageDays}d`;
+  const titleShort = pr.title.slice(0, 35) + (pr.title.length > 35 ? "…" : "");
+  return `${color}${repoShort} #${String(pr.number).padEnd(4)} ${agent} ${ci}   ${rev}   ${con}   ${age.padEnd(4)} ${titleShort}${ANSI.reset}`;
+}
+
+const TABLE_HEADER = `${ANSI.bold}REPO               #  AGENT    CI  REV  CON  AGE  TITLE${ANSI.reset}`;
+const TABLE_SEPARATOR = "-".repeat(80);
+
 function renderTable(prs: PRWithStatus[]): void {
   if (prs.length === 0) {
     console.log("No agent PRs found.");
     return;
   }
 
-  const header = `${ANSI.bold}REPO               #  AGENT    CI  REV  CON  AGE  TITLE${ANSI.reset}`;
-  console.log(header);
-  console.log("-".repeat(80));
-
+  console.log(TABLE_HEADER);
+  console.log(TABLE_SEPARATOR);
   for (const pr of prs) {
-    const urgency = getUrgency(pr);
-    const color = ANSI[urgency];
-    const repoShort = pr.repo.length > 18 ? pr.repo.slice(0, 15) + "…" : pr.repo.padEnd(18);
-    const agent = (pr.agent ?? "?").padEnd(7);
-    const ci = formatCI(pr);
-    const rev = formatReview(pr);
-    const con = pr.conflicts ? `${ANSI.red}✗${ANSI.reset}` : `${ANSI.green}—${ANSI.reset}`;
-    const age = pr.ageDays >= STALE_DAYS ? `${ANSI.amber}${pr.ageDays}d${ANSI.reset}` : `${pr.ageDays}d`;
-    const titleShort = pr.title.slice(0, 35) + (pr.title.length > 35 ? "…" : "");
-    console.log(`${color}${repoShort} #${String(pr.number).padEnd(4)} ${agent} ${ci}   ${rev}   ${con}   ${age.padEnd(4)} ${titleShort}${ANSI.reset}`);
+    console.log(formatPRRow(pr));
   }
 }
 
@@ -170,17 +180,50 @@ function runOnce(repos: string[], mineOnly: boolean): void {
 }
 
 function runWatch(repos: string[], mineOnly: boolean): void {
-  const clearAndHome = "\x1b[2J\x1b[H";
+  const TITLE = `copse status — refresh every ${WATCH_INTERVAL_MS / 1000}s (Ctrl+C to quit)`;
+  // line 1 = TITLE, 2 = blank, 3 = table header, 4 = separator, 5+ = rows
+  const ROW_START = 5;
+  let prevRowCount = -1;
 
   function refresh(): void {
-    process.stdout.write(clearAndHome);
-    const prs = fetchPRsWithStatus(repos, mineOnly);
-    console.log(`copse status — refresh every ${WATCH_INTERVAL_MS / 1000}s (Ctrl+C to quit)\n`);
-    renderTable(prs);
+    try {
+      const prs = fetchPRsBase(repos, mineOnly);
+
+      if (prevRowCount < 0) {
+        process.stdout.write("\x1b[2J\x1b[H");
+        console.log(TITLE + "\n");
+        console.log(TABLE_HEADER);
+        console.log(TABLE_SEPARATOR);
+      }
+
+      for (let i = 0; i < prs.length; i++) {
+        try { updatePRCIStatus(prs[i]); } catch { /* leave as pending */ }
+        process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K${formatPRRow(prs[i])}`);
+      }
+
+      if (prevRowCount > prs.length) {
+        for (let i = prs.length; i < prevRowCount; i++) {
+          process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K`);
+        }
+      }
+
+      prevRowCount = prs.length;
+      process.stdout.write(`\x1b[${ROW_START + prs.length};1H\x1b[2K`);
+      if (prs.length === 0) console.log("No agent PRs found.");
+    } catch (e: unknown) {
+      const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
+      const errLine = ROW_START + Math.max(prevRowCount, 0);
+      process.stdout.write(`\x1b[${errLine};1H\x1b[2K`);
+      console.error(`\x1b[33mAPI error, will retry: ${msg}\x1b[0m`);
+    }
   }
 
-  refresh();
-  setInterval(refresh, WATCH_INTERVAL_MS);
+  function loop(): void {
+    refresh();
+    setTimeout(loop, WATCH_INTERVAL_MS);
+  }
+
+  loop();
 }
 
 function main(): void {
