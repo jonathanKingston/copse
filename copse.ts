@@ -47,6 +47,15 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
+  status: {
+    file: "status.js",
+    description: "Unified dashboard: agent PRs across all repos (htop-style)",
+    usage: "copse status [--watch] [--all]",
+    args: [
+      { name: "--watch", description: "Live-updating TUI (refresh every 10s)" },
+      { name: "--all", description: "Include PRs from all authors" },
+    ],
+  },
   "rerun-failed": {
     file: "rerun-failed.js",
     description: "Reruns failed workflow runs on recent agent branches",
@@ -118,6 +127,7 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
   
   const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const statusOpts: Record<string, string> = { "--watch": "Live-updating TUI", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
   const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
   const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };
@@ -153,6 +163,9 @@ _copse() {
       case \$line[1] in
         approval|pr-status)
           _arguments ${formatOptArgs(commonOpts)}
+          ;;
+        status)
+          _arguments ${formatOptArgs(statusOpts)}
           ;;
         update-main)
           _arguments ${formatOptArgs(baseOpts)}
@@ -195,6 +208,9 @@ _copse_completion() {
     case "\${COMP_WORDS[1]}" in
         approval|pr-status)
             COMPREPLY=( $(compgen -W "${formatBashOpts(commonOpts)}" -- "$cur") )
+            ;;
+        status)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(statusOpts)}" -- "$cur") )
             ;;
         update-main)
             COMPREPLY=( $(compgen -W "${formatBashOpts(baseOpts)}" -- "$cur") )
