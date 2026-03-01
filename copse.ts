@@ -47,6 +47,17 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
+  "pr-comments": {
+    file: "pr-comments.js",
+    description: "Lists PR review comments on agent PRs; interactive reply for Cursor/Claude",
+    usage: "copse pr-comments [repo] [pr-number|agent] [options]",
+    args: [
+      { name: "repo", description: "GitHub repo in owner/name format (default: origin)" },
+      { name: "pr-number|agent", description: "Specific PR number or filter: cursor/claude" },
+      { name: "--no-interactive", description: "Only list comments, do not enter reply loop" },
+      { name: "--all", description: "Include PRs from all authors" },
+    ],
+  },
   status: {
     file: "status.js",
     description: "Unified dashboard: agent PRs across all repos (htop-style)",
@@ -128,6 +139,7 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   
   const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const statusOpts: Record<string, string> = { "--watch": "Live-updating TUI", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const prCommentsOpts: Record<string, string> = { "--no-interactive": "List only, no reply loop", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
   const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
   const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };
@@ -163,6 +175,9 @@ _copse() {
       case \$line[1] in
         approval|pr-status)
           _arguments ${formatOptArgs(commonOpts)}
+          ;;
+        pr-comments)
+          _arguments ${formatOptArgs(prCommentsOpts)}
           ;;
         status)
           _arguments ${formatOptArgs(statusOpts)}
@@ -208,6 +223,9 @@ _copse_completion() {
     case "\${COMP_WORDS[1]}" in
         approval|pr-status)
             COMPREPLY=( $(compgen -W "${formatBashOpts(commonOpts)}" -- "$cur") )
+            ;;
+        pr-comments)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(prCommentsOpts)}" -- "$cur") )
             ;;
         status)
             COMPREPLY=( $(compgen -W "${formatBashOpts(statusOpts)}" -- "$cur") )

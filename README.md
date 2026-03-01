@@ -2,10 +2,11 @@
 
 Tools for managing agent-created PRs. Available at [copse.dev](https://copse.dev).
 
-Six commands for managing agent-created PRs:
+Seven commands for managing agent-created PRs:
 
 - **approval** – Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue)
 - **create-prs** – Finds recent agent branches and creates PRs from them
+- **pr-comments** – Lists PR review comments on agent PRs; interactive reply for Cursor/Claude
 - **pr-status** – Outlines open agent PRs with test failures and rerun info (also available as `npm test`)
 - **rerun-failed** – Reruns failed workflow runs on recent agent branches
 - **spin-up-issue** – Creates an issue and comments to instruct the specified agent (cursor or claude) to build it
@@ -67,7 +68,7 @@ source ~/.bashrc  # for bash
 
 | Type this | Tab completes to |
 |-----------|------------------|
-| `copse pr-` | `pr-status` |
+| `copse pr-` | `pr-comments`, `pr-status` |
 | `copse ` (with space) | subcommands: `approval`, `create-prs`, `pr-status`, etc. |
 | After a subcommand | `--dry-run`, `--all`, `--mine`, `--help` |
 
@@ -188,6 +189,37 @@ copse pr-status acme/cool-project claude --all
 
 # Same as pr-status (npm test runs this)
 npm test
+```
+
+### copse pr-comments
+
+Lists PR review comments on agent PRs so you can view them in the terminal. In interactive mode, select a comment and reply—e.g. "please fix this"—so Cursor or Claude can see and act on your feedback when viewing the PR.
+
+```
+copse pr-comments [repo] [pr-number|agent] [options]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `repo` | GitHub repo in `owner/name` format. Omit when run inside a git repo to use origin remote. |
+| `pr-number` | Specific PR to list comments for. |
+| `agent` | Filter PRs by `cursor` or `claude`. Omit to match both. |
+| `--no-interactive` | Only list comments; do not enter the reply loop. |
+| `--mine` | Only your PRs (default) |
+| `--all` | Include PRs from all authors |
+
+#### Examples
+
+```bash
+# List comments on agent PRs, then select and reply (interactive)
+copse pr-comments
+copse pr-comments acme/cool-project cursor
+
+# Comments on a specific PR
+copse pr-comments acme/cool-project 42
+
+# List only, no interactive reply
+copse pr-comments acme/cool-project claude --no-interactive
 ```
 
 ### copse rerun-failed
