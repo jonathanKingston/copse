@@ -113,6 +113,47 @@ export interface CommitInfo {
   authorLogin: string;
 }
 
+export function getResolvedCommentNodeIds(repo: string, prNumber: number): Set<string> {
+  const [owner, name] = repo.split("/");
+  const query = `query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100) {
+          nodes {
+            isResolved
+            comments(first: 100) {
+              nodes { id }
+            }
+          }
+        }
+      }
+    }
+  }`;
+  try {
+    const out = gh(
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-f", `owner=${owner}`,
+      "-f", `name=${name}`,
+      "-F", `number=${prNumber}`,
+      "-q", ".data.repository.pullRequest.reviewThreads.nodes"
+    );
+    const threads = JSON.parse(out) as Array<{
+      isResolved: boolean;
+      comments: { nodes: Array<{ id: string }> };
+    }>;
+    const ids = new Set<string>();
+    for (const t of threads) {
+      if (t.isResolved) {
+        for (const c of t.comments.nodes) ids.add(c.id);
+      }
+    }
+    return ids;
+  } catch {
+    return new Set();
+  }
+}
+
 export function listPRReviewComments(repo: string, prNumber: number): PRReviewComment[] {
   try {
     const out = gh(
@@ -122,7 +163,9 @@ export function listPRReviewComments(repo: string, prNumber: number): PRReviewCo
       "-f", "per_page=100"
     );
     const arr = JSON.parse(out) as unknown;
-    return Array.isArray(arr) ? (arr as PRReviewComment[]) : [];
+    if (!Array.isArray(arr)) return [];
+    const resolved = getResolvedCommentNodeIds(repo, prNumber);
+    return (arr as PRReviewComment[]).filter(c => !resolved.has(c.node_id));
   } catch {
     return [];
   }
@@ -139,6 +182,52 @@ export function replyToPRComment(
     `repos/${repo}/pulls/${prNumber}/comments/${inReplyToId}/replies`,
     "-X", "POST",
     "-f", `body=${body}`
+  );
+}
+
+export function resolveReviewThread(repo: string, prNumber: number, commentNodeId: string): void {
+  const [owner, name] = repo.split("/");
+
+  const threadQuery = `query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100) {
+          nodes {
+            id
+            comments(first: 100) {
+              nodes { id }
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+  const out = gh(
+    "api", "graphql",
+    "-f", `query=${threadQuery}`,
+    "-f", `owner=${owner}`,
+    "-f", `name=${name}`,
+    "-F", `number=${prNumber}`,
+    "-q", ".data.repository.pullRequest.reviewThreads.nodes"
+  );
+
+  const threads = JSON.parse(out) as Array<{ id: string; comments: { nodes: Array<{ id: string }> } }>;
+  const thread = threads.find(t => t.comments.nodes.some(c => c.id === commentNodeId));
+  if (!thread) {
+    throw new Error("Could not find review thread for this comment");
+  }
+
+  const resolveMutation = `mutation($threadId: ID!) {
+    resolveReviewThread(input: { threadId: $threadId }) {
+      thread { isResolved }
+    }
+  }`;
+
+  gh(
+    "api", "graphql",
+    "-f", `query=${resolveMutation}`,
+    "-f", `threadId=${thread.id}`
   );
 }
 
