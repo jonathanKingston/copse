@@ -19,8 +19,30 @@ export function validateAgent(agent: string): string {
 
 const GH_TIMEOUT_MS = 30_000;
 
+let _interrupted = false;
+
+/** True after a gh child process was killed by SIGINT/SIGTERM (set synchronously). */
+export function isInterrupted(): boolean { return _interrupted; }
+
 export function gh(...args: string[]): string {
-  return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS });
+  try {
+    return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS });
+  } catch (e: unknown) {
+    const sig = (e as { signal?: string }).signal;
+    if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
+    throw e;
+  }
+}
+
+/** Like gh() but suppresses stderr output (for use in TUI watch modes). */
+export function ghQuiet(...args: string[]): string {
+  try {
+    return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio: "pipe" });
+  } catch (e: unknown) {
+    const sig = (e as { signal?: string }).signal;
+    if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
+    throw e;
+  }
 }
 
 let _cachedUser: string | null = null;
@@ -301,6 +323,50 @@ export function resolveReviewThread(repo: string, prNumber: number, commentNodeI
     "-f", `query=${resolveMutation}`,
     "-f", `threadId=${thread.id}`
   );
+}
+
+export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): Map<number, number> {
+  if (prNumbers.length === 0) return new Map();
+
+  const [owner, name] = repo.split("/");
+  const prFragments = prNumbers.map(
+    (num) =>
+      `pr_${num}: pullRequest(number: ${num}) {
+        reviewThreads(first: 100) {
+          nodes { isResolved }
+        }
+      }`
+  );
+
+  const query = `query($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      ${prFragments.join("\n      ")}
+    }
+  }`;
+
+  try {
+    const out = gh(
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-f", `owner=${owner}`,
+      "-f", `name=${name}`
+    );
+
+    const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+      .data?.repository ?? {};
+
+    const counts = new Map<number, number>();
+    for (const num of prNumbers) {
+      const prData = repoData[`pr_${num}`] as {
+        reviewThreads?: { nodes: Array<{ isResolved: boolean }> };
+      } | undefined;
+      const threads = prData?.reviewThreads?.nodes ?? [];
+      counts.set(num, threads.filter(t => !t.isResolved).length);
+    }
+    return counts;
+  } catch {
+    return new Map();
+  }
 }
 
 export function getCommitInfo(repo: string, branchRef: string, includeMessage: boolean = false): CommitInfo {
