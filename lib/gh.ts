@@ -136,10 +136,9 @@ export function replyToPRComment(
 ): void {
   gh(
     "api",
-    `repos/${repo}/pulls/${prNumber}/comments`,
+    `repos/${repo}/pulls/${prNumber}/comments/${inReplyToId}/replies`,
     "-X", "POST",
-    "-f", `body=${body}`,
-    "-f", `in_reply_to=${inReplyToId}`
+    "-f", `body=${body}`
   );
 }
 
