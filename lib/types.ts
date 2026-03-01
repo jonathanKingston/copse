@@ -36,6 +36,7 @@ export interface ExecError {
 
 export interface PRReviewComment {
   id: number;
+  node_id: string;
   body: string;
   path: string;
   line: number | null;

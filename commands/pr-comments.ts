@@ -17,6 +17,7 @@ import {
   listOpenPRs,
   listPRReviewComments,
   replyToPRComment,
+  resolveReviewThread,
   getAgentForPR,
   formatGhError,
 } from "../lib/gh.js";
@@ -261,21 +262,36 @@ async function runInteractiveLoop(repo: string, comments: CommentWithContext[]):
     console.log(formatCommentBody(ctx.comment.body));
     console.log(`\n${ANSI.dim}${hyperlink(ctx.comment.html_url, "View on GitHub")}${ANSI.reset}\n`);
 
-    const reply = await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `);
-    const replyTrimmed = reply.trim();
-    if (replyTrimmed.length === 0) {
-      console.error("Empty reply, skipping.");
-      continue;
-    }
+    const action = await rl.question(
+      `${ANSI.bold}[R]eply / [D]ismiss / Enter to skip:${ANSI.reset} `
+    );
+    const actionKey = action.trim().toLowerCase();
 
-    try {
-      const mention = (ctx.comment.user.login || ctx.agent || "").replace(/\[bot\]$/, "") || null;
-      const body = mention ? `@${mention} ${replyTrimmed}` : replyTrimmed;
-      replyToPRComment(repo, ctx.prNumber, ctx.comment.id, body);
-      console.log(`\x1b[32mReply posted${mention ? ` (cc @${mention})` : ""}.\x1b[0m`);
-    } catch (e: unknown) {
-      const err = e as ExecError;
-      console.error(`\x1b[31mFailed to post reply:\x1b[0m ${formatGhError(err)}`);
+    if (actionKey === "d" || actionKey === "dismiss") {
+      try {
+        resolveReviewThread(repo, ctx.prNumber, ctx.comment.node_id);
+        console.log(`\x1b[32mThread resolved.\x1b[0m`);
+      } catch (e: unknown) {
+        const err = e as ExecError;
+        console.error(`\x1b[31mFailed to resolve thread:\x1b[0m ${formatGhError(err)}`);
+      }
+    } else if (actionKey === "r" || actionKey === "reply") {
+      const reply = await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `);
+      const replyTrimmed = reply.trim();
+      if (replyTrimmed.length === 0) {
+        console.error("Empty reply, skipping.");
+        continue;
+      }
+
+      try {
+        const mention = (ctx.comment.user.login || ctx.agent || "").replace(/\[bot\]$/, "") || null;
+        const body = mention ? `@${mention} ${replyTrimmed}` : replyTrimmed;
+        replyToPRComment(repo, ctx.prNumber, ctx.comment.id, body);
+        console.log(`\x1b[32mReply posted${mention ? ` (cc @${mention})` : ""}.\x1b[0m`);
+      } catch (e: unknown) {
+        const err = e as ExecError;
+        console.error(`\x1b[31mFailed to post reply:\x1b[0m ${formatGhError(err)}`);
+      }
     }
   }
 }
