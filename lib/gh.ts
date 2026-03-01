@@ -1,5 +1,5 @@
 import { execFileSync } from "child_process";
-import type { PR, AgentPatternWithLabels, ExecError } from "./types.js";
+import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun } from "./types.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -11,8 +11,8 @@ export function validateRepo(repo: string): void {
 
 export function validateAgent(agent: string): string {
   const agentLower = agent.toLowerCase();
-  if (!["cursor", "claude"].includes(agentLower)) {
-    throw new Error(`agent must be "cursor" or "claude", got "${agent}"`);
+  if (!["cursor", "claude", "copilot"].includes(agentLower)) {
+    throw new Error(`agent must be "cursor", "claude", or "copilot", got "${agent}"`);
   }
   return agentLower;
 }
@@ -41,11 +41,16 @@ export const AGENT_PATTERNS_WITH_LABELS: Record<string, AgentPatternWithLabels> 
     branch: /claude/i,
     labels: ["claude", "claude-pr"],
   },
+  copilot: {
+    branch: /copilot/i,
+    labels: ["copilot", "copilot-pr"],
+  },
 };
 
 export const AGENT_BRANCH_PATTERNS: Record<string, RegExp> = {
   cursor: /^cursor\//i,
   claude: /^claude\//i,
+  copilot: /^copilot\//i,
 };
 
 export function matchesAgent(pr: PR, agent: string | null): boolean {
@@ -60,6 +65,14 @@ export function matchesAgent(pr: PR, agent: string | null): boolean {
   return Object.keys(AGENT_PATTERNS_WITH_LABELS).some((a) => matchesAgent(pr, a));
 }
 
+/** Returns the first matching agent for a PR, or null if none. */
+export function getAgentForPR(pr: PR): string | null {
+  for (const agent of Object.keys(AGENT_PATTERNS_WITH_LABELS)) {
+    if (matchesAgent(pr, agent)) return agent;
+  }
+  return null;
+}
+
 export function listOpenPRs(repo: string, fields: string[]): PR[] {
   const out = gh(
     "pr", "list",
@@ -69,6 +82,22 @@ export function listOpenPRs(repo: string, fields: string[]): PR[] {
     "--json", fields.join(",")
   );
   return JSON.parse(out) as PR[];
+}
+
+export function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
+  try {
+    const out = gh(
+      "run", "list",
+      "--repo", repo,
+      "--branch", branch,
+      "--limit", "100",
+      "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
+    );
+    const runs = JSON.parse(out || "[]");
+    return Array.isArray(runs) ? (runs as WorkflowRun[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 export function listBranches(repo: string): string[] {

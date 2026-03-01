@@ -8,26 +8,10 @@
 import { getOriginRepo } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
 import {
-  REPO_PATTERN, validateRepo, gh, listOpenPRs,
+  REPO_PATTERN, validateRepo, listOpenPRs, listWorkflowRuns,
 } from "../lib/gh.js";
 import { parseStandardFlags } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
-
-function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
-  try {
-    const out = gh(
-      "run", "list",
-      "--repo", repo,
-      "--branch", branch,
-      "--limit", "100",
-      "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
-    );
-    const runs = JSON.parse(out || "[]");
-    return Array.isArray(runs) ? (runs as WorkflowRun[]) : [];
-  } catch {
-    return [];
-  }
-}
 
 function main(): void {
   const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
