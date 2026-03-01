@@ -239,6 +239,8 @@ h1 {
 
 .code-block code {
     flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .copy-btn {
@@ -453,6 +455,11 @@ footer a:hover {
     }
     
     .example-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .completion-grid,
+    .why-grid {
         grid-template-columns: 1fr;
     }
 }
