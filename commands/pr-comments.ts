@@ -269,8 +269,10 @@ async function runInteractiveLoop(repo: string, comments: CommentWithContext[]):
     }
 
     try {
-      replyToPRComment(repo, ctx.prNumber, ctx.comment.id, replyTrimmed);
-      console.log(`\x1b[32mReply posted.\x1b[0m The agent can now see it in the PR.`);
+      const mention = (ctx.comment.user.login || ctx.agent || "").replace(/\[bot\]$/, "") || null;
+      const body = mention ? `@${mention} ${replyTrimmed}` : replyTrimmed;
+      replyToPRComment(repo, ctx.prNumber, ctx.comment.id, body);
+      console.log(`\x1b[32mReply posted${mention ? ` (cc @${mention})` : ""}.\x1b[0m`);
     } catch (e: unknown) {
       const err = e as ExecError;
       console.error(`\x1b[31mFailed to post reply:\x1b[0m ${formatGhError(err)}`);
