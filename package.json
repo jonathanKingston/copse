@@ -28,7 +28,8 @@
     "build": "tsc",
     "pretest": "npm run build",
     "start": "node dist/copse.js",
-    "test": "node dist/copse.js pr-status",
+    "test": "node --test \"dist/tests/**/*.test.js\"",
+    "test:pr-status": "node dist/copse.js pr-status",
     "prepublishOnly": "npm run build",
     "bump": "bash scripts/bump-version.sh"
   },
