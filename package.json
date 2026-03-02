@@ -29,7 +29,8 @@
     "pretest": "npm run build",
     "start": "node dist/copse.js",
     "test": "node dist/copse.js pr-status",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "bump": "bash scripts/bump-version.sh"
   },
   "homepage": "https://copse.dev",
   "repository": {
