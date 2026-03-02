@@ -77,6 +77,24 @@ function sortPRs(prs: PRWithStatus[]): PRWithStatus[] {
   return prs.sort((a, b) => a.ageDays - b.ageDays);
 }
 
+function matchesSearch(pr: PRWithStatus, query: string): boolean {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  const searchable = [
+    pr.repo,
+    String(pr.number),
+    pr.agent ?? "",
+    pr.ciStatus,
+    pr.reviewDecision.toLowerCase().replace(/_/g, " "),
+    pr.conflicts ? "conflicts" : "",
+    `${pr.ageDays}d`,
+    pr.title,
+    pr.author.login,
+    pr.headRefName,
+  ];
+  return searchable.some(f => f.toLowerCase().includes(q));
+}
+
 function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
   const result: PRWithStatus[] = [];
   const now = Date.now();
@@ -308,6 +326,11 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   let commentBuffer = "";
   let commentPR: PRWithStatus | null = null;
 
+  let searchMode = false;
+  let searchBuffer = "";
+  let searchQuery = "";
+  let preSearchQuery = "";
+
   setPipeStdio(true);
 
   function cleanup(): void {
@@ -321,6 +344,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function rebuildVirtualRows(): void {
     virtualRows = [];
     for (let i = 0; i < currentPRs.length; i++) {
+      if (!matchesSearch(currentPRs[i], searchQuery)) continue;
       virtualRows.push({ kind: "pr", prIndex: i });
       if (expandedPRIndex === i) {
         if (expandedLoading) {
@@ -582,12 +606,102 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     }
   }
 
+  function applySearchFilter(): void {
+    expandedPRIndex = null;
+    expandedPRNumber = null;
+    expandedComments = [];
+    expandedLoading = false;
+    const oldLen = virtualRows.length;
+    rebuildVirtualRows();
+    clampSelection();
+    drawAllRows();
+    clearStaleRows(oldLen);
+    drawTitle();
+    if (searchMode) {
+      drawSearchInput();
+    } else {
+      drawFooter();
+    }
+  }
+
+  function drawSearchInput(): void {
+    const footerLine = ROW_START + Math.max(virtualRows.length, 1) + 1;
+    process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
+    process.stdout.write(`${ANSI.bold}/${ANSI.reset}${searchBuffer}`);
+    process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+    process.stdout.write(`${ANSI.dim}Enter to apply · Esc to cancel${ANSI.reset}`);
+    process.stdout.write(`\x1b[${footerLine + 2};1H\x1b[J`);
+    process.stdout.write("\x1b[?25h");
+    process.stdout.write(`\x1b[${footerLine};${2 + searchBuffer.length}H`);
+  }
+
+  function startSearchMode(): void {
+    preSearchQuery = searchQuery;
+    searchBuffer = searchQuery;
+    searchMode = true;
+    drawSearchInput();
+  }
+
+  function handleSearchKey(key: string): void {
+    if (key === "\x1b" || key === "\x03") {
+      searchMode = false;
+      searchQuery = preSearchQuery;
+      searchBuffer = "";
+      process.stdout.write("\x1b[?25l");
+      applySearchFilter();
+      return;
+    }
+
+    if (key.startsWith("\x1b")) return;
+
+    if (key === "\r") {
+      searchMode = false;
+      searchQuery = searchBuffer;
+      searchBuffer = "";
+      process.stdout.write("\x1b[?25l");
+      applySearchFilter();
+      return;
+    }
+
+    if (key === "\x7f" || key === "\b") {
+      if (searchBuffer.length > 0) {
+        searchBuffer = searchBuffer.slice(0, -1);
+      }
+      searchQuery = searchBuffer;
+      applySearchFilter();
+      return;
+    }
+
+    if (key === "\x15") {
+      searchBuffer = "";
+      searchQuery = searchBuffer;
+      applySearchFilter();
+      return;
+    }
+
+    if (key.length === 1 && key.charCodeAt(0) >= 32) {
+      searchBuffer += key;
+      searchQuery = searchBuffer;
+      applySearchFilter();
+    }
+  }
+
+  function drawTitle(): void {
+    process.stdout.write("\x1b[1;1H\x1b[2K");
+    let title = TITLE;
+    if (searchQuery) {
+      title += `  ${ANSI.dim}filter: ${searchQuery}${ANSI.reset}`;
+    }
+    process.stdout.write(title);
+  }
+
   function drawFooter(): void {
     const footerLine = ROW_START + Math.max(virtualRows.length, 1) + 1;
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment  [r]erun  [u]pdate  [a]pprove  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment  [r]erun  [u]pdate  [a]pprove  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1008,6 +1122,11 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         return;
       }
 
+      if (searchMode) {
+        handleSearchKey(key);
+        return;
+      }
+
       if (key === "q" || key === "\x03") cleanup();
 
       if (key === "\x1b[A" || key === "k") { moveSelection(-1); return; }
@@ -1022,6 +1141,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       if (key === "r") { handleRerunSelected(); return; }
       if (key === "u") { handleUpdateSelected(); return; }
       if (key === "a") { handleApproveSelected(); return; }
+
+      if (key === "/") { startSearchMode(); return; }
 
       if (key === "R") handleRerunAllFailed();
       if (key === "U") handleUpdateAllMain();
@@ -1061,7 +1182,7 @@ Options:
   --all       Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [o]pen  [c]heckout  [C]omment
+  ↑↓/jk navigate  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment
   [r]erun  [u]pdate main  [a]pprove
   [R]erun all  [U]pdate all  [q]uit
 `;
