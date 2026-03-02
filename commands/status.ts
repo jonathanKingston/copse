@@ -118,8 +118,7 @@ function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
   return sortPRs(result);
 }
 
-function updatePRCIStatus(pr: PRWithStatus): void {
-  const runs = listWorkflowRuns(pr.repo, pr.headRefName);
+function applyCIStatus(pr: PRWithStatus, runs: WorkflowRun[]): void {
   const failed = runs.filter((r) => r.conclusion === "failure");
   const inProgress = runs.filter(
     (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
@@ -153,12 +152,24 @@ function updateCommentCounts(prs: PRWithStatus[]): void {
   }
 }
 
+function updateAllCIStatuses(prs: PRWithStatus[]): void {
+  const branchCache = new Map<string, WorkflowRun[]>();
+  for (const pr of prs) {
+    const key = `${pr.repo}\0${pr.headRefName}`;
+    let runs = branchCache.get(key);
+    if (runs === undefined) {
+      try { runs = listWorkflowRuns(pr.repo, pr.headRefName); }
+      catch { runs = []; }
+      branchCache.set(key, runs);
+    }
+    applyCIStatus(pr, runs);
+  }
+}
+
 function fetchPRsWithStatus(repos: string[], mineOnly: boolean): PRWithStatus[] {
   const prs = fetchPRsBase(repos, mineOnly);
   updateCommentCounts(prs);
-  for (const pr of prs) {
-    try { updatePRCIStatus(pr); } catch { /* leave as pending */ }
-  }
+  updateAllCIStatuses(prs);
   return sortPRs(prs);
 }
 
@@ -687,38 +698,37 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         drawAllRows();
         drawFooter();
 
-        // CI status phase — one PR at a time
+        // CI status phase — one fetch per unique branch
+        const branchMap = new Map<string, { repo: string; branch: string; prIndices: number[] }>();
         for (let i = 0; i < currentPRs.length; i++) {
-          if (gen !== ciGeneration || isInterrupted()) break;
           const pr = currentPRs[i];
-          try {
-            const runs = await listWorkflowRunsAsync(pr.repo, pr.headRefName);
-            const failed = runs.filter((r) => r.conclusion === "failure");
-            const inProgress = runs.filter(
-              (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
-            );
+          const key = `${pr.repo}\0${pr.headRefName}`;
+          if (!branchMap.has(key)) {
+            branchMap.set(key, { repo: pr.repo, branch: pr.headRefName, prIndices: [] });
+          }
+          branchMap.get(key)!.prIndices.push(i);
+        }
 
-            if (failed.length > 0) pr.ciStatus = "fail";
-            else if (inProgress.length > 0) pr.ciStatus = "pending";
-            else if (runs.some((r) => r.conclusion === "success")) pr.ciStatus = "pass";
-            else pr.ciStatus = "none";
-
-            pr.readyToMerge =
-              pr.ciStatus === "pass" &&
-              !pr.conflicts &&
-              (pr.reviewDecision === "APPROVED" || pr.reviewDecision === null);
-          } catch { /* leave as pending */ }
-
+        for (const { repo, branch, prIndices } of branchMap.values()) {
           if (gen !== ciGeneration || isInterrupted()) break;
-          const vi = virtualRows.findIndex(vr => vr.kind === "pr" && vr.prIndex === i);
-          if (vi !== -1) drawRow(vi);
+          try {
+            const runs = await listWorkflowRunsAsync(repo, branch);
+            for (const i of prIndices) {
+              applyCIStatus(currentPRs[i], runs);
+              if (gen !== ciGeneration || isInterrupted()) break;
+              const vi = virtualRows.findIndex(vr => vr.kind === "pr" && vr.prIndex === i);
+              if (vi !== -1) drawRow(vi);
+            }
+          } catch { /* leave as pending */ }
         }
       } catch (e: unknown) {
         if (isInterrupted()) return;
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
-        const errLine = ROW_START + Math.max(virtualRows.length, 0);
-        process.stdout.write(`\x1b[${errLine};1H\x1b[2K`);
-        console.error(`\x1b[33mAPI error, will retry: ${msg}\x1b[0m`);
+        const columns = process.stdout.columns || 80;
+        const maxLen = columns - 25;
+        const truncMsg = msg.length > maxLen ? msg.slice(0, maxLen - 1) + "…" : msg;
+        statusMsg = `${ANSI.amber}API error, will retry: ${truncMsg}${ANSI.reset}`;
+        drawFooter();
       } finally {
         if (gen === ciGeneration) ciUpdatePending = false;
         if (isInterrupted()) cleanup();
