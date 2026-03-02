@@ -79,6 +79,22 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--all", description: "Include branches from all authors" },
     ],
   },
+  "create-issue": {
+    file: "create-issue.js",
+    description: "Creates an issue and comments to instruct the specified agent to build it",
+    usage: "copse create-issue [repo] [title] [body] [agent] [options]",
+    args: [
+      { name: "repo", description: "GitHub repo in owner/name format (or omit to use origin)" },
+      { name: "title", description: "Issue title (omit to be prompted)" },
+      { name: "body", description: "Optional issue body (omit to open editor)" },
+      { name: "agent", description: '"cursor", "claude", or "copilot" (default: cursor)' },
+      { name: "--body-file PATH", description: "Read issue body from file" },
+      { name: "--template PATH", description: "Path to issue template" },
+      { name: "--no-template", description: "Skip template, use only body" },
+      { name: "--no-comment", description: "Do not add the agent instruction comment" },
+      { name: "--dry-run", description: "Show what would be created without creating" },
+    ],
+  },
   "update-main": {
     file: "update-main.js",
     description: "Merges main into open PR branches to keep them up to date",
@@ -143,6 +159,7 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
   const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
   const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };
+  const createIssueOpts: Record<string, string> = { "--body-file": "Read body from file", "--template": "Issue template path", "--no-template": "Skip template", "--no-comment": "Skip agent comment", "--dry-run": "Preview without acting", "--help": "Show help" };
 
   if (shell === "zsh") {
     const subcmds = [
@@ -191,6 +208,9 @@ _copse() {
         rerun-failed)
           _arguments ${formatOptArgs(rerunFailedOpts)}
           ;;
+        create-issue)
+          _arguments ${formatOptArgs(createIssueOpts)}
+          ;;
       esac
       ;;
   esac
@@ -238,6 +258,9 @@ _copse_completion() {
             ;;
         rerun-failed)
             COMPREPLY=( $(compgen -W "${formatBashOpts(rerunFailedOpts)}" -- "$cur") )
+            ;;
+        create-issue)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(createIssueOpts)}" -- "$cur") )
             ;;
     esac
 }
