@@ -330,8 +330,24 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   let searchBuffer = "";
   let searchQuery = "";
   let preSearchQuery = "";
+  let scrollOffset = 0;
 
   setPipeStdio(true);
+
+  function getViewportHeight(): number {
+    const termRows = process.stdout.rows || 24;
+    return Math.max(1, termRows - ROW_START - 2);
+  }
+
+  function ensureVisible(): void {
+    const vh = getViewportHeight();
+    if (selectedIndex < scrollOffset) {
+      scrollOffset = selectedIndex;
+    } else if (selectedIndex >= scrollOffset + vh) {
+      scrollOffset = selectedIndex - vh + 1;
+    }
+    scrollOffset = Math.max(0, Math.min(scrollOffset, Math.max(0, virtualRows.length - vh)));
+  }
 
   function cleanup(): void {
     if (isTTY) try { process.stdin.setRawMode(false); } catch {}
@@ -340,6 +356,18 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   process.on("SIGINT", cleanup);
+
+  process.on("SIGWINCH", () => {
+    ensureVisible();
+    process.stdout.write("\x1b[2J\x1b[H");
+    drawTitle();
+    process.stdout.write(`\x1b[3;1H${buildTableHeader(singleRepo)}`);
+    process.stdout.write(`\x1b[4;1H${tableSeparator()}`);
+    drawAllRows();
+    if (commentInputMode) drawCommentInput();
+    else if (searchMode) drawSearchInput();
+    else drawFooter();
+  });
 
   function rebuildVirtualRows(): void {
     virtualRows = [];
@@ -387,6 +415,9 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   function drawRow(vIndex: number): void {
     if (vIndex < 0 || vIndex >= virtualRows.length) return;
+    const vh = getViewportHeight();
+    if (vIndex < scrollOffset || vIndex >= scrollOffset + vh) return;
+    const screenRow = ROW_START + (vIndex - scrollOffset);
     const vr = virtualRows[vIndex];
     let row: string;
     if (vr.kind === "pr") {
@@ -397,15 +428,23 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       row = vr.text;
     }
     if (vIndex === selectedIndex) row = highlightRow(row);
-    process.stdout.write(`\x1b[${ROW_START + vIndex};1H\x1b[2K${row}`);
+    process.stdout.write(`\x1b[${screenRow};1H\x1b[2K${row}`);
   }
 
   function drawAllRows(): void {
-    for (let i = 0; i < virtualRows.length; i++) drawRow(i);
+    const vh = getViewportHeight();
+    const end = Math.min(virtualRows.length, scrollOffset + vh);
+    for (let i = scrollOffset; i < end; i++) drawRow(i);
+    const usedLines = end - scrollOffset;
+    for (let i = usedLines; i < vh; i++) {
+      process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K`);
+    }
   }
 
-  function clearStaleRows(oldLen: number): void {
-    for (let i = virtualRows.length; i < oldLen; i++) {
+  function clearStaleRows(_oldLen: number): void {
+    const vh = getViewportHeight();
+    const usedLines = Math.max(0, Math.min(virtualRows.length, scrollOffset + vh) - scrollOffset);
+    for (let i = usedLines; i < vh; i++) {
       process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K`);
     }
   }
@@ -526,12 +565,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   function drawCommentInput(): void {
     const promptPrefix = `Comment on #${commentPR!.number}: `;
-    const footerLine = ROW_START + Math.max(virtualRows.length, 1) + 1;
+    const termRows = process.stdout.rows || 24;
+    const footerLine = termRows - 1;
+    process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(`${ANSI.bold}${promptPrefix}${ANSI.reset}${commentBuffer}`);
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
     process.stdout.write(`${ANSI.dim}Enter to send · Esc to cancel${ANSI.reset}`);
-    process.stdout.write(`\x1b[${footerLine + 2};1H\x1b[J`);
     process.stdout.write("\x1b[?25h");
     process.stdout.write(`\x1b[${footerLine};${promptPrefix.length + commentBuffer.length + 1}H`);
   }
@@ -625,13 +665,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function drawSearchInput(): void {
-    const footerLine = ROW_START + Math.max(virtualRows.length, 1) + 1;
+    const termRows = process.stdout.rows || 24;
+    const footerLine = termRows - 1;
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(`${ANSI.bold}/${ANSI.reset}${searchBuffer}`);
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
     process.stdout.write(`${ANSI.dim}Enter to apply · Esc to cancel${ANSI.reset}`);
-    process.stdout.write(`\x1b[${footerLine + 2};1H\x1b[J`);
     process.stdout.write("\x1b[?25h");
     process.stdout.write(`\x1b[${footerLine};${2 + searchBuffer.length}H`);
   }
@@ -693,11 +733,16 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     if (searchQuery) {
       title += `  ${ANSI.dim}filter: ${searchQuery}${ANSI.reset}`;
     }
+    const vh = getViewportHeight();
+    if (virtualRows.length > vh) {
+      title += `  ${ANSI.dim}[${scrollOffset + 1}\u2013${Math.min(scrollOffset + vh, virtualRows.length)} of ${virtualRows.length}]${ANSI.reset}`;
+    }
     process.stdout.write(title);
   }
 
   function drawFooter(): void {
-    const footerLine = ROW_START + Math.max(virtualRows.length, 1) + 1;
+    const termRows = process.stdout.rows || 24;
+    const footerLine = termRows - 1;
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
@@ -706,15 +751,16 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
     if (statusMsg) process.stdout.write(statusMsg);
-    process.stdout.write(`\x1b[${footerLine + 2};1H\x1b[J`);
   }
 
   function clampSelection(): void {
     if (virtualRows.length === 0) {
       selectedIndex = 0;
+      scrollOffset = 0;
     } else {
       selectedIndex = Math.min(selectedIndex, virtualRows.length - 1);
     }
+    ensureVisible();
   }
 
   function refresh(): void {
@@ -855,8 +901,15 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     const prev = selectedIndex;
     selectedIndex = Math.max(0, Math.min(virtualRows.length - 1, selectedIndex + delta));
     if (prev !== selectedIndex) {
-      drawRow(prev);
-      drawRow(selectedIndex);
+      const oldOffset = scrollOffset;
+      ensureVisible();
+      if (scrollOffset !== oldOffset) {
+        drawAllRows();
+        drawTitle();
+      } else {
+        drawRow(prev);
+        drawRow(selectedIndex);
+      }
     }
   }
 
@@ -1131,6 +1184,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
       if (key === "\x1b[A" || key === "k") { moveSelection(-1); return; }
       if (key === "\x1b[B" || key === "j") { moveSelection(1); return; }
+      if (key === "\x1b[5~") { moveSelection(-getViewportHeight()); return; }
+      if (key === "\x1b[6~") { moveSelection(getViewportHeight()); return; }
 
       if (busy) return;
 
