@@ -4,6 +4,7 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import type { CommandDef } from "./lib/types.js";
+import { ensureGh, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -279,6 +280,16 @@ function runCommand(command: string, args: string[]): void {
     console.error(`Unknown command: ${command}`);
     console.error(`Run 'copse' to see available commands.`);
     process.exit(1);
+  }
+
+  try {
+    ensureGh();
+  } catch (e: unknown) {
+    if (e instanceof GhNotFoundError || e instanceof GhNotAuthenticatedError) {
+      console.error(e.message);
+      process.exit(1);
+    }
+    throw e;
   }
 
   const commandPath = join(__dirname, "commands", cmd.file);

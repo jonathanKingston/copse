@@ -22,6 +22,44 @@ const GH_TIMEOUT_MS = 30_000;
 let _interrupted = false;
 let _pipeStdio = false;
 
+function isGhNotFound(e: unknown): boolean {
+  return (e as { code?: string }).code === "ENOENT";
+}
+
+export class GhNotFoundError extends Error {
+  constructor() {
+    super(
+      "GitHub CLI (gh) is not installed or not in your PATH.\n" +
+      "Install it from https://cli.github.com/"
+    );
+    this.name = "GhNotFoundError";
+  }
+}
+
+export class GhNotAuthenticatedError extends Error {
+  constructor() {
+    super(
+      "GitHub CLI (gh) is not authenticated.\n" +
+      "Run: gh auth login"
+    );
+    this.name = "GhNotAuthenticatedError";
+  }
+}
+
+/** Check that `gh` is installed and authenticated. */
+export function ensureGh(): void {
+  try {
+    execFileSync("gh", ["--version"], { stdio: "ignore" });
+  } catch (e: unknown) {
+    if (isGhNotFound(e)) throw new GhNotFoundError();
+  }
+  try {
+    execFileSync("gh", ["auth", "token"], { stdio: "ignore" });
+  } catch {
+    throw new GhNotAuthenticatedError();
+  }
+}
+
 /** True after a gh child process was killed by SIGINT/SIGTERM (set synchronously). */
 export function isInterrupted(): boolean { return _interrupted; }
 
@@ -33,6 +71,7 @@ export function gh(...args: string[]): string {
   try {
     return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
   } catch (e: unknown) {
+    if (isGhNotFound(e)) throw new GhNotFoundError();
     const sig = (e as { signal?: string }).signal;
     if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
     throw e;
@@ -44,6 +83,7 @@ export function ghQuiet(...args: string[]): string {
   try {
     return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio: "pipe" });
   } catch (e: unknown) {
+    if (isGhNotFound(e)) throw new GhNotFoundError();
     const sig = (e as { signal?: string }).signal;
     if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
     throw e;
@@ -55,6 +95,7 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS }, (error, stdout) => {
       if (error) {
+        if (isGhNotFound(error)) { reject(new GhNotFoundError()); return; }
         const sig = (error as { signal?: string }).signal;
         if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
         reject(error);
