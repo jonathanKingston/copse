@@ -460,6 +460,68 @@ export async function getUnresolvedCommentCountsAsync(repo: string, prNumbers: n
   }
 }
 
+export async function getResolvedCommentNodeIdsAsync(repo: string, prNumber: number): Promise<Set<string>> {
+  const [owner, name] = repo.split("/");
+  const query = `query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100) {
+          nodes {
+            isResolved
+            comments(first: 100) {
+              nodes { id }
+            }
+          }
+        }
+      }
+    }
+  }`;
+  try {
+    const out = await ghQuietAsync(
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-f", `owner=${owner}`,
+      "-f", `name=${name}`,
+      "-F", `number=${prNumber}`,
+      "-q", ".data.repository.pullRequest.reviewThreads.nodes"
+    );
+    const threads = JSON.parse(out) as Array<{
+      isResolved: boolean;
+      comments: { nodes: Array<{ id: string }> };
+    }>;
+    const ids = new Set<string>();
+    for (const t of threads) {
+      if (t.isResolved) {
+        for (const c of t.comments.nodes) ids.add(c.id);
+      }
+    }
+    return ids;
+  } catch {
+    return new Set();
+  }
+}
+
+export async function listPRReviewCommentsAsync(repo: string, prNumber: number): Promise<PRReviewComment[]> {
+  try {
+    const out = await ghQuietAsync(
+      "api",
+      `repos/${repo}/pulls/${prNumber}/comments`,
+      "--method", "GET",
+      "-f", "per_page=100"
+    );
+    const arr = JSON.parse(out) as unknown;
+    if (!Array.isArray(arr)) return [];
+    const resolved = await getResolvedCommentNodeIdsAsync(repo, prNumber);
+    return (arr as PRReviewComment[]).filter(c => !resolved.has(c.node_id));
+  } catch {
+    return [];
+  }
+}
+
+export async function addPRCommentAsync(repo: string, prNumber: number, body: string): Promise<void> {
+  await ghQuietAsync("pr", "comment", String(prNumber), "--repo", repo, "--body", body);
+}
+
 export function getCommitInfo(repo: string, branchRef: string, includeMessage: boolean = false): CommitInfo {
   const ref = encodeURIComponent(branchRef);
   const query = includeMessage
