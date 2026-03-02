@@ -1,4 +1,4 @@
-import { execFileSync } from "child_process";
+import { execFileSync, execFile } from "child_process";
 import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment } from "./types.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
@@ -48,6 +48,21 @@ export function ghQuiet(...args: string[]): string {
     if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
     throw e;
   }
+}
+
+/** Non-blocking variant of ghQuiet — keeps the event loop responsive for TUI key handling. */
+export function ghQuietAsync(...args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS }, (error, stdout) => {
+      if (error) {
+        const sig = (error as { signal?: string }).signal;
+        if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
 }
 
 let _cachedUser: string | null = null;
@@ -183,9 +198,36 @@ export function listOpenPRs(repo: string, fields: string[]): PR[] {
   return JSON.parse(out) as PR[];
 }
 
+export async function listOpenPRsAsync(repo: string, fields: string[]): Promise<PR[]> {
+  const out = await ghQuietAsync(
+    "pr", "list",
+    "--repo", repo,
+    "--state", "open",
+    "--limit", "200",
+    "--json", fields.join(",")
+  );
+  return JSON.parse(out) as PR[];
+}
+
 export function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
   try {
     const out = gh(
+      "run", "list",
+      "--repo", repo,
+      "--branch", branch,
+      "--limit", "100",
+      "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
+    );
+    const runs = JSON.parse(out || "[]");
+    return Array.isArray(runs) ? (runs as WorkflowRun[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function listWorkflowRunsAsync(repo: string, branch: string): Promise<WorkflowRun[]> {
+  try {
+    const out = await ghQuietAsync(
       "run", "list",
       "--repo", repo,
       "--branch", branch,
@@ -351,6 +393,50 @@ export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): M
 
   try {
     const out = gh(
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-f", `owner=${owner}`,
+      "-f", `name=${name}`
+    );
+
+    const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+      .data?.repository ?? {};
+
+    const counts = new Map<number, number>();
+    for (const num of prNumbers) {
+      const prData = repoData[`pr_${num}`] as {
+        reviewThreads?: { nodes: Array<{ isResolved: boolean }> };
+      } | undefined;
+      const threads = prData?.reviewThreads?.nodes ?? [];
+      counts.set(num, threads.filter(t => !t.isResolved).length);
+    }
+    return counts;
+  } catch {
+    return new Map();
+  }
+}
+
+export async function getUnresolvedCommentCountsAsync(repo: string, prNumbers: number[]): Promise<Map<number, number>> {
+  if (prNumbers.length === 0) return new Map();
+
+  const [owner, name] = repo.split("/");
+  const prFragments = prNumbers.map(
+    (num) =>
+      `pr_${num}: pullRequest(number: ${num}) {
+        reviewThreads(first: 100) {
+          nodes { isResolved }
+        }
+      }`
+  );
+
+  const query = `query($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      ${prFragments.join("\n      ")}
+    }
+  }`;
+
+  try {
+    const out = await ghQuietAsync(
       "api", "graphql",
       "-f", `query=${query}`,
       "-f", `owner=${owner}`,
