@@ -1,10 +1,28 @@
 {
-  "name": "copse",
+  "name": "@copse/cli",
   "version": "1.0.0",
   "description": "Tools for managing agent-created PRs",
   "type": "module",
+  "license": "MIT",
+  "author": "Jonathan Kingston",
+  "keywords": [
+    "github",
+    "pull-requests",
+    "agent",
+    "cursor",
+    "claude",
+    "ci",
+    "automation",
+    "pr"
+  ],
   "bin": {
     "copse": "./dist/copse.js"
+  },
+  "files": [
+    "dist/"
+  ],
+  "engines": {
+    "node": ">=18"
   },
   "scripts": {
     "build": "tsc",

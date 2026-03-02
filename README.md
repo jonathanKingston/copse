@@ -20,7 +20,7 @@ Seven commands for managing agent-created PRs:
 ## Installation
 
 ```bash
-npm install -g copse
+npm install -g @copse/cli
 ```
 
 ## Usage
