@@ -1,7 +1,7 @@
 /**
  * Unified dashboard: full picture of agent PRs across all configured repos.
  * Usage: copse status [options]
- *        --watch  Live refresh (clear + redraw every 10s)
+ *        --watch  Live refresh (clear + redraw every 30s)
  */
 
 import {
@@ -14,6 +14,7 @@ import {
   ghQuiet,
   getUnresolvedCommentCounts,
   isInterrupted,
+  setPipeStdio,
 } from "../lib/gh.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { getConfiguredRepos } from "../lib/config.js";
@@ -26,7 +27,7 @@ const STATUS_FIELDS = [
 ];
 
 const STALE_DAYS = 7;
-const WATCH_INTERVAL_MS = 10_000;
+const WATCH_INTERVAL_MS = 30_000;
 
 export interface PRWithStatus {
   repo: string;
@@ -154,11 +155,12 @@ const ANSI = {
 };
 
 function hyperlink(url: string, text: string): string {
-  return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+  if (!process.stdout.isTTY) return text;
+  return `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`;
 }
 
 function visibleLength(text: string): number {
-  return text.replace(/\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\/g, "").length;
+  return text.replace(/\x1b\[[0-9;]*m|\x1b\]8;;[^\x07]*\x07/g, "").length;
 }
 
 function pad(text: string, width: number): string {
@@ -184,7 +186,14 @@ function formatComments(pr: PRWithStatus): string {
   return `${ANSI.amber}${pr.commentCount}${ANSI.reset}`;
 }
 
+const FIXED_COLS_WIDTH = 35;
+const REPO_COL_WIDTH = 19;
+
 function formatPRRow(pr: PRWithStatus, singleRepo: boolean): string {
+  const columns = process.stdout.columns || 80;
+  const prefixWidth = singleRepo ? FIXED_COLS_WIDTH : FIXED_COLS_WIDTH + REPO_COL_WIDTH;
+  const titleMaxWidth = Math.max(20, columns - prefixWidth);
+
   const urgency = getUrgency(pr);
   const color = ANSI[urgency];
   const repoPart = singleRepo
@@ -199,16 +208,31 @@ function formatPRRow(pr: PRWithStatus, singleRepo: boolean): string {
   const ageRaw = `${pr.ageDays}d`;
   const age = pr.ageDays >= STALE_DAYS ? `${ANSI.amber}${ageRaw}${ANSI.reset}` : ageRaw;
   const cmt = formatComments(pr);
-  const titleShort = pr.title.slice(0, 35) + (pr.title.length > 35 ? "…" : "");
+  const titleShort = pr.title.slice(0, titleMaxWidth) + (pr.title.length > titleMaxWidth ? "…" : "");
   return `${color}${repoPart}${prNum} ${agent} ${ci}   ${rev}   ${con}   ${pad(age, 4)} ${pad(cmt, 3)} ${titleShort}${ANSI.reset}`;
 }
 
-function buildTableHeader(singleRepo: boolean): string {
-  const repoPart = singleRepo ? "" : "REPO               ";
-  return `${ANSI.bold}${repoPart}#     AGENT   CI  REV CON AGE  CMT TITLE${ANSI.reset}`;
+function headerLink(label: string, description: string): string {
+  return hyperlink(`https://copse.dev#${description}`, label);
 }
 
-const TABLE_SEPARATOR = "-".repeat(80);
+function buildTableHeader(singleRepo: boolean): string {
+  const repoPart = singleRepo ? "" : pad(headerLink("REPO", "repository"), 19);
+  return `${ANSI.bold}${repoPart}${[
+    pad(headerLink("#", "pr-number"), 6),
+    pad(headerLink("AGENT", "agent-cursor/claude/copilot"), 8),
+    pad(headerLink("CI", "continuous-integration"), 4),
+    pad(headerLink("REV", "review-status"), 4),
+    pad(headerLink("CON", "merge-conflicts"), 4),
+    pad(headerLink("AGE", "days-since-last-update"), 5),
+    pad(headerLink("CMT", "unresolved-review-comments"), 4),
+    headerLink("TITLE", "pr-title"),
+  ].join("")}${ANSI.reset}`;
+}
+
+function tableSeparator(): string {
+  return "-".repeat(process.stdout.columns || 80);
+}
 
 function renderTable(prs: PRWithStatus[], singleRepo: boolean): void {
   if (prs.length === 0) {
@@ -217,7 +241,7 @@ function renderTable(prs: PRWithStatus[], singleRepo: boolean): void {
   }
 
   console.log(buildTableHeader(singleRepo));
-  console.log(TABLE_SEPARATOR);
+  console.log(tableSeparator());
   for (const pr of prs) {
     console.log(formatPRRow(pr, singleRepo));
   }
@@ -232,11 +256,16 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   const singleRepo = repos.length === 1;
   const TITLE = `copse status — refresh every ${WATCH_INTERVAL_MS / 1000}s`;
   const ROW_START = 5;
-  let prevRowCount = -1;
+  let prevRowCount = 0;
   let currentPRs: PRWithStatus[] = [];
   let statusMsg = "";
   let busy = false;
+  let selectedIndex = 0;
+  let ciGeneration = 0;
+  let ciUpdatePending = false;
   const isTTY = !!process.stdin.isTTY;
+
+  setPipeStdio(true);
 
   function cleanup(): void {
     if (isTTY) try { process.stdin.setRawMode(false); } catch {}
@@ -246,77 +275,232 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   process.on("SIGINT", cleanup);
 
-  function rawMode(on: boolean): void {
-    if (isTTY) try { process.stdin.setRawMode(on); } catch {}
+  function highlightRow(row: string): string {
+    return `\x1b[7m${row.replace(/\x1b\[0m/g, "\x1b[0m\x1b[7m")}\x1b[0m`;
+  }
+
+  function drawRow(index: number): void {
+    if (index < 0 || index >= currentPRs.length) return;
+    let row = formatPRRow(currentPRs[index], singleRepo);
+    if (index === selectedIndex) row = highlightRow(row);
+    process.stdout.write(`\x1b[${ROW_START + index};1H\x1b[2K${row}`);
+  }
+
+  function drawAllRows(): void {
+    for (let i = 0; i < currentPRs.length; i++) drawRow(i);
   }
 
   function drawFooter(rowCount: number): void {
     const footerLine = ROW_START + Math.max(rowCount, 1) + 1;
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
-    process.stdout.write(`${ANSI.dim}[r] rerun failed  [u] update main  [q] quit${ANSI.reset}`);
+    process.stdout.write(
+      `${ANSI.dim}↑↓ select  ⏎/o open  [r]erun  [u]pdate main  [a]pprove  │  ` +
+      `[R]erun all  [U]pdate all  [q]uit${ANSI.reset}`
+    );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
     if (statusMsg) process.stdout.write(statusMsg);
     process.stdout.write(`\x1b[${footerLine + 2};1H\x1b[J`);
   }
 
+  function clampSelection(): void {
+    if (currentPRs.length === 0) {
+      selectedIndex = 0;
+    } else {
+      selectedIndex = Math.min(selectedIndex, currentPRs.length - 1);
+    }
+  }
+
   function refresh(): void {
-    rawMode(false);
+    ciGeneration++;
+    const gen = ciGeneration;
+    ciUpdatePending = false;
+
     try {
       const prs = fetchPRsBase(repos, mineOnly);
       if (isInterrupted()) return;
-      updateCommentCounts(prs);
-      if (isInterrupted()) return;
 
-      if (prevRowCount < 0) {
-        process.stdout.write("\x1b[2J\x1b[H");
-        console.log(TITLE + "\n");
-        console.log(buildTableHeader(singleRepo));
-        console.log(TABLE_SEPARATOR);
-      }
+      const oldRowCount = prevRowCount;
+      currentPRs = prs;
+      prevRowCount = prs.length;
+      clampSelection();
 
-      for (let i = 0; i < prs.length; i++) {
-        if (isInterrupted()) break;
-        try { updatePRCIStatus(prs[i]); } catch { /* leave as pending */ }
-        process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K${formatPRRow(prs[i], singleRepo)}`);
-      }
+      drawAllRows();
 
-      if (isInterrupted()) return;
-
-      if (prevRowCount > prs.length) {
-        for (let i = prs.length; i < prevRowCount; i++) {
+      if (oldRowCount > prs.length) {
+        for (let i = prs.length; i < oldRowCount; i++) {
           process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K`);
         }
       }
 
-      currentPRs = prs;
-      prevRowCount = prs.length;
-
       if (prs.length === 0) {
         process.stdout.write(`\x1b[${ROW_START};1H\x1b[2K`);
         process.stdout.write("No agent PRs found.");
-        drawFooter(1);
-      } else {
-        drawFooter(prs.length);
       }
+      drawFooter(Math.max(prs.length, 1));
     } catch (e: unknown) {
       if (isInterrupted()) return;
       const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
       const errLine = ROW_START + Math.max(prevRowCount, 0);
       process.stdout.write(`\x1b[${errLine};1H\x1b[2K`);
       console.error(`\x1b[33mAPI error, will retry: ${msg}\x1b[0m`);
-    } finally {
-      if (isInterrupted()) { cleanup(); return; }
-      rawMode(true);
+      return;
+    }
+
+    if (isInterrupted()) { cleanup(); return; }
+
+    if (currentPRs.length > 0) {
+      ciUpdatePending = true;
+      setTimeout(() => updateCommentsPhase(gen), 0);
     }
   }
 
-  function handleRerunFailed(): void {
-    if (busy || currentPRs.length === 0) return;
+  function updateCommentsPhase(gen: number): void {
+    if (gen !== ciGeneration || isInterrupted()) {
+      if (gen === ciGeneration) ciUpdatePending = false;
+      return;
+    }
+
+    try {
+      updateCommentCounts(currentPRs);
+      drawAllRows();
+    } catch { /* leave as 0 */ }
+
+    if (isInterrupted()) { cleanup(); return; }
+    setTimeout(() => updateCIIncremental(0, gen), 0);
+  }
+
+  function updateCIIncremental(index: number, gen: number): void {
+    if (gen !== ciGeneration || index >= currentPRs.length || isInterrupted()) {
+      if (gen === ciGeneration) ciUpdatePending = false;
+      return;
+    }
+
+    try { updatePRCIStatus(currentPRs[index]); } catch { /* leave as pending */ }
+    if (isInterrupted()) { cleanup(); return; }
+
+    drawRow(index);
+    setTimeout(() => updateCIIncremental(index + 1, gen), 0);
+  }
+
+  function moveSelection(delta: number): void {
+    if (currentPRs.length === 0) return;
+    const prev = selectedIndex;
+    selectedIndex = Math.max(0, Math.min(currentPRs.length - 1, selectedIndex + delta));
+    if (prev !== selectedIndex) {
+      drawRow(prev);
+      drawRow(selectedIndex);
+    }
+  }
+
+  function selectedPR(): PRWithStatus | null {
+    return currentPRs[selectedIndex] ?? null;
+  }
+
+  function handleOpenSelected(): void {
+    const pr = selectedPR();
+    if (!pr) return;
+    try {
+      ghQuiet("pr", "view", String(pr.number), "--repo", pr.repo, "--web");
+      statusMsg = `${ANSI.green}Opened #${pr.number} in browser${ANSI.reset}`;
+    } catch {
+      statusMsg = `${ANSI.red}Failed to open #${pr.number}${ANSI.reset}`;
+    }
+    drawFooter(prevRowCount);
+  }
+
+  function handleRerunSelected(): void {
+    const pr = selectedPR();
+    if (busy || !pr) return;
+    if (pr.ciStatus !== "fail") {
+      statusMsg = `${ANSI.dim}#${pr.number} has no failed CI to rerun${ANSI.reset}`;
+      drawFooter(prevRowCount);
+      return;
+    }
     busy = true;
-    statusMsg = `${ANSI.amber}Rerunning failed workflows...${ANSI.reset}`;
+    statusMsg = `${ANSI.amber}Rerunning failed workflows for #${pr.number}…${ANSI.reset}`;
     drawFooter(prevRowCount);
 
-    rawMode(false);
+    try {
+      let total = 0;
+      const runs = listWorkflowRuns(pr.repo, pr.headRefName);
+      const failed = runs.filter(r => r.conclusion === "failure");
+      for (const run of failed) {
+        if (isInterrupted()) break;
+        try {
+          ghQuiet("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
+          total++;
+        } catch { /* skip */ }
+      }
+      if (total > 0) {
+        pr.ciStatus = "pending";
+        drawRow(selectedIndex);
+      }
+      statusMsg = total > 0
+        ? `${ANSI.green}Reran ${total} workflow(s) for #${pr.number}${ANSI.reset}`
+        : `${ANSI.dim}No failed workflows on #${pr.number}${ANSI.reset}`;
+    } finally {
+      if (isInterrupted()) { cleanup(); return; }
+    }
+    busy = false;
+    drawFooter(prevRowCount);
+  }
+
+  function handleUpdateSelected(): void {
+    const pr = selectedPR();
+    if (busy || !pr) return;
+    busy = true;
+    statusMsg = `${ANSI.amber}Merging main into #${pr.number}…${ANSI.reset}`;
+    drawFooter(prevRowCount);
+
+    try {
+      ghQuiet("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
+      statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
+    } catch (e: unknown) {
+      const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
+      if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
+        statusMsg = `${ANSI.dim}#${pr.number} already up to date with main${ANSI.reset}`;
+      } else {
+        statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
+      }
+    } finally {
+      if (isInterrupted()) { cleanup(); return; }
+    }
+    busy = false;
+    drawFooter(prevRowCount);
+  }
+
+  function handleApproveSelected(): void {
+    const pr = selectedPR();
+    if (busy || !pr) return;
+    busy = true;
+    statusMsg = `${ANSI.amber}Enabling merge when ready for #${pr.number}…${ANSI.reset}`;
+    drawFooter(prevRowCount);
+
+    try {
+      ghQuiet("pr", "merge", "--repo", pr.repo, String(pr.number), "--auto");
+      statusMsg = `${ANSI.green}Merge when ready enabled for #${pr.number}${ANSI.reset}`;
+    } catch (e: unknown) {
+      const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
+      if (msg.includes("already") && (msg.includes("auto") || msg.includes("queued"))) {
+        statusMsg = `${ANSI.dim}#${pr.number} already has merge when ready enabled${ANSI.reset}`;
+      } else if (msg.includes("draft")) {
+        statusMsg = `${ANSI.red}#${pr.number} is a draft — mark ready for review first${ANSI.reset}`;
+      } else {
+        statusMsg = `${ANSI.red}Failed to enable merge when ready for #${pr.number}${ANSI.reset}`;
+      }
+    } finally {
+      if (isInterrupted()) { cleanup(); return; }
+    }
+    busy = false;
+    drawFooter(prevRowCount);
+  }
+
+  function handleRerunAllFailed(): void {
+    if (busy || currentPRs.length === 0) return;
+    busy = true;
+    statusMsg = `${ANSI.amber}Rerunning all failed workflows…${ANSI.reset}`;
+    drawFooter(prevRowCount);
+
     try {
       let total = 0;
       let skipped = 0;
@@ -343,19 +527,17 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         : `${ANSI.dim}${parts.length > 0 ? parts.join(", ") : "no failed workflows to rerun"}${ANSI.reset}`;
     } finally {
       if (isInterrupted()) { cleanup(); return; }
-      rawMode(true);
     }
     busy = false;
     refresh();
   }
 
-  function handleUpdateMain(): void {
+  function handleUpdateAllMain(): void {
     if (busy || currentPRs.length === 0) return;
     busy = true;
-    statusMsg = `${ANSI.amber}Merging main into PR branches...${ANSI.reset}`;
+    statusMsg = `${ANSI.amber}Merging main into all PR branches…${ANSI.reset}`;
     drawFooter(prevRowCount);
 
-    rawMode(false);
     try {
       let updated = 0;
       let upToDate = 0;
@@ -374,11 +556,17 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       statusMsg = `${ANSI.green}Updated ${updated}, ${upToDate} already up to date${ANSI.reset}`;
     } finally {
       if (isInterrupted()) { cleanup(); return; }
-      rawMode(true);
     }
     busy = false;
     refresh();
   }
+
+  process.stdout.write("\x1b[?25l\x1b[2J\x1b[H");
+  console.log(TITLE + "\n");
+  console.log(buildTableHeader(singleRepo));
+  console.log(tableSeparator());
+  process.stdout.write(`\x1b[${ROW_START};1H${ANSI.dim}Loading…${ANSI.reset}`);
+  drawFooter(1);
 
   if (isTTY) {
     process.stdin.setRawMode(true);
@@ -388,8 +576,17 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdin.on("data", (key: string) => {
       if (key === "q" || key === "\x03") cleanup();
       if (busy) return;
-      if (key === "r") handleRerunFailed();
-      if (key === "u") handleUpdateMain();
+
+      if (key === "\x1b[A" || key === "k") { moveSelection(-1); return; }
+      if (key === "\x1b[B" || key === "j") { moveSelection(1); return; }
+
+      if (key === "\r" || key === "o") { handleOpenSelected(); return; }
+      if (key === "r") { handleRerunSelected(); return; }
+      if (key === "u") { handleUpdateSelected(); return; }
+      if (key === "a") { handleApproveSelected(); return; }
+
+      if (key === "R") handleRerunAllFailed();
+      if (key === "U") handleUpdateAllMain();
     });
   }
 
@@ -397,7 +594,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   function loop(): void {
     if (isInterrupted()) { cleanup(); return; }
-    if (!busy) refresh();
+    if (!busy && !ciUpdatePending) refresh();
     setTimeout(loop, WATCH_INTERVAL_MS);
   }
   setTimeout(loop, WATCH_INTERVAL_MS);
@@ -418,8 +615,9 @@ function main(): void {
   Falls back to .copserc in cwd or parent: { "repos": ["owner/name", ...] }
 
 Options:
-  --watch   Live refresh (clear + redraw every 10s).
-            Keyboard: [r] rerun failed  [u] update main  [q] quit
+  --watch   Live refresh (clear + redraw every 30s).
+            ↑↓/jk navigate  ⏎/o open  [r]erun  [u]pdate main  [a]pprove
+            [R]erun all  [U]pdate all  [q]uit
   --mine    Only your PRs (default)
   --all     Include PRs from all authors
 `;
