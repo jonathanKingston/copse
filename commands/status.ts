@@ -841,6 +841,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         if (gen !== ciGeneration || isInterrupted()) return;
         const byRepo = new Map<string, PRWithStatus[]>();
         for (const pr of currentPRs) {
+          if (!matchesSearch(pr, searchQuery)) continue;
           const list = byRepo.get(pr.repo) ?? [];
           list.push(pr);
           byRepo.set(pr.repo, list);
@@ -862,6 +863,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         const branchMap = new Map<string, { repo: string; branch: string; prIndices: number[] }>();
         for (let i = 0; i < currentPRs.length; i++) {
           const pr = currentPRs[i];
+          if (!matchesSearch(pr, searchQuery)) continue;
           const key = `${pr.repo}\0${pr.headRefName}`;
           if (!branchMap.has(key)) {
             branchMap.set(key, { repo: pr.repo, branch: pr.headRefName, prIndices: [] });
@@ -1063,6 +1065,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     const toRerun: PRWithStatus[] = [];
     let skipped = 0;
     for (const pr of currentPRs) {
+      if (!matchesSearch(pr, searchQuery)) continue;
       if (pr.ciStatus !== "fail") continue;
       if (pr.stale) { skipped++; continue; }
       toRerun.push(pr);
@@ -1135,6 +1138,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         let updated = 0;
         let upToDate = 0;
         for (const pr of currentPRs) {
+          if (!matchesSearch(pr, searchQuery)) continue;
           if (isInterrupted()) break;
           try {
             await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
