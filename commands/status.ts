@@ -40,6 +40,7 @@ function execAsync(command: string, args: string[]): Promise<string> {
 const STATUS_FIELDS = [
   "number", "headRefName", "labels", "title", "author",
   "mergeStateStatus", "mergeable", "reviewDecision", "createdAt", "updatedAt",
+  "autoMergeRequest",
 ];
 
 const STALE_DAYS = 7;
@@ -57,6 +58,7 @@ export interface PRWithStatus {
   reviewDecision: string;
   updatedAt: string;
   agent: string | null;
+  autoMerge: boolean;
   ciStatus: "pass" | "fail" | "pending" | "none";
   conflicts: boolean;
   ageDays: number;
@@ -87,6 +89,7 @@ function matchesSearch(pr: PRWithStatus, query: string): boolean {
     pr.ciStatus,
     pr.reviewDecision.toLowerCase().replace(/_/g, " "),
     pr.conflicts ? "conflicts" : "",
+    pr.autoMerge ? "merge when ready" : "",
     `${pr.ageDays}d`,
     pr.title,
     pr.author.login,
@@ -123,6 +126,7 @@ function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
         reviewDecision,
         updatedAt,
         agent: getAgentForPR(pr),
+        autoMerge: (pr as { autoMergeRequest?: unknown }).autoMergeRequest != null,
         ciStatus: "pending",
         conflicts: mergeStateStatus === "HAS_CONFLICTS",
         ageDays,
@@ -227,12 +231,16 @@ function formatReview(pr: PRWithStatus): string {
   return `${ANSI.dim}○${ANSI.reset}`;
 }
 
+function formatAutoMerge(pr: PRWithStatus): string {
+  return pr.autoMerge ? `${ANSI.green}✓${ANSI.reset}` : `${ANSI.dim}—${ANSI.reset}`;
+}
+
 function formatComments(pr: PRWithStatus): string {
   if (pr.commentCount === 0) return `${ANSI.dim}—${ANSI.reset}`;
   return `${ANSI.amber}${pr.commentCount}${ANSI.reset}`;
 }
 
-const FIXED_COLS_WIDTH = 35;
+const FIXED_COLS_WIDTH = 39;
 const REPO_COL_WIDTH = 19;
 
 function formatPRRow(pr: PRWithStatus, singleRepo: boolean): string {
@@ -251,11 +259,12 @@ function formatPRRow(pr: PRWithStatus, singleRepo: boolean): string {
   const ci = formatCI(pr);
   const rev = formatReview(pr);
   const con = pr.conflicts ? `${ANSI.red}✗${ANSI.reset}` : `${ANSI.green}—${ANSI.reset}`;
+  const mwr = formatAutoMerge(pr);
   const ageRaw = `${pr.ageDays}d`;
   const age = pr.ageDays >= STALE_DAYS ? `${ANSI.amber}${ageRaw}${ANSI.reset}` : ageRaw;
   const cmt = formatComments(pr);
   const titleShort = pr.title.slice(0, titleMaxWidth) + (pr.title.length > titleMaxWidth ? "…" : "");
-  return `${color}${repoPart}${prNum} ${agent} ${ci}   ${rev}   ${con}   ${pad(age, 4)} ${pad(cmt, 3)} ${titleShort}${ANSI.reset}`;
+  return `${color}${repoPart}${prNum} ${agent} ${ci}   ${rev}   ${con}   ${mwr}   ${pad(age, 4)} ${pad(cmt, 3)} ${titleShort}${ANSI.reset}`;
 }
 
 function headerLink(label: string, description: string): string {
@@ -270,6 +279,7 @@ function buildTableHeader(singleRepo: boolean): string {
     pad(headerLink("CI", "continuous-integration"), 4),
     pad(headerLink("REV", "review-status"), 4),
     pad(headerLink("CON", "merge-conflicts"), 4),
+    pad(headerLink("MWR", "merge-when-ready"), 4),
     pad(headerLink("AGE", "days-since-last-update"), 5),
     pad(headerLink("CMT", "unresolved-review-comments"), 4),
     headerLink("TITLE", "pr-title"),
@@ -799,6 +809,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
               reviewDecision,
               updatedAt,
               agent: getAgentForPR(pr),
+              autoMerge: (pr as { autoMergeRequest?: unknown }).autoMergeRequest != null,
               ciStatus: prev?.ciStatus ?? "pending",
               conflicts: mergeStateStatus === "HAS_CONFLICTS",
               ageDays,
