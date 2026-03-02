@@ -1,9 +1,10 @@
 /**
  * Unified dashboard: full picture of agent PRs across all configured repos.
  * Usage: copse status [options]
- *        --watch  Live refresh (clear + redraw every 30s)
+ *        Defaults to live TUI mode; use --no-watch for one-shot output.
  */
 
+import { execFile as execFileCb } from "child_process";
 import {
   listOpenPRs,
   listOpenPRsAsync,
@@ -16,14 +17,25 @@ import {
   ghQuietAsync,
   getUnresolvedCommentCounts,
   getUnresolvedCommentCountsAsync,
+  listPRReviewCommentsAsync,
+  addPRCommentAsync,
   isInterrupted,
   setPipeStdio,
 } from "../lib/gh.js";
-import type { WorkflowRun } from "../lib/types.js";
+import type { WorkflowRun, PRReviewComment } from "../lib/types.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { getConfiguredRepos } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { parseStandardFlags } from "../lib/args.js";
+
+function execAsync(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFileCb(command, args, { encoding: "utf-8", timeout: 30_000 }, (error, stdout) => {
+      if (error) { reject(error); return; }
+      resolve(stdout);
+    });
+  });
+}
 
 const STATUS_FIELDS = [
   "number", "headRefName", "labels", "title", "author",
@@ -270,6 +282,17 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   let ciUpdatePending = false;
   const isTTY = !!process.stdin.isTTY;
 
+  let expandedIndex: number | null = null;
+  let expandedPRNumber: number | null = null;
+  let detailComments: PRReviewComment[] = [];
+  let detailLoading = false;
+  let currentDetailHeight = 0;
+  const DETAIL_MAX_LINES = 10;
+
+  let commentInputMode = false;
+  let commentBuffer = "";
+  let commentPR: PRWithStatus | null = null;
+
   setPipeStdio(true);
 
   function cleanup(): void {
@@ -295,12 +318,263 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     for (let i = 0; i < currentPRs.length; i++) drawRow(i);
   }
 
+  function drawDetailSection(): void {
+    if (expandedIndex === null || expandedIndex >= currentPRs.length) {
+      currentDetailHeight = 0;
+      return;
+    }
+    const columns = process.stdout.columns || 80;
+    const pr = currentPRs[expandedIndex];
+    const detailStart = ROW_START + currentPRs.length;
+
+    process.stdout.write(`\x1b[${detailStart};1H\x1b[2K`);
+    if (detailLoading) {
+      process.stdout.write(`  ${ANSI.dim}Loading comments for #${pr.number}…${ANSI.reset}`);
+      currentDetailHeight = 1;
+      return;
+    }
+
+    if (detailComments.length === 0) {
+      process.stdout.write(`  ${ANSI.dim}▼ No unresolved comments on #${pr.number}${ANSI.reset}`);
+      currentDetailHeight = 1;
+      return;
+    }
+
+    process.stdout.write(
+      `  ${ANSI.bold}▼ ${detailComments.length} unresolved comment(s) on #${pr.number}${ANSI.reset}`
+    );
+
+    const maxVisible = Math.min(detailComments.length, DETAIL_MAX_LINES);
+    for (let i = 0; i < maxVisible; i++) {
+      const comment = detailComments[i];
+      const line = detailStart + 1 + i;
+      const loc = comment.line ?? comment.original_line ?? "?";
+      const bodyRaw = comment.body
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/<[^>]+>/g, "")
+        .replace(/\n/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const maxBodyLen = Math.max(20, columns - 50);
+      const truncBody = bodyRaw.length > maxBodyLen ? bodyRaw.slice(0, maxBodyLen) + "…" : bodyRaw;
+      process.stdout.write(
+        `\x1b[${line};1H\x1b[2K` +
+        `    ${ANSI.dim}${comment.user.login}${ANSI.reset} · ${comment.path}:${loc} · ${ANSI.dim}${truncBody}${ANSI.reset}`
+      );
+    }
+
+    let totalLines = 1 + maxVisible;
+    if (detailComments.length > maxVisible) {
+      const moreLine = detailStart + 1 + maxVisible;
+      process.stdout.write(
+        `\x1b[${moreLine};1H\x1b[2K    ${ANSI.dim}${detailComments.length - maxVisible} more — press [o] to view on GitHub${ANSI.reset}`
+      );
+      totalLines++;
+    }
+
+    currentDetailHeight = totalLines;
+  }
+
+  function collapseDetail(): void {
+    if (expandedIndex === null) return;
+    const oldHeight = currentDetailHeight;
+    expandedIndex = null;
+    expandedPRNumber = null;
+    detailComments = [];
+    detailLoading = false;
+    currentDetailHeight = 0;
+    const detailStart = ROW_START + currentPRs.length;
+    for (let i = 0; i < oldHeight; i++) {
+      process.stdout.write(`\x1b[${detailStart + i};1H\x1b[2K`);
+    }
+    drawFooter(prevRowCount);
+  }
+
+  function handleToggleExpand(): void {
+    if (currentPRs.length === 0) return;
+    if (expandedIndex === selectedIndex) {
+      collapseDetail();
+      return;
+    }
+
+    const oldHeight = currentDetailHeight;
+    expandedIndex = selectedIndex;
+    expandedPRNumber = currentPRs[selectedIndex]?.number ?? null;
+    detailComments = [];
+    detailLoading = true;
+
+    if (oldHeight > 0) {
+      const detailStart = ROW_START + currentPRs.length;
+      for (let i = 0; i < oldHeight; i++) {
+        process.stdout.write(`\x1b[${detailStart + i};1H\x1b[2K`);
+      }
+    }
+    currentDetailHeight = 0;
+    drawDetailSection();
+    drawFooter(prevRowCount);
+
+    const pr = currentPRs[selectedIndex];
+    if (!pr) return;
+
+    (async () => {
+      try {
+        const comments = await listPRReviewCommentsAsync(pr.repo, pr.number);
+        if (expandedPRNumber !== pr.number) return;
+        detailComments = comments;
+      } catch {
+        detailComments = [];
+      } finally {
+        detailLoading = false;
+      }
+      if (expandedPRNumber === pr.number) {
+        drawDetailSection();
+        drawFooter(prevRowCount);
+      }
+    })();
+  }
+
+  function handleCheckout(): void {
+    const pr = selectedPR();
+    if (busy || !pr) return;
+
+    const localRepo = getOriginRepo();
+    if (!localRepo || localRepo !== pr.repo) {
+      statusMsg = `${ANSI.red}Cannot checkout: not in the ${pr.repo} repository${ANSI.reset}`;
+      drawFooter(prevRowCount);
+      return;
+    }
+
+    busy = true;
+    statusMsg = `${ANSI.amber}Checking git status…${ANSI.reset}`;
+    drawFooter(prevRowCount);
+
+    (async () => {
+      try {
+        const status = await execAsync("git", ["status", "--porcelain"]);
+        if (status.trim().length > 0) {
+          statusMsg = `${ANSI.red}Working directory not clean — commit or stash changes first${ANSI.reset}`;
+          busy = false;
+          drawFooter(prevRowCount);
+          return;
+        }
+
+        statusMsg = `${ANSI.amber}Checking out ${pr.headRefName}…${ANSI.reset}`;
+        drawFooter(prevRowCount);
+
+        await execAsync("git", ["fetch", "origin",
+          `+refs/heads/${pr.headRefName}:refs/remotes/origin/${pr.headRefName}`]);
+
+        let localExists = false;
+        try {
+          await execAsync("git", ["rev-parse", "--verify", `refs/heads/${pr.headRefName}`]);
+          localExists = true;
+        } catch {}
+
+        if (localExists) {
+          await execAsync("git", ["switch", pr.headRefName]);
+        } else {
+          await execAsync("git", ["checkout", "-b", pr.headRefName, `origin/${pr.headRefName}`]);
+        }
+        statusMsg = `${ANSI.green}Checked out ${pr.headRefName}${ANSI.reset}`;
+      } catch (e: unknown) {
+        const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
+        const columns = process.stdout.columns || 80;
+        statusMsg = `${ANSI.red}Checkout failed: ${msg.slice(0, columns - 20)}${ANSI.reset}`;
+      } finally {
+        busy = false;
+        drawFooter(prevRowCount);
+      }
+    })();
+  }
+
+  function drawCommentInput(): void {
+    const promptPrefix = `Comment on #${commentPR!.number}: `;
+    const footerLine = ROW_START + Math.max(prevRowCount, 1) + currentDetailHeight + 1;
+    process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
+    process.stdout.write(`${ANSI.bold}${promptPrefix}${ANSI.reset}${commentBuffer}`);
+    process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+    process.stdout.write(`${ANSI.dim}Enter to send · Esc to cancel${ANSI.reset}`);
+    process.stdout.write(`\x1b[${footerLine + 2};1H\x1b[J`);
+    process.stdout.write("\x1b[?25h");
+    process.stdout.write(`\x1b[${footerLine};${promptPrefix.length + commentBuffer.length + 1}H`);
+  }
+
+  function startCommentInput(): void {
+    const pr = selectedPR();
+    if (busy || !pr) return;
+    commentInputMode = true;
+    commentPR = pr;
+    commentBuffer = pr.agent ? `@${pr.agent} ` : "";
+    drawCommentInput();
+  }
+
+  function handleCommentKey(key: string): void {
+    if (key === "\x1b" || key === "\x03") {
+      commentInputMode = false;
+      commentPR = null;
+      commentBuffer = "";
+      process.stdout.write("\x1b[?25l");
+      drawFooter(prevRowCount);
+      return;
+    }
+
+    if (key.startsWith("\x1b")) return;
+
+    if (key === "\r") {
+      const body = commentBuffer.trim();
+      const pr = commentPR!;
+      commentInputMode = false;
+      commentPR = null;
+      commentBuffer = "";
+      process.stdout.write("\x1b[?25l");
+
+      if (body.length === 0) {
+        statusMsg = `${ANSI.dim}Empty comment, cancelled${ANSI.reset}`;
+        drawFooter(prevRowCount);
+        return;
+      }
+
+      statusMsg = `${ANSI.amber}Posting comment on #${pr.number}…${ANSI.reset}`;
+      drawFooter(prevRowCount);
+
+      (async () => {
+        try {
+          await addPRCommentAsync(pr.repo, pr.number, body);
+          statusMsg = `${ANSI.green}Comment posted on #${pr.number}${ANSI.reset}`;
+        } catch {
+          statusMsg = `${ANSI.red}Failed to post comment on #${pr.number}${ANSI.reset}`;
+        }
+        drawFooter(prevRowCount);
+      })();
+      return;
+    }
+
+    if (key === "\x7f" || key === "\b") {
+      if (commentBuffer.length > 0) {
+        commentBuffer = commentBuffer.slice(0, -1);
+      }
+      drawCommentInput();
+      return;
+    }
+
+    if (key === "\x15") {
+      commentBuffer = "";
+      drawCommentInput();
+      return;
+    }
+
+    if (key.length === 1 && key.charCodeAt(0) >= 32) {
+      commentBuffer += key;
+      drawCommentInput();
+    }
+  }
+
   function drawFooter(rowCount: number): void {
-    const footerLine = ROW_START + Math.max(rowCount, 1) + 1;
+    const footerLine = ROW_START + Math.max(rowCount, 1) + currentDetailHeight + 1;
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎/o open  [r]erun  [u]pdate main  [a]pprove  │  ` +
-      `[R]erun all  [U]pdate all  [q]uit${ANSI.reset}`
+      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment  [r]erun  [u]pdate  [a]pprove  │  ` +
+      `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
     if (statusMsg) process.stdout.write(statusMsg);
@@ -365,7 +639,20 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         prevRowCount = sortedPrs.length;
         clampSelection();
 
+        if (expandedPRNumber !== null) {
+          const newIdx = currentPRs.findIndex(p => p.number === expandedPRNumber);
+          if (newIdx === -1) {
+            expandedIndex = null;
+            expandedPRNumber = null;
+            detailComments = [];
+            currentDetailHeight = 0;
+          } else {
+            expandedIndex = newIdx;
+          }
+        }
+
         drawAllRows();
+        drawDetailSection();
 
         if (oldRowCount > sortedPrs.length) {
           for (let i = sortedPrs.length; i < oldRowCount; i++) {
@@ -400,6 +687,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         }
         if (gen !== ciGeneration || isInterrupted()) return;
         drawAllRows();
+        drawDetailSection();
 
         // CI status phase — one PR at a time
         for (let i = 0; i < currentPRs.length; i++) {
@@ -444,6 +732,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     const prev = selectedIndex;
     selectedIndex = Math.max(0, Math.min(currentPRs.length - 1, selectedIndex + delta));
     if (prev !== selectedIndex) {
+      if (expandedIndex !== null) collapseDetail();
       drawRow(prev);
       drawRow(selectedIndex);
     }
@@ -682,6 +971,11 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdin.setEncoding("utf-8");
 
     process.stdin.on("data", (key: string) => {
+      if (commentInputMode) {
+        handleCommentKey(key);
+        return;
+      }
+
       if (key === "q" || key === "\x03") cleanup();
 
       if (key === "\x1b[A" || key === "k") { moveSelection(-1); return; }
@@ -689,7 +983,10 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
       if (busy) return;
 
-      if (key === "\r" || key === "o") { handleOpenSelected(); return; }
+      if (key === "\r") { handleToggleExpand(); return; }
+      if (key === "o") { handleOpenSelected(); return; }
+      if (key === "c") { handleCheckout(); return; }
+      if (key === "C") { startCommentInput(); return; }
       if (key === "r") { handleRerunSelected(); return; }
       if (key === "u") { handleUpdateSelected(); return; }
       if (key === "a") { handleApproveSelected(); return; }
@@ -712,8 +1009,9 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 function main(): void {
   const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
   const { mineOnly } = flags;
-  const watch = filtered.includes("--watch");
-  const filteredArgs = filtered.filter((a) => a !== "--watch");
+  const noWatch = filtered.includes("--no-watch");
+  const watch = !noWatch && !!process.stdout.isTTY;
+  const filteredArgs = filtered.filter((a) => a !== "--watch" && a !== "--no-watch");
 
   const help = `Usage: status [options]
 
@@ -723,12 +1021,17 @@ function main(): void {
   Uses origin remote when run inside a git repo (including submodules).
   Falls back to .copserc in cwd or parent: { "repos": ["owner/name", ...] }
 
+  Defaults to live TUI mode when connected to a terminal.
+
 Options:
-  --watch   Live refresh (clear + redraw every 30s).
-            ↑↓/jk navigate  ⏎/o open  [r]erun  [u]pdate main  [a]pprove
-            [R]erun all  [U]pdate all  [q]uit
-  --mine    Only your PRs (default)
-  --all     Include PRs from all authors
+  --no-watch  One-shot table output (no TUI)
+  --mine      Only your PRs (default)
+  --all       Include PRs from all authors
+
+TUI keys:
+  ↑↓/jk navigate  ⏎ expand  [o]pen  [c]heckout  [C]omment
+  [r]erun  [u]pdate main  [a]pprove
+  [R]erun all  [U]pdate all  [q]uit
 `;
 
   let repos: string[] = [];

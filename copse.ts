@@ -61,9 +61,9 @@ const COMMANDS: Record<string, CommandDef> = {
   status: {
     file: "status.js",
     description: "Unified dashboard: agent PRs across all repos (htop-style)",
-    usage: "copse status [--watch] [--all]",
+    usage: "copse status [--no-watch] [--all]",
     args: [
-      { name: "--watch", description: "Live-updating TUI (refresh every 10s)" },
+      { name: "--no-watch", description: "One-shot table output (default: live TUI)" },
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
@@ -138,7 +138,7 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
   
   const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
-  const statusOpts: Record<string, string> = { "--watch": "Live-updating TUI", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const statusOpts: Record<string, string> = { "--no-watch": "One-shot output (default: live TUI)", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const prCommentsOpts: Record<string, string> = { "--no-interactive": "List only, no reply loop", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
   const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
