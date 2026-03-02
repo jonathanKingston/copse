@@ -5,7 +5,7 @@
  *        Omit repo when run inside a git repo to use origin remote.
  */
 
-import { getOriginRepo } from "../lib/utils.js";
+import { getOriginRepo, hyperlink, getTerminalColumns } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
 import {
   REPO_PATTERN, validateRepo, listOpenPRs, listWorkflowRuns,
@@ -73,15 +73,22 @@ Examples:
 
   console.error(`Found ${matching.length} matching PR(s)\n`);
 
+  const columns = getTerminalColumns();
+
   for (const pr of matching) {
     const runs = listWorkflowRuns(repo, pr.headRefName);
     const failed = runs.filter((r) => r.conclusion === "failure");
 
-    const titleShort = (pr.title || "").slice(0, 60);
-    const suffix = (pr.title || "").length > 60 ? "…" : "";
-    console.log(`#${pr.number} ${pr.headRefName}`);
+    const prUrl = `https://github.com/${repo}/pull/${pr.number}`;
+    const heading = `#${pr.number} ${pr.headRefName}`;
+    console.log(hyperlink(prUrl, heading));
+
+    const indent = 2;
+    const maxTitleWidth = Math.max(20, columns - indent);
+    const titleShort = (pr.title || "").slice(0, maxTitleWidth);
+    const suffix = (pr.title || "").length > maxTitleWidth ? "…" : "";
     console.log(`  ${titleShort}${suffix}`);
-    console.log(`  https://github.com/${repo}/pull/${pr.number}`);
+    console.log(`  ${prUrl}`);
 
     if (failed.length === 0) {
       const inProgress = runs.filter(

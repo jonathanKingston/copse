@@ -20,13 +20,18 @@ export function validateAgent(agent: string): string {
 const GH_TIMEOUT_MS = 30_000;
 
 let _interrupted = false;
+let _pipeStdio = false;
 
 /** True after a gh child process was killed by SIGINT/SIGTERM (set synchronously). */
 export function isInterrupted(): boolean { return _interrupted; }
 
+/** When enabled, gh() pipes stdio instead of inheriting the terminal (for TUI modes). */
+export function setPipeStdio(on: boolean): void { _pipeStdio = on; }
+
 export function gh(...args: string[]): string {
+  const stdio = _pipeStdio ? "pipe" as const : undefined;
   try {
-    return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS });
+    return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
   } catch (e: unknown) {
     const sig = (e as { signal?: string }).signal;
     if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
