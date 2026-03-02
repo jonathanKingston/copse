@@ -155,6 +155,18 @@ export function formatGhError(e: ExecError, context: string = ""): string {
   return prefix + (msg || "Unknown error");
 }
 
+export const BOT_AUTHORS: Record<string, string> = {
+  "app/dependabot": "depbot",
+};
+
+export function isBotPR(pr: PR): boolean {
+  return (pr.author?.login ?? "") in BOT_AUTHORS;
+}
+
+export function getBotAgent(pr: PR): string | null {
+  return BOT_AUTHORS[pr.author?.login ?? ""] ?? null;
+}
+
 export const AGENT_PATTERNS_WITH_LABELS: Record<string, AgentPatternWithLabels> = {
   cursor: {
     branch: /cursor/i,
@@ -193,7 +205,7 @@ export function getAgentForPR(pr: PR): string | null {
   for (const agent of Object.keys(AGENT_PATTERNS_WITH_LABELS)) {
     if (matchesAgent(pr, agent)) return agent;
   }
-  return null;
+  return getBotAgent(pr);
 }
 
 /**
