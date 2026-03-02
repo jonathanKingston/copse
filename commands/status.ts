@@ -6,16 +6,20 @@
 
 import {
   listOpenPRs,
+  listOpenPRsAsync,
   listWorkflowRuns,
+  listWorkflowRunsAsync,
   getAgentForPR,
   validateRepo,
   REPO_PATTERN,
   gh,
-  ghQuiet,
+  ghQuietAsync,
   getUnresolvedCommentCounts,
+  getUnresolvedCommentCountsAsync,
   isInterrupted,
   setPipeStdio,
 } from "../lib/gh.js";
+import type { WorkflowRun } from "../lib/types.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { getConfiguredRepos } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
@@ -28,6 +32,7 @@ const STATUS_FIELDS = [
 
 const STALE_DAYS = 7;
 const WATCH_INTERVAL_MS = 30_000;
+const BULK_COOLDOWN_MS = 2_000;
 
 export interface PRWithStatus {
   repo: string;
@@ -313,73 +318,125 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function refresh(): void {
     ciGeneration++;
     const gen = ciGeneration;
-    ciUpdatePending = false;
+    ciUpdatePending = true;
 
-    try {
-      const prs = fetchPRsBase(repos, mineOnly);
-      if (isInterrupted()) return;
+    (async () => {
+      try {
+        const prs: PRWithStatus[] = [];
+        const now = Date.now();
+        for (const repo of repos) {
+          validateRepo(repo);
+          const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS);
+          if (gen !== ciGeneration || isInterrupted()) return;
+          const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly });
 
-      const oldRowCount = prevRowCount;
-      currentPRs = prs;
-      prevRowCount = prs.length;
-      clampSelection();
+          for (const pr of matching) {
+            const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
+            const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
+            const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
+            const ageDays = updatedAt
+              ? Math.floor((now - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000))
+              : 0;
 
-      drawAllRows();
-
-      if (oldRowCount > prs.length) {
-        for (let i = prs.length; i < oldRowCount; i++) {
-          process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K`);
+            prs.push({
+              repo,
+              number: pr.number,
+              headRefName: pr.headRefName,
+              title: pr.title ?? "",
+              author: pr.author,
+              mergeStateStatus,
+              mergeable: (pr as { mergeable?: string }).mergeable ?? "UNKNOWN",
+              reviewDecision,
+              updatedAt,
+              agent: getAgentForPR(pr),
+              ciStatus: "pending",
+              conflicts: mergeStateStatus === "HAS_CONFLICTS",
+              ageDays,
+              stale: ageDays >= STALE_DAYS,
+              readyToMerge: false,
+              commentCount: 0,
+            });
+          }
         }
+
+        const sortedPrs = sortPRs(prs);
+        const oldRowCount = prevRowCount;
+        currentPRs = sortedPrs;
+        prevRowCount = sortedPrs.length;
+        clampSelection();
+
+        drawAllRows();
+
+        if (oldRowCount > sortedPrs.length) {
+          for (let i = sortedPrs.length; i < oldRowCount; i++) {
+            process.stdout.write(`\x1b[${ROW_START + i};1H\x1b[2K`);
+          }
+        }
+
+        if (sortedPrs.length === 0) {
+          process.stdout.write(`\x1b[${ROW_START};1H\x1b[2K`);
+          process.stdout.write("No agent PRs found.");
+        }
+        drawFooter(Math.max(sortedPrs.length, 1));
+
+        if (sortedPrs.length === 0) return;
+
+        // Comment counts phase
+        if (gen !== ciGeneration || isInterrupted()) return;
+        const byRepo = new Map<string, PRWithStatus[]>();
+        for (const pr of currentPRs) {
+          const list = byRepo.get(pr.repo) ?? [];
+          list.push(pr);
+          byRepo.set(pr.repo, list);
+        }
+        for (const [repo, repoPrs] of byRepo) {
+          if (gen !== ciGeneration || isInterrupted()) return;
+          try {
+            const counts = await getUnresolvedCommentCountsAsync(repo, repoPrs.map(p => p.number));
+            for (const pr of repoPrs) {
+              pr.commentCount = counts.get(pr.number) ?? 0;
+            }
+          } catch { /* leave as 0 */ }
+        }
+        if (gen !== ciGeneration || isInterrupted()) return;
+        drawAllRows();
+
+        // CI status phase — one PR at a time
+        for (let i = 0; i < currentPRs.length; i++) {
+          if (gen !== ciGeneration || isInterrupted()) break;
+          const pr = currentPRs[i];
+          try {
+            const runs = await listWorkflowRunsAsync(pr.repo, pr.headRefName);
+            const failed = runs.filter((r) => r.conclusion === "failure");
+            const inProgress = runs.filter(
+              (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
+            );
+
+            if (failed.length > 0) pr.ciStatus = "fail";
+            else if (inProgress.length > 0) pr.ciStatus = "pending";
+            else if (runs.some((r) => r.conclusion === "success")) pr.ciStatus = "pass";
+            else pr.ciStatus = "none";
+
+            pr.readyToMerge =
+              pr.ciStatus === "pass" &&
+              !pr.conflicts &&
+              (pr.reviewDecision === "APPROVED" || pr.reviewDecision === null);
+          } catch { /* leave as pending */ }
+
+          if (gen !== ciGeneration || isInterrupted()) break;
+          drawRow(i);
+        }
+      } catch (e: unknown) {
+        if (isInterrupted()) return;
+        const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
+        const errLine = ROW_START + Math.max(prevRowCount, 0);
+        process.stdout.write(`\x1b[${errLine};1H\x1b[2K`);
+        console.error(`\x1b[33mAPI error, will retry: ${msg}\x1b[0m`);
+      } finally {
+        if (gen === ciGeneration) ciUpdatePending = false;
+        if (isInterrupted()) cleanup();
       }
-
-      if (prs.length === 0) {
-        process.stdout.write(`\x1b[${ROW_START};1H\x1b[2K`);
-        process.stdout.write("No agent PRs found.");
-      }
-      drawFooter(Math.max(prs.length, 1));
-    } catch (e: unknown) {
-      if (isInterrupted()) return;
-      const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
-      const errLine = ROW_START + Math.max(prevRowCount, 0);
-      process.stdout.write(`\x1b[${errLine};1H\x1b[2K`);
-      console.error(`\x1b[33mAPI error, will retry: ${msg}\x1b[0m`);
-      return;
-    }
-
-    if (isInterrupted()) { cleanup(); return; }
-
-    if (currentPRs.length > 0) {
-      ciUpdatePending = true;
-      setTimeout(() => updateCommentsPhase(gen), 0);
-    }
-  }
-
-  function updateCommentsPhase(gen: number): void {
-    if (gen !== ciGeneration || isInterrupted()) {
-      if (gen === ciGeneration) ciUpdatePending = false;
-      return;
-    }
-
-    try {
-      updateCommentCounts(currentPRs);
-      drawAllRows();
-    } catch { /* leave as 0 */ }
-
-    if (isInterrupted()) { cleanup(); return; }
-    setTimeout(() => updateCIIncremental(0, gen), 0);
-  }
-
-  function updateCIIncremental(index: number, gen: number): void {
-    if (gen !== ciGeneration || index >= currentPRs.length || isInterrupted()) {
-      if (gen === ciGeneration) ciUpdatePending = false;
-      return;
-    }
-
-    try { updatePRCIStatus(currentPRs[index]); } catch { /* leave as pending */ }
-    if (isInterrupted()) { cleanup(); return; }
-
-    drawRow(index);
-    setTimeout(() => updateCIIncremental(index + 1, gen), 0);
+    })();
   }
 
   function moveSelection(delta: number): void {
@@ -399,13 +456,15 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function handleOpenSelected(): void {
     const pr = selectedPR();
     if (!pr) return;
-    try {
-      ghQuiet("pr", "view", String(pr.number), "--repo", pr.repo, "--web");
-      statusMsg = `${ANSI.green}Opened #${pr.number} in browser${ANSI.reset}`;
-    } catch {
-      statusMsg = `${ANSI.red}Failed to open #${pr.number}${ANSI.reset}`;
-    }
-    drawFooter(prevRowCount);
+    (async () => {
+      try {
+        await ghQuietAsync("pr", "view", String(pr.number), "--repo", pr.repo, "--web");
+        statusMsg = `${ANSI.green}Opened #${pr.number} in browser${ANSI.reset}`;
+      } catch {
+        statusMsg = `${ANSI.red}Failed to open #${pr.number}${ANSI.reset}`;
+      }
+      drawFooter(prevRowCount);
+    })();
   }
 
   function handleRerunSelected(): void {
@@ -416,33 +475,44 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       drawFooter(prevRowCount);
       return;
     }
+
+    pr.ciStatus = "pending";
+    drawRow(selectedIndex);
+
     busy = true;
     statusMsg = `${ANSI.amber}Rerunning failed workflows for #${pr.number}…${ANSI.reset}`;
     drawFooter(prevRowCount);
 
-    try {
-      let total = 0;
-      const runs = listWorkflowRuns(pr.repo, pr.headRefName);
-      const failed = runs.filter(r => r.conclusion === "failure");
-      for (const run of failed) {
-        if (isInterrupted()) break;
-        try {
-          ghQuiet("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
-          total++;
-        } catch { /* skip */ }
+    (async () => {
+      try {
+        const runsJson = await ghQuietAsync(
+          "run", "list",
+          "--repo", pr.repo,
+          "--branch", pr.headRefName,
+          "--limit", "100",
+          "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
+        );
+        const runs = JSON.parse(runsJson || "[]") as WorkflowRun[];
+        const failed = runs.filter(r => r.conclusion === "failure");
+        let total = 0;
+        for (const run of failed) {
+          if (isInterrupted()) break;
+          try {
+            await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
+            total++;
+          } catch { /* skip */ }
+        }
+        statusMsg = total > 0
+          ? `${ANSI.green}Reran ${total} workflow(s) for #${pr.number}${ANSI.reset}`
+          : `${ANSI.dim}No failed workflows on #${pr.number}${ANSI.reset}`;
+      } catch {
+        statusMsg = `${ANSI.red}Failed to rerun workflows for #${pr.number}${ANSI.reset}`;
+      } finally {
+        if (isInterrupted()) { cleanup(); return; }
       }
-      if (total > 0) {
-        pr.ciStatus = "pending";
-        drawRow(selectedIndex);
-      }
-      statusMsg = total > 0
-        ? `${ANSI.green}Reran ${total} workflow(s) for #${pr.number}${ANSI.reset}`
-        : `${ANSI.dim}No failed workflows on #${pr.number}${ANSI.reset}`;
-    } finally {
-      if (isInterrupted()) { cleanup(); return; }
-    }
-    busy = false;
-    drawFooter(prevRowCount);
+      busy = false;
+      drawFooter(prevRowCount);
+    })();
   }
 
   function handleUpdateSelected(): void {
@@ -452,21 +522,23 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     statusMsg = `${ANSI.amber}Merging main into #${pr.number}…${ANSI.reset}`;
     drawFooter(prevRowCount);
 
-    try {
-      ghQuiet("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
-      statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
-    } catch (e: unknown) {
-      const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
-      if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
-        statusMsg = `${ANSI.dim}#${pr.number} already up to date with main${ANSI.reset}`;
-      } else {
-        statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
+    (async () => {
+      try {
+        await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
+        statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
+      } catch (e: unknown) {
+        const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
+        if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
+          statusMsg = `${ANSI.dim}#${pr.number} already up to date with main${ANSI.reset}`;
+        } else {
+          statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
+        }
+      } finally {
+        if (isInterrupted()) { cleanup(); return; }
       }
-    } finally {
-      if (isInterrupted()) { cleanup(); return; }
-    }
-    busy = false;
-    drawFooter(prevRowCount);
+      busy = false;
+      drawFooter(prevRowCount);
+    })();
   }
 
   function handleApproveSelected(): void {
@@ -476,60 +548,92 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     statusMsg = `${ANSI.amber}Enabling merge when ready for #${pr.number}…${ANSI.reset}`;
     drawFooter(prevRowCount);
 
-    try {
-      ghQuiet("pr", "merge", "--repo", pr.repo, String(pr.number), "--auto");
-      statusMsg = `${ANSI.green}Merge when ready enabled for #${pr.number}${ANSI.reset}`;
-    } catch (e: unknown) {
-      const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
-      if (msg.includes("already") && (msg.includes("auto") || msg.includes("queued"))) {
-        statusMsg = `${ANSI.dim}#${pr.number} already has merge when ready enabled${ANSI.reset}`;
-      } else if (msg.includes("draft")) {
-        statusMsg = `${ANSI.red}#${pr.number} is a draft — mark ready for review first${ANSI.reset}`;
-      } else {
-        statusMsg = `${ANSI.red}Failed to enable merge when ready for #${pr.number}${ANSI.reset}`;
+    (async () => {
+      try {
+        await ghQuietAsync("pr", "merge", "--repo", pr.repo, String(pr.number), "--auto");
+        statusMsg = `${ANSI.green}Merge when ready enabled for #${pr.number}${ANSI.reset}`;
+      } catch (e: unknown) {
+        const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
+        if (msg.includes("already") && (msg.includes("auto") || msg.includes("queued"))) {
+          statusMsg = `${ANSI.dim}#${pr.number} already has merge when ready enabled${ANSI.reset}`;
+        } else if (msg.includes("draft")) {
+          statusMsg = `${ANSI.red}#${pr.number} is a draft — mark ready for review first${ANSI.reset}`;
+        } else {
+          statusMsg = `${ANSI.red}Failed to enable merge when ready for #${pr.number}${ANSI.reset}`;
+        }
+      } finally {
+        if (isInterrupted()) { cleanup(); return; }
       }
-    } finally {
-      if (isInterrupted()) { cleanup(); return; }
-    }
-    busy = false;
-    drawFooter(prevRowCount);
+      busy = false;
+      drawFooter(prevRowCount);
+    })();
   }
 
   function handleRerunAllFailed(): void {
     if (busy || currentPRs.length === 0) return;
+
+    const toRerun: PRWithStatus[] = [];
+    let skipped = 0;
+    for (const pr of currentPRs) {
+      if (pr.ciStatus !== "fail") continue;
+      if (pr.stale) { skipped++; continue; }
+      toRerun.push(pr);
+    }
+
+    if (toRerun.length === 0) {
+      statusMsg = skipped > 0
+        ? `${ANSI.dim}Skipped ${skipped} stale, no failed workflows to rerun${ANSI.reset}`
+        : `${ANSI.dim}No failed workflows to rerun${ANSI.reset}`;
+      drawFooter(prevRowCount);
+      return;
+    }
+
+    for (const pr of toRerun) pr.ciStatus = "pending";
+    drawAllRows();
+
     busy = true;
     statusMsg = `${ANSI.amber}Rerunning all failed workflows…${ANSI.reset}`;
     drawFooter(prevRowCount);
 
-    try {
-      let total = 0;
-      let skipped = 0;
-      for (const pr of currentPRs) {
-        if (isInterrupted()) break;
-        if (pr.ciStatus !== "fail") continue;
-        if (pr.stale) { skipped++; continue; }
-        const runs = listWorkflowRuns(pr.repo, pr.headRefName);
-        const failed = runs.filter(r => r.conclusion === "failure");
-        for (const run of failed) {
+    (async () => {
+      try {
+        let total = 0;
+        for (const pr of toRerun) {
           if (isInterrupted()) break;
           try {
-            ghQuiet("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
-            total++;
-          } catch { /* skip */ }
+            const runsJson = await ghQuietAsync(
+              "run", "list",
+              "--repo", pr.repo,
+              "--branch", pr.headRefName,
+              "--limit", "100",
+              "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
+            );
+            const runs = JSON.parse(runsJson || "[]") as WorkflowRun[];
+            const failed = runs.filter(r => r.conclusion === "failure");
+            for (const run of failed) {
+              if (isInterrupted()) break;
+              try {
+                await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
+                total++;
+              } catch { /* skip */ }
+            }
+          } catch { /* skip PR */ }
         }
-      }
 
-      const parts: string[] = [];
-      if (total > 0) parts.push(`reran ${total} workflow(s)`);
-      if (skipped > 0) parts.push(`skipped ${skipped} stale`);
-      statusMsg = total > 0
-        ? `${ANSI.green}${parts.join(", ")}${ANSI.reset}`
-        : `${ANSI.dim}${parts.length > 0 ? parts.join(", ") : "no failed workflows to rerun"}${ANSI.reset}`;
-    } finally {
-      if (isInterrupted()) { cleanup(); return; }
-    }
-    busy = false;
-    refresh();
+        const parts: string[] = [];
+        if (total > 0) parts.push(`reran ${total} workflow(s)`);
+        if (skipped > 0) parts.push(`skipped ${skipped} stale`);
+        statusMsg = total > 0
+          ? `${ANSI.green}${parts.join(", ")}${ANSI.reset}`
+          : `${ANSI.dim}${parts.length > 0 ? parts.join(", ") : "no failed workflows to rerun"}${ANSI.reset}`;
+      } finally {
+        if (isInterrupted()) { cleanup(); return; }
+      }
+      busy = false;
+      drawFooter(prevRowCount);
+      await new Promise(r => setTimeout(r, BULK_COOLDOWN_MS));
+      refresh();
+    })();
   }
 
   function handleUpdateAllMain(): void {
@@ -538,27 +642,31 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     statusMsg = `${ANSI.amber}Merging main into all PR branches…${ANSI.reset}`;
     drawFooter(prevRowCount);
 
-    try {
-      let updated = 0;
-      let upToDate = 0;
-      for (const pr of currentPRs) {
-        if (isInterrupted()) break;
-        try {
-          ghQuiet("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
-          updated++;
-        } catch (e: unknown) {
-          const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
-          if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
-            upToDate++;
+    (async () => {
+      try {
+        let updated = 0;
+        let upToDate = 0;
+        for (const pr of currentPRs) {
+          if (isInterrupted()) break;
+          try {
+            await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
+            updated++;
+          } catch (e: unknown) {
+            const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
+            if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
+              upToDate++;
+            }
           }
         }
+        statusMsg = `${ANSI.green}Updated ${updated}, ${upToDate} already up to date${ANSI.reset}`;
+      } finally {
+        if (isInterrupted()) { cleanup(); return; }
       }
-      statusMsg = `${ANSI.green}Updated ${updated}, ${upToDate} already up to date${ANSI.reset}`;
-    } finally {
-      if (isInterrupted()) { cleanup(); return; }
-    }
-    busy = false;
-    refresh();
+      busy = false;
+      drawFooter(prevRowCount);
+      await new Promise(r => setTimeout(r, BULK_COOLDOWN_MS));
+      refresh();
+    })();
   }
 
   process.stdout.write("\x1b[?25l\x1b[2J\x1b[H");
@@ -575,10 +683,11 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     process.stdin.on("data", (key: string) => {
       if (key === "q" || key === "\x03") cleanup();
-      if (busy) return;
 
       if (key === "\x1b[A" || key === "k") { moveSelection(-1); return; }
       if (key === "\x1b[B" || key === "j") { moveSelection(1); return; }
+
+      if (busy) return;
 
       if (key === "\r" || key === "o") { handleOpenSelected(); return; }
       if (key === "r") { handleRerunSelected(); return; }
