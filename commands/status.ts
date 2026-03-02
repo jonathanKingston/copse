@@ -746,7 +746,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment  [r]erun  [u]pdate  [a]pprove  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1035,6 +1035,34 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     const pr = selectedPR();
     if (busy || !pr) return;
     busy = true;
+    statusMsg = `${ANSI.amber}Approving #${pr.number}…${ANSI.reset}`;
+    drawFooter();
+
+    (async () => {
+      try {
+        await ghQuietAsync("pr", "review", "--repo", pr.repo, String(pr.number), "--approve");
+        statusMsg = `${ANSI.green}Approved #${pr.number}${ANSI.reset}`;
+      } catch (e: unknown) {
+        const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
+        if (msg.includes("already")) {
+          statusMsg = `${ANSI.dim}#${pr.number} already approved${ANSI.reset}`;
+        } else if (msg.includes("draft")) {
+          statusMsg = `${ANSI.red}#${pr.number} is a draft — mark ready for review first${ANSI.reset}`;
+        } else {
+          statusMsg = `${ANSI.red}Failed to approve #${pr.number}${ANSI.reset}`;
+        }
+      } finally {
+        if (isInterrupted()) { cleanup(); return; }
+      }
+      busy = false;
+      drawFooter();
+    })();
+  }
+
+  function handleMergeWhenReady(): void {
+    const pr = selectedPR();
+    if (busy || !pr) return;
+    busy = true;
     statusMsg = `${ANSI.amber}Enabling merge when ready for #${pr.number}…${ANSI.reset}`;
     drawFooter();
 
@@ -1200,6 +1228,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       if (key === "r") { handleRerunSelected(); return; }
       if (key === "u") { handleUpdateSelected(); return; }
       if (key === "a") { handleApproveSelected(); return; }
+      if (key === "m") { handleMergeWhenReady(); return; }
 
       if (key === "/") { startSearchMode(); return; }
 
@@ -1242,7 +1271,7 @@ Options:
 
 TUI keys:
   ↑↓/jk navigate  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment
-  [r]erun  [u]pdate main  [a]pprove
+  [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;
 
