@@ -21,6 +21,8 @@ const GH_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1_000;
 const GRAPHQL_CHUNK_SIZE = 20;
+// Scan a generous commit window so agent co-author matches survive follow-up human commits.
+const COAUTHOR_SCAN_COMMIT_COUNT = 100;
 
 let _interrupted = false;
 let _pipeStdio = false;
@@ -210,8 +212,8 @@ export function getAgentForPR(pr: PR): string | null {
 
 /**
  * Batched check: for a set of PRs that didn't match by branch/label,
- * fetch only the last commit's authors via a single GraphQL query
- * and test against agent patterns. Returns PR numbers that matched.
+ * fetch recent commit authors via a single GraphQL query and test
+ * against agent patterns. Returns PR numbers that matched.
  */
 export function checkPRsForAgentCoAuthors(
   repo: string,
@@ -232,7 +234,7 @@ export function checkPRsForAgentCoAuthors(
     const prFragments = chunk.map(
       (pr) =>
         `pr_${pr.number}: pullRequest(number: ${pr.number}) {
-          commits(last: 1) {
+          commits(last: ${COAUTHOR_SCAN_COMMIT_COUNT}) {
             nodes { commit { authors(first: 10) { nodes { name user { login } } } } }
           }
         }`
