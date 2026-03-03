@@ -111,9 +111,10 @@ function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
     for (const pr of matching) {
       const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
       const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
+      const createdAt = (pr as { createdAt?: string }).createdAt ?? "";
       const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
-      const ageDays = updatedAt
-        ? Math.floor((now - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000))
+      const ageDays = createdAt
+        ? Math.floor((now - new Date(createdAt).getTime()) / (24 * 60 * 60 * 1000))
         : 0;
 
       result.push({
@@ -288,7 +289,7 @@ function buildTableHeader(singleRepo: boolean): string {
     pad(headerLink("REV", "review-status"), 4),
     pad(headerLink("CON", "merge-conflicts"), 4),
     pad(headerLink("MWR", "merge-when-ready"), 4),
-    pad(headerLink("AGE", "days-since-last-update"), 5),
+    pad(headerLink("AGE", "days-since-pr-opened"), 5),
     pad(headerLink("CMT", "unresolved-review-comments"), 4),
     headerLink("TITLE", "pr-title"),
   ].join("")}${ANSI.reset}`;
@@ -848,9 +849,10 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           for (const pr of matching) {
             const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
             const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
+            const createdAt = (pr as { createdAt?: string }).createdAt ?? "";
             const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
-            const ageDays = updatedAt
-              ? Math.floor((now - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000))
+            const ageDays = createdAt
+              ? Math.floor((now - new Date(createdAt).getTime()) / (24 * 60 * 60 * 1000))
               : 0;
 
             const prev = oldByKey.get(`${repo}#${pr.number}`);
