@@ -19,6 +19,7 @@ import {
   getUnresolvedCommentCountsAsync,
   listPRReviewCommentsAsync,
   addPRCommentAsync,
+  replyToPRCommentAsync,
   isInterrupted,
   setPipeStdio,
 } from "../lib/gh.js";
@@ -217,6 +218,13 @@ function pad(text: string, width: number): string {
   return text + " ".repeat(Math.max(0, width - visibleLength(text)));
 }
 
+function truncatePlain(text: string, maxLen: number): string {
+  if (maxLen <= 0) return "";
+  if (text.length <= maxLen) return text;
+  if (maxLen === 1) return "…";
+  return text.slice(0, maxLen - 1) + "…";
+}
+
 function formatCI(pr: PRWithStatus): string {
   if (pr.ciStatus === "pass") return `${ANSI.green}✓${ANSI.reset}`;
   if (pr.ciStatus === "fail") return `${ANSI.red}✗${ANSI.reset}`;
@@ -334,7 +342,10 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   let commentInputMode = false;
   let commentBuffer = "";
-  let commentPR: PRWithStatus | null = null;
+  let commentTarget:
+    | { kind: "pr"; pr: PRWithStatus }
+    | { kind: "comment"; pr: PRWithStatus; comment: PRReviewComment }
+    | null = null;
 
   let searchMode = false;
   let searchBuffer = "";
@@ -407,16 +418,20 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   function formatCommentRow(comment: PRReviewComment): string {
     const columns = process.stdout.columns || 80;
-    const loc = comment.line ?? comment.original_line ?? "?";
+    const loc = String(comment.line ?? comment.original_line ?? "?");
+    const pathLoc = `${comment.path}:${loc}`;
+    const pathLocMax = Math.max(12, Math.floor(columns * 0.36));
+    const pathLocTrunc = truncatePlain(pathLoc, pathLocMax);
     const bodyRaw = comment.body
       .replace(/<!--[\s\S]*?-->/g, "")
       .replace(/<[^>]+>/g, "")
       .replace(/\n/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-    const maxBodyLen = Math.max(20, columns - 50);
-    const truncBody = bodyRaw.length > maxBodyLen ? bodyRaw.slice(0, maxBodyLen) + "…" : bodyRaw;
-    return `    ${ANSI.dim}${comment.user.login}${ANSI.reset} · ${comment.path}:${loc} · ${ANSI.dim}${truncBody}${ANSI.reset}`;
+    const prefix = `    ${comment.user.login} · ${pathLocTrunc} · `;
+    const maxBodyLen = Math.max(10, columns - visibleLength(prefix) - 1);
+    const truncBody = truncatePlain(bodyRaw, maxBodyLen);
+    return `${prefix}${ANSI.dim}${truncBody}${ANSI.reset}`;
   }
 
   function highlightRow(row: string): string {
@@ -574,23 +589,48 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function drawCommentInput(): void {
-    const promptPrefix = `Comment on #${commentPR!.number}: `;
     const termRows = process.stdout.rows || 24;
+    const termCols = process.stdout.columns || 80;
     const footerLine = termRows - 1;
+    const target = commentTarget;
+    if (!target) return;
+    const isReply = target.kind === "comment";
+    const targetExcerpt = isReply
+      ? target.comment.body.replace(/\s+/g, " ").trim()
+      : "";
+    const targetLine = isReply
+      ? `Reply target: #${target.pr.number} ${target.comment.path}:${target.comment.line ?? target.comment.original_line ?? "?"} · ${target.comment.user.login} · ${targetExcerpt}`
+      : `Comment target: #${target.pr.number} ${target.pr.title}`;
+    const inputPrefix = isReply ? "Reply: " : "Comment: ";
+    const maxInputLen = Math.max(0, termCols - inputPrefix.length - 1);
+    const visibleBuffer = truncatePlain(commentBuffer, maxInputLen);
+
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
-    process.stdout.write(`${ANSI.bold}${promptPrefix}${ANSI.reset}${commentBuffer}`);
+    process.stdout.write(`${ANSI.bold}${truncatePlain(targetLine, termCols)}${ANSI.reset}`);
+    process.stdout.write(`\x1b[${footerLine};1H`);
+    process.stdout.write(`${ANSI.bold}${inputPrefix}${ANSI.reset}${visibleBuffer}`);
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
     process.stdout.write(`${ANSI.dim}Enter to send · Esc to cancel${ANSI.reset}`);
     process.stdout.write("\x1b[?25h");
-    process.stdout.write(`\x1b[${footerLine};${promptPrefix.length + commentBuffer.length + 1}H`);
+    process.stdout.write(`\x1b[${footerLine};${Math.min(termCols, inputPrefix.length + visibleBuffer.length + 1)}H`);
   }
 
   function startCommentInput(): void {
-    const pr = selectedPR();
-    if (busy || !pr) return;
+    if (busy || virtualRows.length === 0) return;
+    const vr = virtualRows[selectedIndex];
+    if (!vr) return;
+    const pr = currentPRs[vr.prIndex];
+    if (!pr) return;
+
     commentInputMode = true;
-    commentPR = pr;
+    if (vr.kind === "comment") {
+      const comment = expandedComments[vr.commentIndex];
+      if (!comment) return;
+      commentTarget = { kind: "comment", pr, comment };
+    } else {
+      commentTarget = { kind: "pr", pr };
+    }
     commentBuffer = pr.agent ? `@${pr.agent} ` : "";
     drawCommentInput();
   }
@@ -598,7 +638,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function handleCommentKey(key: string): void {
     if (key === "\x1b" || key === "\x03") {
       commentInputMode = false;
-      commentPR = null;
+      commentTarget = null;
       commentBuffer = "";
       process.stdout.write("\x1b[?25l");
       drawFooter();
@@ -609,11 +649,17 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     if (key === "\r") {
       const body = commentBuffer.trim();
-      const pr = commentPR!;
+      const target = commentTarget;
       commentInputMode = false;
-      commentPR = null;
+      commentTarget = null;
       commentBuffer = "";
       process.stdout.write("\x1b[?25l");
+
+      if (!target) {
+        statusMsg = `${ANSI.red}No comment target selected${ANSI.reset}`;
+        drawFooter();
+        return;
+      }
 
       if (body.length === 0) {
         statusMsg = `${ANSI.dim}Empty comment, cancelled${ANSI.reset}`;
@@ -621,15 +667,24 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         return;
       }
 
-      statusMsg = `${ANSI.amber}Posting comment on #${pr.number}…${ANSI.reset}`;
+      statusMsg = target.kind === "comment"
+        ? `${ANSI.amber}Posting reply on #${target.pr.number}…${ANSI.reset}`
+        : `${ANSI.amber}Posting comment on #${target.pr.number}…${ANSI.reset}`;
       drawFooter();
 
       (async () => {
         try {
-          await addPRCommentAsync(pr.repo, pr.number, body);
-          statusMsg = `${ANSI.green}Comment posted on #${pr.number}${ANSI.reset}`;
+          if (target.kind === "comment") {
+            await replyToPRCommentAsync(target.pr.repo, target.pr.number, target.comment.id, body);
+            statusMsg = `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
+          } else {
+            await addPRCommentAsync(target.pr.repo, target.pr.number, body);
+            statusMsg = `${ANSI.green}Comment posted on #${target.pr.number}${ANSI.reset}`;
+          }
         } catch {
-          statusMsg = `${ANSI.red}Failed to post comment on #${pr.number}${ANSI.reset}`;
+          statusMsg = target.kind === "comment"
+            ? `${ANSI.red}Failed to post reply on #${target.pr.number}${ANSI.reset}`
+            : `${ANSI.red}Failed to post comment on #${target.pr.number}${ANSI.reset}`;
         }
         drawFooter();
       })();
@@ -756,7 +811,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment/reply  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1281,7 +1336,7 @@ Options:
   --all       Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment
+  ↑↓/jk navigate  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment/reply
   [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;

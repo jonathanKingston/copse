@@ -415,6 +415,20 @@ export function replyToPRComment(
   );
 }
 
+export async function replyToPRCommentAsync(
+  repo: string,
+  prNumber: number,
+  inReplyToId: number,
+  body: string
+): Promise<void> {
+  await ghQuietAsync(
+    "api",
+    `repos/${repo}/pulls/${prNumber}/comments/${inReplyToId}/replies`,
+    "-X", "POST",
+    "-f", `body=${body}`
+  );
+}
+
 export function resolveReviewThread(repo: string, prNumber: number, commentNodeId: string): void {
   const [owner, name] = repo.split("/");
 
