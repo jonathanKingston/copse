@@ -607,6 +607,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine - 1};1H`);
     process.stdout.write(`${ANSI.bold}${truncatePlain(targetLine, termCols)}${ANSI.reset}`);
     process.stdout.write(`\x1b[${footerLine};1H`);
     process.stdout.write(`${ANSI.bold}${inputPrefix}${ANSI.reset}${visibleBuffer}`);
