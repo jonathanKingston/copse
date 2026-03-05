@@ -355,6 +355,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   let preSearchQuery = "";
   let scrollOffset = 0;
 
+  let issueCreateMode = false;
+  let issueCreateStep: "title" | "body" | "template" = "title";
+  let issueTitleBuffer = "";
+  let issueBodyBuffer = "";
+  let issueTemplateChoice = -1;
+  let issueTargetRepo: string | null = null;
+
   setPipeStdio(true);
 
   function getViewportHeight(): number {
@@ -389,6 +396,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     drawAllRows();
     if (commentInputMode) drawCommentInput();
     else if (searchMode) drawSearchInput();
+    else if (issueCreateMode) drawIssueCreateInput();
     else drawFooter();
   });
 
@@ -751,6 +759,228 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     drawSearchInput();
   }
 
+  function drawIssueCreateInput(): void {
+    const termRows = process.stdout.rows || 24;
+    const termCols = process.stdout.columns || 80;
+    const footerLine = termRows - 1;
+
+    process.stdout.write(`\x1b[${footerLine - 2};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+
+    if (issueCreateStep === "title") {
+      const repo = issueTargetRepo || "?";
+      process.stdout.write(`\x1b[${footerLine - 2};1H`);
+      process.stdout.write(`${ANSI.bold}Create issue in ${repo}${ANSI.reset}`);
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Title: ${ANSI.reset}${issueTitleBuffer}`);
+      process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+      process.stdout.write(`${ANSI.dim}Enter to continue · Esc to cancel${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      process.stdout.write(`\x1b[${footerLine - 1};${8 + issueTitleBuffer.length}H`);
+    } else if (issueCreateStep === "body") {
+      process.stdout.write(`\x1b[${footerLine - 2};1H`);
+      process.stdout.write(`${ANSI.dim}Title: ${issueTitleBuffer}${ANSI.reset}`);
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Body: ${ANSI.reset}${issueBodyBuffer}`);
+      process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+      process.stdout.write(`${ANSI.dim}Enter to continue (or skip) · Esc to cancel${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      process.stdout.write(`\x1b[${footerLine - 1};${7 + issueBodyBuffer.length}H`);
+    } else if (issueCreateStep === "template") {
+      process.stdout.write(`\x1b[${footerLine - 2};1H`);
+      process.stdout.write(`${ANSI.bold}Select agent comment:${ANSI.reset} [0] None  [1] Research  [2] Plan  [3] Fix`);
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Choice (0-3): ${ANSI.reset}${issueTemplateChoice >= 0 ? String(issueTemplateChoice) : ""}`);
+      process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+      process.stdout.write(`${ANSI.dim}Enter to create · Esc to cancel${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      process.stdout.write(`\x1b[${footerLine - 1};${15 + (issueTemplateChoice >= 0 ? 1 : 0)}H`);
+    }
+  }
+
+  function startIssueCreate(): void {
+    if (busy) return;
+
+    let targetRepo: string;
+    
+    if (singleRepo) {
+      targetRepo = repos[0];
+    } else {
+      const pr = selectedPR();
+      if (!pr) {
+        statusMsg = `${ANSI.red}No PR selected (select a PR to use its repo for the issue)${ANSI.reset}`;
+        drawFooter();
+        return;
+      }
+      targetRepo = pr.repo;
+    }
+
+    issueCreateMode = true;
+    issueCreateStep = "title";
+    issueTitleBuffer = "";
+    issueBodyBuffer = "";
+    issueTemplateChoice = -1;
+    issueTargetRepo = targetRepo;
+    drawIssueCreateInput();
+  }
+
+  function handleIssueCreateKey(key: string): void {
+    if (key === "\x1b" || key === "\x03") {
+      issueCreateMode = false;
+      issueCreateStep = "title";
+      issueTitleBuffer = "";
+      issueBodyBuffer = "";
+      issueTemplateChoice = -1;
+      issueTargetRepo = null;
+      process.stdout.write("\x1b[?25l");
+      drawFooter();
+      return;
+    }
+
+    if (key.startsWith("\x1b")) return;
+
+    if (issueCreateStep === "title") {
+      if (key === "\r") {
+        const title = issueTitleBuffer.trim();
+        if (title.length === 0) {
+          statusMsg = `${ANSI.red}Title cannot be empty${ANSI.reset}`;
+          issueCreateMode = false;
+          issueCreateStep = "title";
+          issueTitleBuffer = "";
+          issueBodyBuffer = "";
+          issueTargetRepo = null;
+          process.stdout.write("\x1b[?25l");
+          drawFooter();
+          return;
+        }
+        issueCreateStep = "body";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x7f" || key === "\b") {
+        if (issueTitleBuffer.length > 0) {
+          issueTitleBuffer = issueTitleBuffer.slice(0, -1);
+        }
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x15") {
+        issueTitleBuffer = "";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key.length === 1 && key.charCodeAt(0) >= 32) {
+        issueTitleBuffer += key;
+        drawIssueCreateInput();
+      }
+    } else if (issueCreateStep === "body") {
+      if (key === "\r") {
+        issueCreateStep = "template";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x7f" || key === "\b") {
+        if (issueBodyBuffer.length > 0) {
+          issueBodyBuffer = issueBodyBuffer.slice(0, -1);
+        }
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x15") {
+        issueBodyBuffer = "";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key.length === 1 && key.charCodeAt(0) >= 32) {
+        issueBodyBuffer += key;
+        drawIssueCreateInput();
+      }
+    } else if (issueCreateStep === "template") {
+      if (key === "\r") {
+        const choice = issueTemplateChoice;
+        const title = issueTitleBuffer.trim();
+        const body = issueBodyBuffer.trim();
+        const repo = issueTargetRepo;
+
+        issueCreateMode = false;
+        issueCreateStep = "title";
+        issueTitleBuffer = "";
+        issueBodyBuffer = "";
+        issueTemplateChoice = -1;
+        issueTargetRepo = null;
+        process.stdout.write("\x1b[?25l");
+
+        if (!repo || !title) {
+          statusMsg = `${ANSI.red}Missing repo or title${ANSI.reset}`;
+          drawFooter();
+          return;
+        }
+
+        if (choice < 0 || choice > 3) {
+          statusMsg = `${ANSI.red}Invalid template choice${ANSI.reset}`;
+          drawFooter();
+          return;
+        }
+
+        statusMsg = `${ANSI.amber}Creating issue in ${repo}…${ANSI.reset}`;
+        drawFooter();
+
+        (async () => {
+          try {
+            const pr = selectedPR();
+            const agent = pr?.agent || "cursor";
+            const mention = agent === "cursor" ? "@cursor" : agent === "claude" ? "@claude" : agent === "copilot" ? "@copilot" : "@cursor";
+
+            const commentTemplates = [
+              null,
+              `${mention} please deeply research this issue. Look at the codebase and related code, and provide a thorough analysis of what's involved, what the root cause is, and what options exist.`,
+              `${mention} please look at the codebase and create a detailed plan for implementing this. Don't make changes yet, just outline the approach, which files need changing, and any trade-offs.`,
+              `${mention} please go and build this.`,
+            ];
+
+            const issueBody = body || ".";
+            const createArgs = ["issue", "create", "--repo", repo, "--title", title, "--body", issueBody];
+            const out = await ghQuietAsync(...createArgs);
+            const match = out.trim().match(/github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/);
+            const issueNumber = match ? parseInt(match[1], 10) : null;
+
+            if (!issueNumber) {
+              statusMsg = `${ANSI.red}Failed to create issue${ANSI.reset}`;
+              drawFooter();
+              return;
+            }
+
+            const comment = commentTemplates[choice];
+            if (comment) {
+              await ghQuietAsync("issue", "comment", String(issueNumber), "--repo", repo, "--body", comment);
+              statusMsg = `${ANSI.green}Created issue #${issueNumber} with comment${ANSI.reset}`;
+            } else {
+              statusMsg = `${ANSI.green}Created issue #${issueNumber}${ANSI.reset}`;
+            }
+          } catch (e: unknown) {
+            const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
+            statusMsg = `${ANSI.red}Failed to create issue: ${msg.slice(0, 50)}${ANSI.reset}`;
+          }
+          drawFooter();
+        })();
+        return;
+      }
+
+      if (key >= "0" && key <= "3") {
+        issueTemplateChoice = parseInt(key, 10);
+        drawIssueCreateInput();
+      }
+    }
+  }
+
   function handleSearchKey(key: string): void {
     if (key === "\x1b" || key === "\x03") {
       searchMode = false;
@@ -812,7 +1042,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment/reply  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment/reply  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1292,6 +1522,11 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         return;
       }
 
+      if (issueCreateMode) {
+        handleIssueCreateKey(key);
+        return;
+      }
+
       if (key === "q" || key === "\x03") cleanup();
 
       if (key === "\x1b[A" || key === "k") { moveSelection(-1); return; }
@@ -1305,6 +1540,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       if (key === "o") { handleOpenSelected(); return; }
       if (key === "c") { handleCheckout(); return; }
       if (key === "C") { startCommentInput(); return; }
+      if (key === "i") { startIssueCreate(); return; }
       if (key === "r") { handleRerunSelected(); return; }
       if (key === "u") { handleUpdateSelected(); return; }
       if (key === "a") { handleApproveSelected(); return; }
@@ -1351,7 +1587,7 @@ Options:
   --all       Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply
+  ↑↓/jk navigate  ⏎ expand  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
   [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;
