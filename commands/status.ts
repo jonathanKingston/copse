@@ -23,11 +23,12 @@ import {
   isInterrupted,
   setPipeStdio,
 } from "../lib/gh.js";
-import type { WorkflowRun, PRReviewComment } from "../lib/types.js";
+import type { WorkflowRun, PRReviewComment, CursorAgent } from "../lib/types.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { getConfiguredRepos } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { parseStandardFlags } from "../lib/args.js";
+import { listCursorAgents, isCursorApiConfigured } from "../lib/cursor-api.js";
 
 function execAsync(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -68,11 +69,40 @@ export interface PRWithStatus {
   commentCount: number;
 }
 
+export interface AgentWithStatus {
+  kind: "agent";
+  repo: string;
+  agentId: string;
+  agentName: string;
+  status: string;
+  targetBranch?: string;
+  prUrl?: string;
+  summary?: string;
+  ageDays: number;
+  stale: boolean;
+}
+
+export type StatusRow = (PRWithStatus & { kind: "pr" }) | AgentWithStatus;
+
 export type Urgency = "red" | "amber" | "green";
 
-function getUrgency(pr: PRWithStatus): Urgency {
-  if (pr.ciStatus === "fail" || pr.conflicts) return "red";
-  if (pr.stale || pr.reviewDecision === "CHANGES_REQUESTED" || pr.ciStatus === "pending") return "amber";
+function isPR(row: StatusRow): row is PRWithStatus & { kind: "pr" } {
+  return !("kind" in row) || row.kind === "pr";
+}
+
+function isAgent(row: StatusRow): row is AgentWithStatus {
+  return "kind" in row && row.kind === "agent";
+}
+
+function getUrgency(row: StatusRow): Urgency {
+  if (isAgent(row)) {
+    if (row.status === "FAILED") return "red";
+    if (row.status === "RUNNING" || row.stale) return "amber";
+    return "green";
+  }
+  
+  if (row.ciStatus === "fail" || row.conflicts) return "red";
+  if (row.stale || row.reviewDecision === "CHANGES_REQUESTED" || row.ciStatus === "pending") return "amber";
   return "green";
 }
 
@@ -80,21 +110,40 @@ function sortPRs(prs: PRWithStatus[]): PRWithStatus[] {
   return prs.sort((a, b) => a.ageDays - b.ageDays);
 }
 
-function matchesSearch(pr: PRWithStatus, query: string): boolean {
+function sortRows(rows: StatusRow[]): StatusRow[] {
+  return rows.sort((a, b) => a.ageDays - b.ageDays);
+}
+
+function matchesSearch(row: StatusRow, query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase();
+  
+  if (isAgent(row)) {
+    const searchable = [
+      row.repo,
+      row.agentId,
+      row.agentName,
+      row.status,
+      row.targetBranch ?? "",
+      row.summary ?? "",
+      `${row.ageDays}d`,
+      "agent",
+    ];
+    return searchable.some(f => f.toLowerCase().includes(q));
+  }
+  
   const searchable = [
-    pr.repo,
-    String(pr.number),
-    pr.agent ?? "",
-    pr.ciStatus,
-    pr.reviewDecision.toLowerCase().replace(/_/g, " "),
-    pr.conflicts ? "conflicts" : "",
-    pr.autoMerge ? "merge when ready" : "",
-    `${pr.ageDays}d`,
-    pr.title,
-    pr.author.login,
-    pr.headRefName,
+    row.repo,
+    String(row.number),
+    row.agent ?? "",
+    row.ciStatus,
+    row.reviewDecision.toLowerCase().replace(/_/g, " "),
+    row.conflicts ? "conflicts" : "",
+    row.autoMerge ? "merge when ready" : "",
+    `${row.ageDays}d`,
+    row.title,
+    row.author.login,
+    row.headRefName,
   ];
   return searchable.some(f => f.toLowerCase().includes(q));
 }
@@ -140,6 +189,52 @@ function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
   }
 
   return sortPRs(result);
+}
+
+async function fetchAgentsAsync(repos: string[]): Promise<AgentWithStatus[]> {
+  if (!isCursorApiConfigured()) {
+    return [];
+  }
+
+  const result: AgentWithStatus[] = [];
+  const now = Date.now();
+
+  try {
+    const agents = await listCursorAgents(100);
+    
+    for (const agent of agents) {
+      let repo = "";
+      if (agent.sourceRepo) {
+        repo = agent.sourceRepo;
+      } else if (agent.prUrl) {
+        const match = agent.prUrl.match(/github\.com\/([^\/]+\/[^\/]+)\//);
+        if (match) repo = match[1];
+      }
+
+      if (repo && repos.includes(repo)) {
+        const ageDays = Math.floor(
+          (now - new Date(agent.createdAt).getTime()) / (24 * 60 * 60 * 1000)
+        );
+
+        result.push({
+          kind: "agent",
+          repo,
+          agentId: agent.id,
+          agentName: agent.name || agent.id,
+          status: agent.status,
+          targetBranch: agent.targetBranch,
+          prUrl: agent.prUrl,
+          summary: agent.summary,
+          ageDays,
+          stale: ageDays >= STALE_DAYS,
+        });
+      }
+    }
+  } catch {
+    return [];
+  }
+
+  return result;
 }
 
 function applyCIStatus(pr: PRWithStatus, runs: WorkflowRun[]): void {
@@ -257,7 +352,7 @@ function formatPRRow(pr: PRWithStatus, singleRepo: boolean): string {
   const prefixWidth = singleRepo ? FIXED_COLS_WIDTH : FIXED_COLS_WIDTH + REPO_COL_WIDTH;
   const titleMaxWidth = Math.max(20, columns - prefixWidth);
 
-  const urgency = getUrgency(pr);
+  const urgency = getUrgency({ ...pr, kind: "pr" as const });
   const color = ANSI[urgency];
   const repoPart = singleRepo
     ? ""
@@ -274,6 +369,48 @@ function formatPRRow(pr: PRWithStatus, singleRepo: boolean): string {
   const cmt = formatComments(pr);
   const titleShort = pr.title.slice(0, titleMaxWidth) + (pr.title.length > titleMaxWidth ? "…" : "");
   return `${color}${repoPart}${prNum} ${agent} ${ci}   ${rev}   ${con}   ${mwr}   ${pad(age, 4)} ${pad(cmt, 3)} ${titleShort}${ANSI.reset}`;
+}
+
+function formatAgentRow(agent: AgentWithStatus, singleRepo: boolean): string {
+  const columns = process.stdout.columns || 80;
+  const prefixWidth = singleRepo ? FIXED_COLS_WIDTH : FIXED_COLS_WIDTH + REPO_COL_WIDTH;
+  const titleMaxWidth = Math.max(20, columns - prefixWidth);
+
+  const urgency = getUrgency(agent);
+  const color = ANSI[urgency];
+  const repoPart = singleRepo
+    ? ""
+    : pad(agent.repo.length > 18 ? agent.repo.slice(0, 15) + "…" : agent.repo, 18) + " ";
+  
+  const agentIdShort = agent.agentId.slice(0, 8);
+  const agentNum = hyperlink(
+    agent.prUrl ?? `https://cursor.com/agents?id=${agent.agentId}`,
+    `@${agentIdShort.padEnd(4)}`
+  );
+  
+  const statusIcon = agent.status === "RUNNING" 
+    ? `${ANSI.amber}⋯${ANSI.reset}`
+    : agent.status === "FINISHED"
+    ? `${ANSI.green}✓${ANSI.reset}`
+    : agent.status === "FAILED"
+    ? `${ANSI.red}✗${ANSI.reset}`
+    : `${ANSI.dim}—${ANSI.reset}`;
+  
+  const agentType = "agent  ";
+  const ageRaw = `${agent.ageDays}d`;
+  const age = agent.ageDays >= STALE_DAYS ? `${ANSI.amber}${ageRaw}${ANSI.reset}` : ageRaw;
+  
+  const title = agent.summary ?? agent.agentName;
+  const titleShort = title.slice(0, titleMaxWidth) + (title.length > titleMaxWidth ? "…" : "");
+  
+  return `${color}${repoPart}${agentNum} ${agentType} ${statusIcon}   ${ANSI.dim}—   —   —${ANSI.reset}   ${pad(age, 4)} ${ANSI.dim}—${ANSI.reset}   ${titleShort}${ANSI.reset}`;
+}
+
+function formatRow(row: StatusRow, singleRepo: boolean): string {
+  if (isAgent(row)) {
+    return formatAgentRow(row, singleRepo);
+  }
+  return formatPRRow(row, singleRepo);
 }
 
 function headerLink(label: string, description: string): string {
@@ -299,22 +436,36 @@ function tableSeparator(): string {
   return "-".repeat(process.stdout.columns || 80);
 }
 
-function renderTable(prs: PRWithStatus[], singleRepo: boolean): void {
-  if (prs.length === 0) {
-    console.log("No agent PRs found.");
+function renderTable(rows: StatusRow[], singleRepo: boolean): void {
+  if (rows.length === 0) {
+    console.log("No agent PRs or active agents found.");
     return;
   }
 
   console.log(buildTableHeader(singleRepo));
   console.log(tableSeparator());
-  for (const pr of prs) {
-    console.log(formatPRRow(pr, singleRepo));
+  for (const row of rows) {
+    console.log(formatRow(row, singleRepo));
   }
 }
 
-function runOnce(repos: string[], mineOnly: boolean): void {
+async function runOnceAsync(repos: string[], mineOnly: boolean): Promise<void> {
   const prs = fetchPRsWithStatus(repos, mineOnly);
-  renderTable(prs, repos.length === 1);
+  const agents = await fetchAgentsAsync(repos);
+  
+  const rows: StatusRow[] = [
+    ...prs.map(pr => ({ ...pr, kind: "pr" as const })),
+    ...agents,
+  ];
+  
+  renderTable(sortRows(rows), repos.length === 1);
+}
+
+function runOnce(repos: string[], mineOnly: boolean): void {
+  runOnceAsync(repos, mineOnly).catch((e: unknown) => {
+    console.error(`Error: ${(e as Error).message}`);
+    process.exit(1);
+  });
 }
 
 function runWatch(repos: string[], mineOnly: boolean): void {
@@ -322,7 +473,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   const TITLE = `copse status — refresh every ${WATCH_INTERVAL_MS / 1000}s`;
   const ROW_START = 5;
   let mineOnlyFilter = mineOnly;
-  let currentPRs: PRWithStatus[] = [];
+  let currentRows: StatusRow[] = [];
   let statusMsg = "";
   let busy = false;
   let selectedIndex = 0;
@@ -331,13 +482,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   const isTTY = !!process.stdin.isTTY;
 
   type VirtualRow =
-    | { kind: "pr"; prIndex: number }
-    | { kind: "comment"; prIndex: number; commentIndex: number }
-    | { kind: "info"; prIndex: number; text: string };
+    | { kind: "row"; rowIndex: number }
+    | { kind: "comment"; rowIndex: number; commentIndex: number }
+    | { kind: "info"; rowIndex: number; text: string };
 
   let virtualRows: VirtualRow[] = [];
-  let expandedPRIndex: number | null = null;
-  let expandedPRNumber: number | null = null;
+  let expandedRowIndex: number | null = null;
+  let expandedRowKey: string | null = null;
   let expandedComments: PRReviewComment[] = [];
   let expandedLoading = false;
   const DETAIL_MAX_LINES = 10;
@@ -345,8 +496,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   let commentInputMode = false;
   let commentBuffer = "";
   let commentTarget:
-    | { kind: "pr"; pr: PRWithStatus }
-    | { kind: "comment"; pr: PRWithStatus; comment: PRReviewComment }
+    | { kind: "pr"; row: StatusRow }
+    | { kind: "comment"; row: StatusRow; comment: PRReviewComment }
     | null = null;
 
   let searchMode = false;
@@ -394,25 +545,57 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   function rebuildVirtualRows(): void {
     virtualRows = [];
-    for (let i = 0; i < currentPRs.length; i++) {
-      if (!matchesSearch(currentPRs[i], searchQuery)) continue;
-      virtualRows.push({ kind: "pr", prIndex: i });
-      if (expandedPRIndex === i) {
-        if (expandedLoading) {
-          virtualRows.push({ kind: "info", prIndex: i,
-            text: `  ${ANSI.dim}Loading comments for #${currentPRs[i].number}…${ANSI.reset}` });
-        } else if (expandedComments.length === 0) {
-          virtualRows.push({ kind: "info", prIndex: i,
-            text: `  ${ANSI.dim}No unresolved comments on #${currentPRs[i].number}${ANSI.reset}` });
-        } else {
-          const maxVisible = Math.min(expandedComments.length, DETAIL_MAX_LINES);
-          for (let j = 0; j < maxVisible; j++) {
-            virtualRows.push({ kind: "comment", prIndex: i, commentIndex: j });
+    for (let i = 0; i < currentRows.length; i++) {
+      if (!matchesSearch(currentRows[i], searchQuery)) continue;
+      virtualRows.push({ kind: "row", rowIndex: i });
+      if (expandedRowIndex === i) {
+        const row = currentRows[i];
+        if (isPR(row)) {
+          if (expandedLoading) {
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.dim}Loading comments for #${row.number}…${ANSI.reset}` });
+          } else if (expandedComments.length === 0) {
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.dim}No unresolved comments on #${row.number}${ANSI.reset}` });
+          } else {
+            const maxVisible = Math.min(expandedComments.length, DETAIL_MAX_LINES);
+            for (let j = 0; j < maxVisible; j++) {
+              virtualRows.push({ kind: "comment", rowIndex: i, commentIndex: j });
+            }
+            if (expandedComments.length > maxVisible) {
+              virtualRows.push({ kind: "info", rowIndex: i,
+                text: `    ${ANSI.dim}${expandedComments.length - maxVisible} more — press [o] to view on GitHub${ANSI.reset}` });
+            }
           }
-          if (expandedComments.length > maxVisible) {
-            virtualRows.push({ kind: "info", prIndex: i,
-              text: `    ${ANSI.dim}${expandedComments.length - maxVisible} more — press [o] to view on GitHub${ANSI.reset}` });
+        } else if (isAgent(row)) {
+          virtualRows.push({ kind: "info", rowIndex: i,
+            text: `  ${ANSI.bold}Agent ID:${ANSI.reset} ${row.agentId}` });
+          virtualRows.push({ kind: "info", rowIndex: i,
+            text: `  ${ANSI.bold}Status:${ANSI.reset} ${row.status}` });
+          if (row.targetBranch) {
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.bold}Target Branch:${ANSI.reset} ${row.targetBranch}` });
           }
+          if (row.summary) {
+            const summaryLines = row.summary.split('\n');
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.bold}Summary:${ANSI.reset}` });
+            const maxLines = Math.min(summaryLines.length, DETAIL_MAX_LINES - 3);
+            for (let j = 0; j < maxLines; j++) {
+              virtualRows.push({ kind: "info", rowIndex: i,
+                text: `    ${ANSI.dim}${summaryLines[j]}${ANSI.reset}` });
+            }
+            if (summaryLines.length > maxLines) {
+              virtualRows.push({ kind: "info", rowIndex: i,
+                text: `    ${ANSI.dim}...${summaryLines.length - maxLines} more lines${ANSI.reset}` });
+            }
+          }
+          if (row.prUrl) {
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.bold}PR:${ANSI.reset} ${hyperlink(row.prUrl, row.prUrl)}` });
+          }
+          virtualRows.push({ kind: "info", rowIndex: i,
+            text: `  ${ANSI.dim}Press [o] to open in browser${ANSI.reset}` });
         }
       }
     }
@@ -447,8 +630,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     const screenRow = ROW_START + (vIndex - scrollOffset);
     const vr = virtualRows[vIndex];
     let row: string;
-    if (vr.kind === "pr") {
-      row = formatPRRow(currentPRs[vr.prIndex], singleRepo);
+    if (vr.kind === "row") {
+      row = formatRow(currentRows[vr.rowIndex], singleRepo);
     } else if (vr.kind === "comment") {
       row = formatCommentRow(expandedComments[vr.commentIndex]);
     } else {
@@ -477,10 +660,10 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function collapseDetail(): void {
-    if (expandedPRIndex === null) return;
+    if (expandedRowIndex === null) return;
     const oldLen = virtualRows.length;
-    expandedPRIndex = null;
-    expandedPRNumber = null;
+    expandedRowIndex = null;
+    expandedRowKey = null;
     expandedComments = [];
     expandedLoading = false;
     rebuildVirtualRows();
@@ -493,56 +676,70 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function handleToggleExpand(): void {
     if (virtualRows.length === 0) return;
     const vr = virtualRows[selectedIndex];
-    if (!vr) return;
-    const prIndex = vr.prIndex;
+    if (!vr || vr.kind !== "row") return;
+    const rowIndex = vr.rowIndex;
+    const row = currentRows[rowIndex];
 
-    if (expandedPRIndex === prIndex) {
-      const prVi = virtualRows.findIndex(v => v.kind === "pr" && v.prIndex === prIndex);
-      if (prVi !== -1) selectedIndex = prVi;
+    if (expandedRowIndex === rowIndex) {
+      const rowVi = virtualRows.findIndex(v => v.kind === "row" && v.rowIndex === rowIndex);
+      if (rowVi !== -1) selectedIndex = rowVi;
       collapseDetail();
       return;
     }
 
     const oldLen = virtualRows.length;
-    expandedPRIndex = prIndex;
-    expandedPRNumber = currentPRs[prIndex]?.number ?? null;
+    expandedRowIndex = rowIndex;
     expandedComments = [];
-    expandedLoading = true;
-    rebuildVirtualRows();
-    drawAllRows();
-    clearStaleRows(oldLen);
-    drawFooter();
+    expandedLoading = false;
 
-    const pr = currentPRs[prIndex];
-    if (!pr) return;
+    if (isPR(row)) {
+      expandedRowKey = `pr-${row.number}`;
+      expandedLoading = true;
+      rebuildVirtualRows();
+      drawAllRows();
+      clearStaleRows(oldLen);
+      drawFooter();
 
-    (async () => {
-      try {
-        const comments = await listPRReviewCommentsAsync(pr.repo, pr.number);
-        if (expandedPRNumber !== pr.number) return;
-        expandedComments = comments;
-      } catch {
-        expandedComments = [];
-      } finally {
-        expandedLoading = false;
-      }
-      if (expandedPRNumber === pr.number) {
-        const oldLen2 = virtualRows.length;
-        rebuildVirtualRows();
-        drawAllRows();
-        clearStaleRows(oldLen2);
-        drawFooter();
-      }
-    })();
+      (async () => {
+        try {
+          const comments = await listPRReviewCommentsAsync(row.repo, row.number);
+          if (expandedRowKey !== `pr-${row.number}`) return;
+          expandedComments = comments;
+        } catch {
+          expandedComments = [];
+        } finally {
+          expandedLoading = false;
+        }
+        if (expandedRowKey === `pr-${row.number}`) {
+          const oldLen2 = virtualRows.length;
+          rebuildVirtualRows();
+          drawAllRows();
+          clearStaleRows(oldLen2);
+          drawFooter();
+        }
+      })();
+    } else if (isAgent(row)) {
+      expandedRowKey = `agent-${row.agentId}`;
+      rebuildVirtualRows();
+      drawAllRows();
+      clearStaleRows(oldLen);
+      drawFooter();
+    }
   }
 
   function handleCheckout(): void {
-    const pr = selectedPR();
-    if (busy || !pr) return;
+    const row = selectedRow();
+    if (busy || !row) return;
+    
+    if (isAgent(row)) {
+      statusMsg = `${ANSI.dim}Cannot checkout agents — open PR or use Cursor${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
 
     const localRepo = getOriginRepo();
-    if (!localRepo || localRepo !== pr.repo) {
-      statusMsg = `${ANSI.red}Cannot checkout: not in the ${pr.repo} repository${ANSI.reset}`;
+    if (!localRepo || localRepo !== row.repo) {
+      statusMsg = `${ANSI.red}Cannot checkout: not in the ${row.repo} repository${ANSI.reset}`;
       drawFooter();
       return;
     }
@@ -561,24 +758,24 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           return;
         }
 
-        statusMsg = `${ANSI.amber}Checking out ${pr.headRefName}…${ANSI.reset}`;
+        statusMsg = `${ANSI.amber}Checking out ${row.headRefName}…${ANSI.reset}`;
         drawFooter();
 
         await execAsync("git", ["fetch", "origin",
-          `+refs/heads/${pr.headRefName}:refs/remotes/origin/${pr.headRefName}`]);
+          `+refs/heads/${row.headRefName}:refs/remotes/origin/${row.headRefName}`]);
 
         let localExists = false;
         try {
-          await execAsync("git", ["rev-parse", "--verify", `refs/heads/${pr.headRefName}`]);
+          await execAsync("git", ["rev-parse", "--verify", `refs/heads/${row.headRefName}`]);
           localExists = true;
         } catch {}
 
         if (localExists) {
-          await execAsync("git", ["switch", pr.headRefName]);
+          await execAsync("git", ["switch", row.headRefName]);
         } else {
-          await execAsync("git", ["checkout", "-b", pr.headRefName, `origin/${pr.headRefName}`]);
+          await execAsync("git", ["checkout", "-b", row.headRefName, `origin/${row.headRefName}`]);
         }
-        statusMsg = `${ANSI.green}Checked out ${pr.headRefName}${ANSI.reset}`;
+        statusMsg = `${ANSI.green}Checked out ${row.headRefName}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
         const columns = process.stdout.columns || 80;
@@ -600,9 +797,16 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     const targetExcerpt = isReply
       ? target.comment.body.replace(/\s+/g, " ").trim()
       : "";
-    const targetLine = isReply
-      ? `Reply target: #${target.pr.number} ${target.comment.path}:${target.comment.line ?? target.comment.original_line ?? "?"} · ${target.comment.user.login} · ${targetExcerpt}`
-      : `Comment target: #${target.pr.number} ${target.pr.title}`;
+    
+    let targetLine: string;
+    if (isAgent(target.row)) {
+      targetLine = `Comment target: Agent ${target.row.agentName}`;
+    } else if (isReply) {
+      targetLine = `Reply target: #${target.row.number} ${target.comment.path}:${target.comment.line ?? target.comment.original_line ?? "?"} · ${target.comment.user.login} · ${targetExcerpt}`;
+    } else {
+      targetLine = `Comment target: #${target.row.number} ${target.row.title}`;
+    }
+    
     const inputPrefix = isReply ? "Reply: " : "Comment: ";
     const maxInputLen = Math.max(0, termCols - inputPrefix.length - 1);
     const visibleBuffer = truncatePlain(commentBuffer, maxInputLen);
@@ -623,18 +827,26 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     if (busy || virtualRows.length === 0) return;
     const vr = virtualRows[selectedIndex];
     if (!vr) return;
-    const pr = currentPRs[vr.prIndex];
-    if (!pr) return;
+    
+    const rowIndex = vr.kind === "row" ? vr.rowIndex : vr.rowIndex;
+    const row = currentRows[rowIndex];
+    if (!row) return;
+    
+    if (isAgent(row)) {
+      statusMsg = `${ANSI.dim}Cannot comment on agents — open PR to comment${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
 
     commentInputMode = true;
     if (vr.kind === "comment") {
       const comment = expandedComments[vr.commentIndex];
       if (!comment) return;
-      commentTarget = { kind: "comment", pr, comment };
+      commentTarget = { kind: "comment", row, comment };
     } else {
-      commentTarget = { kind: "pr", pr };
+      commentTarget = { kind: "pr", row };
     }
-    commentBuffer = pr.agent ? `@${pr.agent} ` : "";
+    commentBuffer = row.agent ? `@${row.agent} ` : "";
     drawCommentInput();
   }
 
@@ -670,24 +882,31 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         return;
       }
 
+      if (isAgent(target.row)) {
+        statusMsg = `${ANSI.red}Cannot comment on agents${ANSI.reset}`;
+        drawFooter();
+        return;
+      }
+      
+      const prRow = target.row;
       statusMsg = target.kind === "comment"
-        ? `${ANSI.amber}Posting reply on #${target.pr.number}…${ANSI.reset}`
-        : `${ANSI.amber}Posting comment on #${target.pr.number}…${ANSI.reset}`;
+        ? `${ANSI.amber}Posting reply on #${prRow.number}…${ANSI.reset}`
+        : `${ANSI.amber}Posting comment on #${prRow.number}…${ANSI.reset}`;
       drawFooter();
 
       (async () => {
         try {
           if (target.kind === "comment") {
-            await replyToPRCommentAsync(target.pr.repo, target.pr.number, target.comment.id, body);
-            statusMsg = `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
+            await replyToPRCommentAsync(prRow.repo, prRow.number, target.comment.id, body);
+            statusMsg = `${ANSI.green}Reply posted on #${prRow.number}${ANSI.reset}`;
           } else {
-            await addPRCommentAsync(target.pr.repo, target.pr.number, body);
-            statusMsg = `${ANSI.green}Comment posted on #${target.pr.number}${ANSI.reset}`;
+            await addPRCommentAsync(prRow.repo, prRow.number, body);
+            statusMsg = `${ANSI.green}Comment posted on #${prRow.number}${ANSI.reset}`;
           }
         } catch {
           statusMsg = target.kind === "comment"
-            ? `${ANSI.red}Failed to post reply on #${target.pr.number}${ANSI.reset}`
-            : `${ANSI.red}Failed to post comment on #${target.pr.number}${ANSI.reset}`;
+            ? `${ANSI.red}Failed to post reply on #${prRow.number}${ANSI.reset}`
+            : `${ANSI.red}Failed to post comment on #${prRow.number}${ANSI.reset}`;
         }
         drawFooter();
       })();
@@ -715,8 +934,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function applySearchFilter(): void {
-    expandedPRIndex = null;
-    expandedPRNumber = null;
+    expandedRowIndex = null;
+    expandedRowKey = null;
     expandedComments = [];
     expandedLoading = false;
     const oldLen = virtualRows.length;
@@ -838,7 +1057,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       try {
         const prs: PRWithStatus[] = [];
         const now = Date.now();
-        const oldByKey = new Map(currentPRs.map(p => [`${p.repo}#${p.number}`, p]));
+        const oldPRsByKey = new Map<string, PRWithStatus>();
+        for (const row of currentRows) {
+          if (isPR(row)) {
+            oldPRsByKey.set(`${row.repo}#${row.number}`, row);
+          }
+        }
+        
         for (const repo of repos) {
           validateRepo(repo);
           const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS);
@@ -854,7 +1079,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
               ? Math.floor((now - new Date(createdAt).getTime()) / (24 * 60 * 60 * 1000))
               : 0;
 
-            const prev = oldByKey.get(`${repo}#${pr.number}`);
+            const prev = oldPRsByKey.get(`${repo}#${pr.number}`);
             prs.push({
               repo,
               number: pr.number,
@@ -877,18 +1102,29 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           }
         }
 
-        const sortedPrs = sortPRs(prs);
-        const oldVirtualLen = virtualRows.length;
-        currentPRs = sortedPrs;
+        const agents = await fetchAgentsAsync(repos);
+        if (gen !== ciGeneration || isInterrupted()) return;
 
-        if (expandedPRNumber !== null) {
-          const newIdx = currentPRs.findIndex(p => p.number === expandedPRNumber);
+        const rows: StatusRow[] = [
+          ...prs.map(pr => ({ ...pr, kind: "pr" as const })),
+          ...agents,
+        ];
+        const sortedRows = sortRows(rows);
+        const oldVirtualLen = virtualRows.length;
+        currentRows = sortedRows;
+
+        if (expandedRowKey !== null) {
+          const newIdx = currentRows.findIndex(row => {
+            if (isPR(row) && expandedRowKey === `pr-${row.number}`) return true;
+            if (isAgent(row) && expandedRowKey === `agent-${row.agentId}`) return true;
+            return false;
+          });
           if (newIdx === -1) {
-            expandedPRIndex = null;
-            expandedPRNumber = null;
+            expandedRowIndex = null;
+            expandedRowKey = null;
             expandedComments = [];
           } else {
-            expandedPRIndex = newIdx;
+            expandedRowIndex = newIdx;
           }
         }
 
@@ -897,22 +1133,23 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         drawAllRows();
         clearStaleRows(oldVirtualLen);
 
-        if (sortedPrs.length === 0) {
+        if (sortedRows.length === 0) {
           process.stdout.write(`\x1b[${ROW_START};1H\x1b[2K`);
-          process.stdout.write("No agent PRs found.");
+          process.stdout.write("No agent PRs or active agents found.");
         }
         drawFooter();
 
-        if (sortedPrs.length === 0) return;
+        if (sortedRows.length === 0) return;
 
-        // Comment counts phase
+        // Comment counts phase — only for PRs
         if (gen !== ciGeneration || isInterrupted()) return;
         const byRepo = new Map<string, PRWithStatus[]>();
-        for (const pr of currentPRs) {
-          if (!matchesSearch(pr, searchQuery)) continue;
-          const list = byRepo.get(pr.repo) ?? [];
-          list.push(pr);
-          byRepo.set(pr.repo, list);
+        for (const row of currentRows) {
+          if (!isPR(row)) continue;
+          if (!matchesSearch(row, searchQuery)) continue;
+          const list = byRepo.get(row.repo) ?? [];
+          list.push(row);
+          byRepo.set(row.repo, list);
         }
         for (const [repo, repoPrs] of byRepo) {
           if (gen !== ciGeneration || isInterrupted()) return;
@@ -927,26 +1164,30 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         drawAllRows();
         drawFooter();
 
-        // CI status phase — one fetch per unique branch
-        const branchMap = new Map<string, { repo: string; branch: string; prIndices: number[] }>();
-        for (let i = 0; i < currentPRs.length; i++) {
-          const pr = currentPRs[i];
-          if (!matchesSearch(pr, searchQuery)) continue;
-          const key = `${pr.repo}\0${pr.headRefName}`;
+        // CI status phase — one fetch per unique branch, only for PRs
+        const branchMap = new Map<string, { repo: string; branch: string; rowIndices: number[] }>();
+        for (let i = 0; i < currentRows.length; i++) {
+          const row = currentRows[i];
+          if (!isPR(row)) continue;
+          if (!matchesSearch(row, searchQuery)) continue;
+          const key = `${row.repo}\0${row.headRefName}`;
           if (!branchMap.has(key)) {
-            branchMap.set(key, { repo: pr.repo, branch: pr.headRefName, prIndices: [] });
+            branchMap.set(key, { repo: row.repo, branch: row.headRefName, rowIndices: [] });
           }
-          branchMap.get(key)!.prIndices.push(i);
+          branchMap.get(key)!.rowIndices.push(i);
         }
 
-        for (const { repo, branch, prIndices } of branchMap.values()) {
+        for (const { repo, branch, rowIndices } of branchMap.values()) {
           if (gen !== ciGeneration || isInterrupted()) break;
           try {
             const runs = await listWorkflowRunsAsync(repo, branch);
-            for (const i of prIndices) {
-              applyCIStatus(currentPRs[i], runs);
+            for (const i of rowIndices) {
+              const row = currentRows[i];
+              if (isPR(row)) {
+                applyCIStatus(row, runs);
+              }
               if (gen !== ciGeneration || isInterrupted()) break;
-              const vi = virtualRows.findIndex(vr => vr.kind === "pr" && vr.prIndex === i);
+              const vi = virtualRows.findIndex(vr => vr.kind === "row" && vr.rowIndex === i);
               if (vi !== -1) drawRow(vi);
             }
           } catch { /* leave as pending */ }
@@ -994,10 +1235,10 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     refresh();
   }
 
-  function selectedPR(): PRWithStatus | null {
+  function selectedRow(): StatusRow | null {
     const vr = virtualRows[selectedIndex];
-    if (!vr) return null;
-    return currentPRs[vr.prIndex] ?? null;
+    if (!vr || vr.kind !== "row") return null;
+    return currentRows[vr.rowIndex] ?? null;
   }
 
   function handleOpenSelected(): void {
@@ -1018,46 +1259,69 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       })();
       return;
     }
-    const pr = selectedPR();
-    if (!pr) return;
+    const row = selectedRow();
+    if (!row) return;
+    
+    if (isAgent(row)) {
+      const url = row.prUrl ?? `https://cursor.com/agents?id=${row.agentId}`;
+      (async () => {
+        try {
+          const opener = process.platform === "darwin" ? "open" : "xdg-open";
+          await execAsync(opener, [url]);
+          statusMsg = `${ANSI.green}Opened agent in browser${ANSI.reset}`;
+        } catch {
+          statusMsg = `${ANSI.red}Failed to open agent${ANSI.reset}`;
+        }
+        drawFooter();
+      })();
+      return;
+    }
+    
     (async () => {
       try {
-        await ghQuietAsync("pr", "view", String(pr.number), "--repo", pr.repo, "--web");
-        statusMsg = `${ANSI.green}Opened #${pr.number} in browser${ANSI.reset}`;
+        await ghQuietAsync("pr", "view", String(row.number), "--repo", row.repo, "--web");
+        statusMsg = `${ANSI.green}Opened #${row.number} in browser${ANSI.reset}`;
       } catch {
-        statusMsg = `${ANSI.red}Failed to open #${pr.number}${ANSI.reset}`;
+        statusMsg = `${ANSI.red}Failed to open #${row.number}${ANSI.reset}`;
       }
       drawFooter();
     })();
   }
 
   function handleRerunSelected(): void {
-    const pr = selectedPR();
-    if (busy || !pr) return;
-    if (pr.ciStatus !== "fail") {
-      statusMsg = `${ANSI.dim}#${pr.number} has no failed CI to rerun${ANSI.reset}`;
+    const row = selectedRow();
+    if (busy || !row) return;
+    
+    if (isAgent(row)) {
+      statusMsg = `${ANSI.dim}Cannot rerun CI on agents${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+    
+    if (row.ciStatus !== "fail") {
+      statusMsg = `${ANSI.dim}#${row.number} has no failed CI to rerun${ANSI.reset}`;
       drawFooter();
       return;
     }
 
-    pr.ciStatus = "pending";
+    row.ciStatus = "pending";
     const vr = virtualRows[selectedIndex];
-    if (vr) {
-      const prVi = virtualRows.findIndex(v => v.kind === "pr" && v.prIndex === vr.prIndex);
-      if (prVi !== -1) drawRow(prVi);
+    if (vr && vr.kind === "row") {
+      const rowVi = virtualRows.findIndex(v => v.kind === "row" && v.rowIndex === vr.rowIndex);
+      if (rowVi !== -1) drawRow(rowVi);
     }
     drawRow(selectedIndex);
 
     busy = true;
-    statusMsg = `${ANSI.amber}Rerunning failed workflows for #${pr.number}…${ANSI.reset}`;
+    statusMsg = `${ANSI.amber}Rerunning failed workflows for #${row.number}…${ANSI.reset}`;
     drawFooter();
 
     (async () => {
       try {
         const runsJson = await ghQuietAsync(
           "run", "list",
-          "--repo", pr.repo,
-          "--branch", pr.headRefName,
+          "--repo", row.repo,
+          "--branch", row.headRefName,
           "--limit", "100",
           "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
         );
@@ -1067,15 +1331,15 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         for (const run of failed) {
           if (isInterrupted()) break;
           try {
-            await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
+            await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", row.repo, "--failed");
             total++;
           } catch { /* skip */ }
         }
         statusMsg = total > 0
-          ? `${ANSI.green}Reran ${total} workflow(s) for #${pr.number}${ANSI.reset}`
-          : `${ANSI.dim}No failed workflows on #${pr.number}${ANSI.reset}`;
+          ? `${ANSI.green}Reran ${total} workflow(s) for #${row.number}${ANSI.reset}`
+          : `${ANSI.dim}No failed workflows on #${row.number}${ANSI.reset}`;
       } catch {
-        statusMsg = `${ANSI.red}Failed to rerun workflows for #${pr.number}${ANSI.reset}`;
+        statusMsg = `${ANSI.red}Failed to rerun workflows for #${row.number}${ANSI.reset}`;
       } finally {
         if (isInterrupted()) { cleanup(); return; }
       }
@@ -1085,22 +1349,29 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function handleUpdateSelected(): void {
-    const pr = selectedPR();
-    if (busy || !pr) return;
+    const row = selectedRow();
+    if (busy || !row) return;
+    
+    if (isAgent(row)) {
+      statusMsg = `${ANSI.dim}Cannot update agents${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+    
     busy = true;
-    statusMsg = `${ANSI.amber}Merging main into #${pr.number}…${ANSI.reset}`;
+    statusMsg = `${ANSI.amber}Merging main into #${row.number}…${ANSI.reset}`;
     drawFooter();
 
     (async () => {
       try {
-        await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
-        statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
+        await ghQuietAsync("api", `repos/${row.repo}/merges`, "-f", `base=${row.headRefName}`, "-f", "head=main");
+        statusMsg = `${ANSI.green}Merged main into #${row.number}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
         if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
-          statusMsg = `${ANSI.dim}#${pr.number} already up to date with main${ANSI.reset}`;
+          statusMsg = `${ANSI.dim}#${row.number} already up to date with main${ANSI.reset}`;
         } else {
-          statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
+          statusMsg = `${ANSI.red}Failed to merge main into #${row.number}${ANSI.reset}`;
         }
       } finally {
         if (isInterrupted()) { cleanup(); return; }
@@ -1111,24 +1382,31 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function handleApproveSelected(): void {
-    const pr = selectedPR();
-    if (busy || !pr) return;
+    const row = selectedRow();
+    if (busy || !row) return;
+    
+    if (isAgent(row)) {
+      statusMsg = `${ANSI.dim}Cannot approve agents${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+    
     busy = true;
-    statusMsg = `${ANSI.amber}Approving #${pr.number}…${ANSI.reset}`;
+    statusMsg = `${ANSI.amber}Approving #${row.number}…${ANSI.reset}`;
     drawFooter();
 
     (async () => {
       try {
-        await ghQuietAsync("pr", "review", "--repo", pr.repo, String(pr.number), "--approve");
-        statusMsg = `${ANSI.green}Approved #${pr.number}${ANSI.reset}`;
+        await ghQuietAsync("pr", "review", "--repo", row.repo, String(row.number), "--approve");
+        statusMsg = `${ANSI.green}Approved #${row.number}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
         if (msg.includes("already")) {
-          statusMsg = `${ANSI.dim}#${pr.number} already approved${ANSI.reset}`;
+          statusMsg = `${ANSI.dim}#${row.number} already approved${ANSI.reset}`;
         } else if (msg.includes("draft")) {
-          statusMsg = `${ANSI.red}#${pr.number} is a draft — mark ready for review first${ANSI.reset}`;
+          statusMsg = `${ANSI.red}#${row.number} is a draft — mark ready for review first${ANSI.reset}`;
         } else {
-          statusMsg = `${ANSI.red}Failed to approve #${pr.number}${ANSI.reset}`;
+          statusMsg = `${ANSI.red}Failed to approve #${row.number}${ANSI.reset}`;
         }
       } finally {
         if (isInterrupted()) { cleanup(); return; }
@@ -1139,24 +1417,31 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function handleMergeWhenReady(): void {
-    const pr = selectedPR();
-    if (busy || !pr) return;
+    const row = selectedRow();
+    if (busy || !row) return;
+    
+    if (isAgent(row)) {
+      statusMsg = `${ANSI.dim}Cannot merge agents${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+    
     busy = true;
-    statusMsg = `${ANSI.amber}Enabling merge when ready for #${pr.number}…${ANSI.reset}`;
+    statusMsg = `${ANSI.amber}Enabling merge when ready for #${row.number}…${ANSI.reset}`;
     drawFooter();
 
     (async () => {
       try {
-        await ghQuietAsync("pr", "merge", "--repo", pr.repo, String(pr.number), "--auto");
-        statusMsg = `${ANSI.green}Merge when ready enabled for #${pr.number}${ANSI.reset}`;
+        await ghQuietAsync("pr", "merge", "--repo", row.repo, String(row.number), "--auto");
+        statusMsg = `${ANSI.green}Merge when ready enabled for #${row.number}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
         if (msg.includes("already") && (msg.includes("auto") || msg.includes("queued"))) {
-          statusMsg = `${ANSI.dim}#${pr.number} already has merge when ready enabled${ANSI.reset}`;
+          statusMsg = `${ANSI.dim}#${row.number} already has merge when ready enabled${ANSI.reset}`;
         } else if (msg.includes("draft")) {
-          statusMsg = `${ANSI.red}#${pr.number} is a draft — mark ready for review first${ANSI.reset}`;
+          statusMsg = `${ANSI.red}#${row.number} is a draft — mark ready for review first${ANSI.reset}`;
         } else {
-          statusMsg = `${ANSI.red}Failed to enable merge when ready for #${pr.number}${ANSI.reset}`;
+          statusMsg = `${ANSI.red}Failed to enable merge when ready for #${row.number}${ANSI.reset}`;
         }
       } finally {
         if (isInterrupted()) { cleanup(); return; }
@@ -1167,15 +1452,16 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function handleRerunAllFailed(): void {
-    if (busy || currentPRs.length === 0) return;
+    if (busy || currentRows.length === 0) return;
 
     const toRerun: PRWithStatus[] = [];
     let skipped = 0;
-    for (const pr of currentPRs) {
-      if (!matchesSearch(pr, searchQuery)) continue;
-      if (pr.ciStatus !== "fail") continue;
-      if (pr.stale) { skipped++; continue; }
-      toRerun.push(pr);
+    for (const row of currentRows) {
+      if (isAgent(row)) continue;
+      if (!matchesSearch(row, searchQuery)) continue;
+      if (row.ciStatus !== "fail") continue;
+      if (row.stale) { skipped++; continue; }
+      toRerun.push(row);
     }
 
     if (toRerun.length === 0) {
@@ -1235,7 +1521,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function handleUpdateAllMain(): void {
-    if (busy || currentPRs.length === 0) return;
+    if (busy || currentRows.length === 0) return;
     busy = true;
     statusMsg = `${ANSI.amber}Merging main into all PR branches…${ANSI.reset}`;
     drawFooter();
@@ -1244,11 +1530,12 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       try {
         let updated = 0;
         let upToDate = 0;
-        for (const pr of currentPRs) {
-          if (!matchesSearch(pr, searchQuery)) continue;
+        for (const row of currentRows) {
+          if (isAgent(row)) continue;
+          if (!matchesSearch(row, searchQuery)) continue;
           if (isInterrupted()) break;
           try {
-            await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
+            await ghQuietAsync("api", `repos/${row.repo}/merges`, "-f", `base=${row.headRefName}`, "-f", "head=main");
             updated++;
           } catch (e: unknown) {
             const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
@@ -1273,7 +1560,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   process.stdout.write("\n\n");
   console.log(buildTableHeader(singleRepo));
   console.log(tableSeparator());
-  process.stdout.write(`\x1b[${ROW_START};1H${ANSI.dim}Loading…${ANSI.reset}`);
+  process.stdout.write(`\x1b[${ROW_START};1H${ANSI.dim}Loading PRs and agents…${ANSI.reset}`);
   drawFooter();
 
   if (isTTY) {
