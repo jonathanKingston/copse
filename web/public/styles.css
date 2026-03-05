@@ -2,12 +2,28 @@
   box-sizing: border-box;
 }
 
+:root {
+  --bg: #fbfaf5;
+  --bg-2: #f2efe6;
+  --panel: rgba(255, 255, 255, 0.86);
+  --border: rgba(30, 42, 34, 0.14);
+  --border-strong: rgba(30, 42, 34, 0.22);
+  --text: #1e2a22;
+  --text-muted: rgba(30, 42, 34, 0.62);
+  --accent: #2f6f4e;
+  --accent-2: #1f5b3d;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.12);
+  --radius: 16px;
+  --radius-sm: 10px;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   margin: 0;
   padding: 0 1rem 2rem;
-  background: #111827;
-  color: #f3f4f6;
+  background: linear-gradient(135deg, var(--bg) 0%, var(--bg-2) 100%);
+  color: var(--text);
 }
 
 header {
@@ -21,14 +37,15 @@ header h1 {
 
 header p {
   margin: 0.15rem 0 0;
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 
 .controls, .panel {
-  background: #1f2937;
-  border: 1px solid #374151;
-  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 0.75rem;
+  box-shadow: var(--shadow);
 }
 
 .controls {
@@ -49,11 +66,18 @@ header p {
   width: 100%;
   display: block;
   margin-top: 0.25rem;
-  background: #0f172a;
-  color: #f3f4f6;
-  border: 1px solid #374151;
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0.45rem 0.5rem;
+}
+
+.controls input[type="text"]:focus,
+.controls input:not([type]):focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
 }
 
 .layout {
@@ -76,11 +100,15 @@ table {
 
 th, td {
   text-align: left;
-  border-bottom: 1px solid #374151;
+  border-bottom: 1px solid var(--border);
   padding: 0.35rem 0.5rem;
   vertical-align: top;
   line-height: 1.3;
   white-space: nowrap;
+}
+
+tbody tr:hover td {
+  background: rgba(47, 111, 78, 0.06);
 }
 
 td.repo-cell,
@@ -109,21 +137,25 @@ td.repo-cell {
 }
 
 button {
-  background: #2563eb;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: white;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 0.35rem 0.55rem;
   cursor: pointer;
   font-size: 0.82rem;
+  box-shadow: var(--shadow);
 }
 
 button:hover {
-  opacity: 0.9;
+  box-shadow: var(--shadow-lg);
 }
 
 button.secondary {
-  background: #4b5563;
+  background: rgba(30, 42, 34, 0.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: none;
 }
 
 .actions {
@@ -140,8 +172,8 @@ button.secondary {
 }
 
 .comment {
-  border: 1px solid #374151;
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   margin-bottom: 0.5rem;
   padding: 0.5rem;
 }
@@ -155,7 +187,7 @@ button.secondary {
   overflow-wrap: anywhere;
   font-size: 0.82rem;
   line-height: 1.35;
-  color: #e5e7eb;
+  color: var(--text);
 }
 
 .comment-body-plain {
@@ -177,25 +209,25 @@ button.secondary {
 }
 
 .comment-body-html a {
-  color: #93c5fd;
+  color: var(--accent);
   text-decoration: underline;
 }
 
 .comment-body-html code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.95em;
-  background: rgba(148, 163, 184, 0.16);
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(47, 111, 78, 0.12);
+  border: 1px solid rgba(47, 111, 78, 0.22);
   padding: 0.1rem 0.25rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .comment-body-html pre {
   margin: 0.45rem 0 0;
   padding: 0.5rem;
-  border-radius: 8px;
-  background: #0b1220;
-  border: 1px solid #374151;
+  border-radius: var(--radius);
+  background: rgba(30, 42, 34, 0.92);
+  border: 1px solid var(--border);
   overflow-x: auto;
 }
 
@@ -209,16 +241,22 @@ button.secondary {
 
 .comment textarea {
   width: 100%;
-  background: #0f172a;
-  color: #f3f4f6;
-  border: 1px solid #374151;
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0.4rem;
   margin: 0.35rem 0;
   min-height: 60px;
   resize: vertical;
   font-family: inherit;
   font-size: 0.85rem;
+}
+
+.comment textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
 }
 
 aside.panel {
@@ -244,7 +282,7 @@ aside.panel {
   flex-direction: column;
   gap: 0.3rem;
   font-size: 0.88rem;
-  color: #cbd5e1;
+  color: var(--text-muted);
 }
 
 #issueForm .field-body {
@@ -261,14 +299,22 @@ aside.panel {
 #issueForm textarea,
 #issueForm select {
   width: 100%;
-  background: #0f172a;
-  color: #f3f4f6;
-  border: 1px solid #374151;
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0.45rem 0.5rem;
   min-height: 38px;
   font-size: 0.88rem;
   font-family: inherit;
+}
+
+#issueForm input:focus,
+#issueForm textarea:focus,
+#issueForm select:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
 }
 
 #issueForm textarea {
@@ -277,7 +323,7 @@ aside.panel {
 }
 
 #statusText {
-  color: #93c5fd;
+  color: var(--accent-2);
 }
 
 @media (max-width: 900px) {
