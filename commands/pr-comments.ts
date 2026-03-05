@@ -8,7 +8,7 @@
 
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { getOriginRepo } from "../lib/utils.js";
+import { getOriginRepo, isBotComment } from "../lib/utils.js";
 import { formatCommentBody } from "../lib/format.js";
 import type { PR, PRReviewComment } from "../lib/types.js";
 import {
@@ -22,8 +22,15 @@ import {
   getAgentForPR,
   formatGhError,
 } from "../lib/gh.js";
-import { parseStandardFlags } from "../lib/args.js";
+import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
+import { loadConfig } from "../lib/config.js";
+import {
+  loadTemplates,
+  scaffoldTemplates,
+  needsScaffold,
+  resolveTemplatesPath,
+} from "../lib/templates.js";
 import type { ExecError } from "../lib/types.js";
 
 const ANSI = {
@@ -60,12 +67,13 @@ function gatherComments(repo: string, prs: PR[]): CommentWithContext[] {
 }
 
 function formatCommentLine(ctx: CommentWithContext, index: number): string {
-  const { prNumber, prTitle, agent, comment } = ctx;
+  const { prNumber, agent, comment } = ctx;
   const line = comment.line ?? comment.original_line ?? 0;
   const bodyPreview = (comment.body || "").replace(/\n/g, " ").slice(0, 60);
   const ellipsis = (comment.body || "").length > 60 ? "…" : "";
   const agentPart = agent ? ` ${ANSI.dim}[${agent}]${ANSI.reset}` : "";
-  return `${ANSI.cyan}[${index + 1}]${ANSI.reset} #${prNumber} ${comment.path}:${line} – ${bodyPreview}${ellipsis}${agentPart}`;
+  const botPart = isBotComment(comment) ? ` ${ANSI.dim}[bot]${ANSI.reset}` : "";
+  return `${ANSI.cyan}[${index + 1}]${ANSI.reset} #${prNumber} ${comment.path}:${line} – ${bodyPreview}${ellipsis}${agentPart}${botPart}`;
 }
 
 function main(): void {
@@ -85,8 +93,9 @@ function main(): void {
 
 Options:
   --no-interactive   Only list comments, do not enter reply loop
-  --mine             Only your PRs (default)
-  --all              Include PRs from all authors
+  --templates PATH  Comment template directory (default: ~/.copse/comment-templates)
+  --mine            Only your PRs (default)
+  --all             Include PRs from all authors
 
 Examples:
   pr-comments                         # Uses origin, both agents, interactive
@@ -166,14 +175,41 @@ Examples:
     process.exit(0);
   }
 
-  runInteractiveLoop(repo, comments).catch((e: unknown) => {
+  let templatesPath: string;
+  try {
+    const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
+    const config = loadConfig();
+    templatesPath = resolveTemplatesPath(templatesFromFlag ?? null, config?.commentTemplates ?? null);
+  } catch (e: unknown) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+
+  runInteractiveLoop(repo, comments, templatesPath).catch((e: unknown) => {
     console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
     process.exit(1);
   });
 }
 
-async function runInteractiveLoop(repo: string, comments: CommentWithContext[]): Promise<void> {
+async function runInteractiveLoop(
+  repo: string,
+  comments: CommentWithContext[],
+  templatesPath: string
+): Promise<void> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
+
+  let templates = loadTemplates(templatesPath);
+  if (templates.size === 0 && needsScaffold(templatesPath) && stdout.isTTY) {
+    const answer = await rl.question(
+      `\n${ANSI.bold}No templates found. Create with starter templates? [y/n]:${ANSI.reset} `
+    );
+    if (answer.trim().toLowerCase() === "y") {
+      scaffoldTemplates(templatesPath);
+      templates = loadTemplates(templatesPath);
+    }
+  }
+
+  const templateLabels = Array.from(templates.keys());
 
   for (;;) {
     const raw = await rl.question(
@@ -211,8 +247,30 @@ async function runInteractiveLoop(repo: string, comments: CommentWithContext[]):
         console.error(`\x1b[31mFailed to resolve thread:\x1b[0m ${formatGhError(err)}`);
       }
     } else if (actionKey === "r" || actionKey === "reply") {
-      const reply = await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `);
-      const replyTrimmed = reply.trim();
+      let replyTrimmed: string;
+      if (templateLabels.length > 0) {
+        console.error(`\n${ANSI.bold}Templates:${ANSI.reset}`);
+        for (let i = 0; i < templateLabels.length; i++) {
+          console.error(`  ${ANSI.cyan}[${i + 1}]${ANSI.reset} ${templateLabels[i]}`);
+        }
+        console.error(`  ${ANSI.cyan}[c]${ANSI.reset}ustom – type your own`);
+        const choice = await rl.question(
+          `\n${ANSI.bold}Reply: type number (1-${templateLabels.length}), c for custom:${ANSI.reset} `
+        );
+        const c = choice.trim().toLowerCase();
+        if (c === "c" || c === "custom") {
+          replyTrimmed = (await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `)).trim();
+        } else {
+          const num = parseInt(c, 10);
+          if (num >= 1 && num <= templateLabels.length) {
+            replyTrimmed = templates.get(templateLabels[num - 1]) ?? "";
+          } else {
+            replyTrimmed = c;
+          }
+        }
+      } else {
+        replyTrimmed = (await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `)).trim();
+      }
       if (replyTrimmed.length === 0) {
         console.error("Empty reply, skipping.");
         continue;

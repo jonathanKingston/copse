@@ -205,8 +205,13 @@ copse pr-comments [repo] [pr-number|agent] [options]
 | `pr-number` | Specific PR to list comments for. |
 | `agent` | Filter PRs by `cursor` or `claude`. Omit to match both. |
 | `--no-interactive` | Only list comments; do not enter the reply loop. |
+| `--templates PATH` | Comment template directory (default: `~/.copse/comment-templates`) |
 | `--mine` | Only your PRs (default) |
 | `--all` | Include PRs from all authors |
+
+#### Comment templates
+
+When replying, you can choose from canned responses stored in a directory of `.md` files. By default uses `~/.copse/comment-templates`. Override with `--templates` or set `commentTemplates` in `.copserc`. If the directory is missing or empty, you'll be prompted to create starter templates (e.g. `please-fix.md`, `add-tests.md`, `review-again.md`). Comments from bots are marked with `[bot]` so you can quickly spot automated review feedback to reply to.
 
 #### Examples
 

@@ -4,6 +4,8 @@
  *        Defaults to live TUI mode; use --no-watch for one-shot output.
  */
 
+import * as readline from "node:readline/promises";
+import { stdin, stdout } from "node:process";
 import { execFile as execFileCb } from "child_process";
 import {
   listOpenPRs,
@@ -25,10 +27,16 @@ import {
 } from "../lib/gh.js";
 import type { WorkflowRun, PRReviewComment } from "../lib/types.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
-import { getConfiguredRepos } from "../lib/config.js";
-import { getOriginRepo } from "../lib/utils.js";
 import { formatCommentBody, wrapAnsiText } from "../lib/format.js";
-import { parseStandardFlags } from "../lib/args.js";
+import { getConfiguredRepos, loadConfig } from "../lib/config.js";
+import { getOriginRepo } from "../lib/utils.js";
+import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
+import {
+  loadTemplates,
+  scaffoldTemplates,
+  needsScaffold,
+  resolveTemplatesPath,
+} from "../lib/templates.js";
 
 function execAsync(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -318,7 +326,11 @@ function runOnce(repos: string[], mineOnly: boolean): void {
   renderTable(prs, repos.length === 1);
 }
 
-function runWatch(repos: string[], mineOnly: boolean): void {
+function runWatch(
+  repos: string[],
+  mineOnly: boolean,
+  templatesMap: Map<string, string>
+): void {
   const singleRepo = repos.length === 1;
   const TITLE = "copse status";
   const ROW_START = 5;
@@ -345,6 +357,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   const DETAIL_MAX_LINES = 10;
 
   let commentInputMode = false;
+  let templatePickerMode = false;
   let commentBuffer = "";
   let commentTarget:
     | { kind: "pr"; pr: PRWithStatus }
@@ -601,12 +614,25 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     })();
   }
 
+  const templateLabels = Array.from(templatesMap.keys());
+
   function drawCommentInput(): void {
     const termRows = process.stdout.rows || 24;
     const termCols = process.stdout.columns || 80;
     const footerLine = termRows - 1;
     const target = commentTarget;
     if (!target) return;
+    if (templatePickerMode && templateLabels.length > 0) {
+      process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
+      process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
+      const templateList = templateLabels.map((l, i) => `[${i + 1}]${l}`).join(" ");
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Select template: ${templateList} [c]ustom${ANSI.reset}`);
+      process.stdout.write(`\x1b[${footerLine};1H`);
+      process.stdout.write(`${ANSI.dim}Press 1-${templateLabels.length} to insert · c for custom${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      return;
+    }
     const isReply = target.kind === "comment";
     const targetExcerpt = isReply
       ? target.comment.body.replace(/\s+/g, " ").trim()
@@ -638,6 +664,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     if (!pr) return;
 
     commentInputMode = true;
+    templatePickerMode = templateLabels.length > 0;
     if (vr.kind === "comment" || vr.kind === "comment-body") {
       const comment = expandedComments[vr.commentIndex];
       if (!comment) return;
@@ -652,6 +679,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function handleCommentKey(key: string): void {
     if (key === "\x1b" || key === "\x03") {
       commentInputMode = false;
+      templatePickerMode = false;
       commentTarget = null;
       commentBuffer = "";
       process.stdout.write("\x1b[?25l");
@@ -660,6 +688,24 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     }
 
     if (key.startsWith("\x1b")) return;
+
+    if (templatePickerMode && templateLabels.length > 0) {
+      const k = key.toLowerCase();
+      if (k === "c") {
+        templatePickerMode = false;
+        drawCommentInput();
+        return;
+      }
+      const num = parseInt(k, 10);
+      if (num >= 1 && num <= templateLabels.length) {
+        const body = templatesMap.get(templateLabels[num - 1]) ?? "";
+        commentBuffer = (commentBuffer + body).trimStart();
+        templatePickerMode = false;
+        drawCommentInput();
+        return;
+      }
+      return;
+    }
 
     if (key === "\r") {
       const body = commentBuffer.trim();
@@ -677,13 +723,24 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
       if (body.length === 0) {
         statusMsg = `${ANSI.dim}Empty comment, cancelled${ANSI.reset}`;
+        commentInputMode = false;
+        templatePickerMode = false;
+        commentTarget = null;
+        commentBuffer = "";
+        process.stdout.write("\x1b[?25l");
         drawFooter();
         return;
       }
 
+      commentInputMode = false;
+      templatePickerMode = false;
+      commentTarget = null;
+      commentBuffer = "";
+
       statusMsg = target.kind === "comment"
         ? `${ANSI.amber}Posting reply on #${target.pr.number}…${ANSI.reset}`
         : `${ANSI.amber}Posting comment on #${target.pr.number}…${ANSI.reset}`;
+      process.stdout.write("\x1b[?25l");
       drawFooter();
 
       (async () => {
@@ -1567,7 +1624,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   setTimeout(loop, WATCH_INTERVAL_MS);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
   const { mineOnly } = flags;
   const noWatch = filtered.includes("--no-watch");
@@ -1585,9 +1642,10 @@ function main(): void {
   Defaults to live TUI mode when connected to a terminal.
 
 Options:
-  --no-watch  One-shot table output (no TUI)
-  --mine      Only your PRs (default)
-  --all       Include PRs from all authors
+  --no-watch   One-shot table output (no TUI)
+  --templates PATH  Comment template directory (default: ~/.copse/comment-templates)
+  --mine       Only your PRs (default)
+  --all        Include PRs from all authors
 
 TUI keys:
   ↑↓/jk navigate  ⏎ expand  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
@@ -1621,10 +1679,39 @@ TUI keys:
   console.error(`Scanning ${repos.length} repo(s)...\n`);
 
   if (watch) {
-    runWatch(repos, mineOnly);
+    let templatesMap = new Map<string, string>();
+    try {
+      const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
+      const config = loadConfig();
+      const templatesPath = resolveTemplatesPath(
+        templatesFromFlag ?? null,
+        config?.commentTemplates ?? null
+      );
+      templatesMap = loadTemplates(templatesPath);
+      if (templatesMap.size === 0 && needsScaffold(templatesPath) && stdout.isTTY) {
+        const rl = readline.createInterface({ input: stdin, output: stdout });
+        const answer = await rl.question(
+          `\nNo templates found. Create with starter templates? [y/n]: `
+        );
+        rl.close();
+        if (answer.trim().toLowerCase() === "y") {
+          scaffoldTemplates(templatesPath);
+          templatesMap = loadTemplates(templatesPath);
+        }
+      }
+    } catch (e: unknown) {
+      if ((e as Error).message?.includes("--templates")) {
+        console.error((e as Error).message);
+        process.exit(1);
+      }
+    }
+    runWatch(repos, mineOnly, templatesMap);
   } else {
     runOnce(repos, mineOnly);
   }
 }
 
-main();
+main().catch((e: unknown) => {
+  console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
+  process.exit(1);
+});

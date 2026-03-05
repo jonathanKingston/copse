@@ -65,6 +65,7 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "repo", description: "GitHub repo in owner/name format (default: origin)" },
       { name: "pr-number|agent", description: "Specific PR number or filter: cursor/claude" },
       { name: "--no-interactive", description: "Only list comments, do not enter reply loop" },
+      { name: "--templates PATH", description: "Comment template directory (default: ~/.copse/comment-templates)" },
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
@@ -74,6 +75,7 @@ const COMMANDS: Record<string, CommandDef> = {
     usage: "copse status [--no-watch] [--all]",
     args: [
       { name: "--no-watch", description: "One-shot table output (default: live TUI)" },
+      { name: "--templates PATH", description: "Comment template directory (default: ~/.copse/comment-templates)" },
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
@@ -165,8 +167,8 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   
   const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const initOpts: Record<string, string> = { "--skip-templates": "Skip template creation", "--force": "Overwrite existing config", "--help": "Show help" };
-  const statusOpts: Record<string, string> = { "--no-watch": "One-shot output (default: live TUI)", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
-  const prCommentsOpts: Record<string, string> = { "--no-interactive": "List only, no reply loop", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const statusOpts: Record<string, string> = { "--no-watch": "One-shot output (default: live TUI)", "--templates": "Comment template directory", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const prCommentsOpts: Record<string, string> = { "--no-interactive": "List only, no reply loop", "--templates": "Comment template directory", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
   const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
   const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };

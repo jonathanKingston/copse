@@ -14,6 +14,7 @@ const CONFIG_FILENAME = ".copserc";
 
 export interface Copserc {
   repos?: string[];
+  commentTemplates?: string;
 }
 
 function findConfigDir(startDir: string): string | null {
