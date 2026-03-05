@@ -84,11 +84,11 @@ You can configure default repos using a `.copserc` JSON file in your project roo
 }
 ```
 
-### Comment Templates (.copse/comment-templates/)
+### Comment Templates (~/.copse/comment-templates/)
 
-Create custom canned responses for `copse create-issue` by adding Markdown files to `.copse/comment-templates/`. Files are loaded alphabetically, so prefix with numbers to control order:
+Create custom canned responses for `copse create-issue` by adding Markdown files to `~/.copse/comment-templates/` in your home directory. Files are loaded alphabetically, so prefix with numbers to control order:
 
-**Example: .copse/comment-templates/01-research.md**
+**Example: ~/.copse/comment-templates/01-research.md**
 ```markdown
 ---
 label: Research – deeply investigate the issue
@@ -96,7 +96,7 @@ label: Research – deeply investigate the issue
 please deeply research this issue. Look at the codebase and related code, and provide a thorough analysis of what's involved, what the root cause is, and what options exist.
 ```
 
-**Example: .copse/comment-templates/02-plan.md**
+**Example: ~/.copse/comment-templates/02-plan.md**
 ```markdown
 ---
 label: Plan – create an implementation plan
@@ -104,7 +104,7 @@ label: Plan – create an implementation plan
 please look at the codebase and create a detailed plan for implementing this. Don't make changes yet, just outline the approach, which files need changing, and any trade-offs.
 ```
 
-**Example: .copse/comment-templates/03-fix.md**
+**Example: ~/.copse/comment-templates/03-fix.md**
 ```markdown
 ---
 label: Fix – go and build this
@@ -113,6 +113,8 @@ please go and build this.
 ```
 
 When creating issues, your custom templates will be presented as options. The agent mention (e.g. `@cursor`) is automatically prepended to your message if not already present. Multi-line messages are supported.
+
+These templates are global to your user account and will be available across all projects.
 
 ## Commands
 

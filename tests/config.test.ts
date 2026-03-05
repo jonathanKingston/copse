@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, unlinkSync, mkdirSync, existsSync, rmSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
+import { tmpdir, homedir } from "os";
 
 import { loadConfig, getCommentTemplates, getConfiguredRepos } from "../lib/config.js";
+
+const TEMPLATES_DIR = join(homedir(), ".copse", "comment-templates");
 
 function makeTempDir(): string {
   const dir = join(tmpdir(), `copse-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -16,11 +18,18 @@ function writeConfig(dir: string, config: object): void {
   writeFileSync(join(dir, ".copserc"), JSON.stringify(config, null, 2));
 }
 
-function writeTemplate(dir: string, filename: string, label: string, message: string): void {
-  const templatesDir = join(dir, ".copse", "comment-templates");
-  mkdirSync(templatesDir, { recursive: true });
+function writeTemplate(filename: string, label: string, message: string): void {
+  mkdirSync(TEMPLATES_DIR, { recursive: true });
   const content = `---\nlabel: ${label}\n---\n${message}`;
-  writeFileSync(join(templatesDir, filename), content);
+  writeFileSync(join(TEMPLATES_DIR, filename), content);
+}
+
+function cleanupTemplates(): void {
+  try {
+    rmSync(TEMPLATES_DIR, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
 }
 
 function cleanup(dir: string): void {
@@ -87,66 +96,63 @@ test("getConfiguredRepos returns null when no config file", () => {
 });
 
 test("getCommentTemplates returns templates from MD files", () => {
-  const dir = makeTempDir();
-  writeTemplate(dir, "01-research.md", "Research", "please research this");
-  writeTemplate(dir, "02-fix.md", "Fix", "please fix this");
+  cleanupTemplates();
+  writeTemplate("01-research.md", "Research", "please research this");
+  writeTemplate("02-fix.md", "Fix", "please fix this");
   
-  const result = getCommentTemplates(dir);
+  const result = getCommentTemplates();
   assert.deepEqual(result, [
     { label: "Research", message: "please research this" },
     { label: "Fix", message: "please fix this" },
   ]);
   
-  cleanup(dir);
+  cleanupTemplates();
 });
 
 test("getCommentTemplates returns null when no templates dir", () => {
-  const dir = makeTempDir();
+  cleanupTemplates();
   
-  const result = getCommentTemplates(dir);
+  const result = getCommentTemplates();
   assert.equal(result, null);
-  
-  cleanup(dir);
 });
 
 test("getCommentTemplates sorts templates alphabetically", () => {
-  const dir = makeTempDir();
-  writeTemplate(dir, "z-zebra.md", "Zebra", "last");
-  writeTemplate(dir, "a-apple.md", "Apple", "first");
-  writeTemplate(dir, "m-middle.md", "Middle", "middle");
+  cleanupTemplates();
+  writeTemplate("z-zebra.md", "Zebra", "last");
+  writeTemplate("a-apple.md", "Apple", "first");
+  writeTemplate("m-middle.md", "Middle", "middle");
   
-  const result = getCommentTemplates(dir);
+  const result = getCommentTemplates();
   assert.deepEqual(result, [
     { label: "Apple", message: "first" },
     { label: "Middle", message: "middle" },
     { label: "Zebra", message: "last" },
   ]);
   
-  cleanup(dir);
+  cleanupTemplates();
 });
 
 test("getCommentTemplates skips templates without frontmatter label", () => {
-  const dir = makeTempDir();
-  writeTemplate(dir, "01-valid.md", "Valid", "valid message");
-  const templatesDir = join(dir, ".copse", "comment-templates");
-  writeFileSync(join(templatesDir, "02-invalid.md"), "no frontmatter");
+  cleanupTemplates();
+  writeTemplate("01-valid.md", "Valid", "valid message");
+  writeFileSync(join(TEMPLATES_DIR, "02-invalid.md"), "no frontmatter");
   
-  const result = getCommentTemplates(dir);
+  const result = getCommentTemplates();
   assert.deepEqual(result, [
     { label: "Valid", message: "valid message" },
   ]);
   
-  cleanup(dir);
+  cleanupTemplates();
 });
 
 test("getCommentTemplates handles multiline messages", () => {
-  const dir = makeTempDir();
-  writeTemplate(dir, "01-multiline.md", "Multiline", "line 1\nline 2\nline 3");
+  cleanupTemplates();
+  writeTemplate("01-multiline.md", "Multiline", "line 1\nline 2\nline 3");
   
-  const result = getCommentTemplates(dir);
+  const result = getCommentTemplates();
   assert.deepEqual(result, [
     { label: "Multiline", message: "line 1\nline 2\nline 3" },
   ]);
   
-  cleanup(dir);
+  cleanupTemplates();
 });

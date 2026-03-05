@@ -2,15 +2,16 @@
  * Loads copse config from .copserc (JSON) in cwd or parent directories.
  * Format: { "repos": ["owner/name", ...] }
  * 
- * Comment templates are loaded from .copse/comment-templates/*.md files
+ * Comment templates are loaded from ~/.copse/comment-templates/*.md files
  * with frontmatter for the label and body for the message.
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join, resolve } from "path";
+import { homedir } from "os";
 
 const CONFIG_FILENAME = ".copserc";
-const COMMENT_TEMPLATES_DIR = ".copse/comment-templates";
+const COMMENT_TEMPLATES_DIR = join(homedir(), ".copse", "comment-templates");
 
 export interface CommentTemplate {
   label: string;
@@ -74,27 +75,17 @@ function stripFrontmatter(content: string): { label: string | null; body: string
   return { label, body };
 }
 
-function findTemplatesDir(startDir: string): string | null {
-  let dir = resolve(startDir);
-  const root = resolve("/");
-  while (dir !== root) {
-    const path = join(dir, COMMENT_TEMPLATES_DIR);
-    if (existsSync(path)) {
-      try {
-        const stat = statSync(path);
-        if (stat.isDirectory()) return path;
-      } catch {
-        // Continue searching
-      }
-    }
-    dir = resolve(dir, "..");
+export function getCommentTemplates(): CommentTemplate[] | null {
+  if (!existsSync(COMMENT_TEMPLATES_DIR)) return null;
+  
+  try {
+    const stat = statSync(COMMENT_TEMPLATES_DIR);
+    if (!stat.isDirectory()) return null;
+  } catch {
+    return null;
   }
-  return null;
-}
-
-export function getCommentTemplates(cwd: string = process.cwd()): CommentTemplate[] | null {
-  const templatesDir = findTemplatesDir(cwd);
-  if (!templatesDir) return null;
+  
+  const templatesDir = COMMENT_TEMPLATES_DIR;
   
   try {
     const files = readdirSync(templatesDir)
