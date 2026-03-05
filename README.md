@@ -2,7 +2,7 @@
 
 Tools for managing agent-created PRs. Available at [copse.dev](https://copse.dev).
 
-Seven commands for managing agent-created PRs:
+Nine commands for managing agent-created PRs:
 
 - **approval** – Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue)
 - **create-prs** – Finds recent agent branches and creates PRs from them
@@ -11,6 +11,8 @@ Seven commands for managing agent-created PRs:
 - **rerun-failed** – Reruns failed workflow runs on recent agent branches
 - **create-issue** – Creates an issue and instructs the specified agent to build it
 - **update-main** – Merges main (or specified base) into open PR branches to keep them up to date
+- **status** – Unified dashboard of agent PRs across all repos (TUI)
+- **web** – Local web app for status workflows (comments, issue creation, reruns, update-main, approve, merge)
 
 ## Requirements
 
@@ -36,6 +38,7 @@ Run `copse <command>` to see arguments for a specific command:
 ```bash
 copse approval
 copse create-prs
+copse web --open
 ```
 
 ### Tab Completion
@@ -364,4 +367,31 @@ copse update-main acme/cool-project cursor --dry-run
 
 # Update all authors' PRs
 copse update-main acme/cool-project cursor --all
+```
+
+### copse web
+
+Runs a local-only web app for `status` workflows. Uses your local `gh` authentication and binds to localhost by default.
+
+```
+copse web [--host HOST] [--port PORT] [--open]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `--host HOST` | Host to bind (default: `127.0.0.1`) |
+| `--port PORT` | Port to bind (default: `4317`) |
+| `--open` | Open the default browser after startup |
+
+#### Examples
+
+```bash
+# Start the local web app
+copse web
+
+# Start and open browser
+copse web --open
+
+# Custom host/port
+copse web --host 127.0.0.1 --port 8080
 ```

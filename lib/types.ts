@@ -38,6 +38,7 @@ export interface PRReviewComment {
   id: number;
   node_id: string;
   body: string;
+  body_html?: string;
   path: string;
   line: number | null;
   original_line: number | null;

@@ -14,6 +14,16 @@ header {
   margin: 1rem 0;
 }
 
+header h1 {
+  margin: 0;
+  line-height: 1.1;
+}
+
+header p {
+  margin: 0.15rem 0 0;
+  color: #cbd5e1;
+}
+
 .controls, .panel {
   background: #1f2937;
   border: 1px solid #374151;
@@ -82,6 +92,10 @@ td.title-cell {
 td.title-cell {
   max-width: 180px;
   overflow: hidden;
+}
+
+td.title-cell .clamp {
+  overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -130,6 +144,67 @@ button.secondary {
   border-radius: 6px;
   margin-bottom: 0.5rem;
   padding: 0.5rem;
+}
+
+.comment p {
+  margin: 0;
+}
+
+.comment-body {
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: #e5e7eb;
+}
+
+.comment-body-plain {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.comment-body-html {
+  white-space: normal;
+  font-family: inherit;
+}
+
+.comment-body-html p {
+  margin: 0.35rem 0 0;
+}
+
+.comment-body-html p:first-child {
+  margin-top: 0;
+}
+
+.comment-body-html a {
+  color: #93c5fd;
+  text-decoration: underline;
+}
+
+.comment-body-html code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.95em;
+  background: rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  padding: 0.1rem 0.25rem;
+  border-radius: 6px;
+}
+
+.comment-body-html pre {
+  margin: 0.45rem 0 0;
+  padding: 0.5rem;
+  border-radius: 8px;
+  background: #0b1220;
+  border: 1px solid #374151;
+  overflow-x: auto;
+}
+
+.comment-body-html pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.95em;
 }
 
 .comment textarea {

@@ -8,30 +8,29 @@ import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { execFile as execFileCb } from "child_process";
 import {
-  listOpenPRs,
-  listOpenPRsAsync,
-  listWorkflowRuns,
-  listWorkflowRunsAsync,
-  getAgentForPR,
-  validateRepo,
   REPO_PATTERN,
-  gh,
   ghQuietAsync,
-  getUnresolvedCommentCounts,
-  getUnresolvedCommentCountsAsync,
   listPRReviewCommentsAsync,
-  addPRCommentAsync,
-  replyToPRCommentAsync,
   isInterrupted,
   setPipeStdio,
 } from "../lib/gh.js";
-import type { WorkflowRun, PRReviewComment } from "../lib/types.js";
-import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
+import type { PRReviewComment } from "../lib/types.js";
+import { getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { formatCommentBody, wrapAnsiText } from "../lib/format.js";
 import { getConfiguredRepos, loadConfig } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
-import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
+import { fetchPRsWithStatus, fetchPRsWithStatusSync } from "../lib/services/status-service.js";
+import {
+  approvePullRequest,
+  createIssueWithAgentComment,
+  enableMergeWhenReady,
+  mergeBaseIntoBranch,
+  postPullRequestComment,
+  postPullRequestReply,
+  rerunFailedWorkflowRuns,
+} from "../lib/services/status-actions.js";
+import { STALE_DAYS, WATCH_INTERVAL_MS, type PRWithStatus } from "../lib/services/status-types.js";
 import {
   loadTemplates,
   scaffoldTemplates,
@@ -48,35 +47,7 @@ function execAsync(command: string, args: string[]): Promise<string> {
   });
 }
 
-const STATUS_FIELDS = [
-  "number", "headRefName", "labels", "title", "author",
-  "mergeStateStatus", "mergeable", "reviewDecision", "createdAt", "updatedAt",
-  "autoMergeRequest",
-];
-
-const STALE_DAYS = 7;
-const WATCH_INTERVAL_MS = 30_000;
 const BULK_COOLDOWN_MS = 2_000;
-
-export interface PRWithStatus {
-  repo: string;
-  number: number;
-  headRefName: string;
-  title: string;
-  author: { login: string };
-  mergeStateStatus: string;
-  mergeable: string;
-  reviewDecision: string;
-  updatedAt: string;
-  agent: string | null;
-  autoMerge: boolean;
-  ciStatus: "pass" | "fail" | "pending" | "none";
-  conflicts: boolean;
-  ageDays: number;
-  stale: boolean;
-  readyToMerge: boolean;
-  commentCount: number;
-}
 
 export type Urgency = "red" | "amber" | "green";
 
@@ -84,10 +55,6 @@ function getUrgency(pr: PRWithStatus): Urgency {
   if (pr.ciStatus === "fail" || pr.conflicts) return "red";
   if (pr.stale || pr.reviewDecision === "CHANGES_REQUESTED" || pr.ciStatus === "pending") return "amber";
   return "green";
-}
-
-function sortPRs(prs: PRWithStatus[]): PRWithStatus[] {
-  return prs.sort((a, b) => a.ageDays - b.ageDays);
 }
 
 function matchesSearch(pr: PRWithStatus, query: string): boolean {
@@ -109,103 +76,6 @@ function matchesSearch(pr: PRWithStatus, query: string): boolean {
   return searchable.some(f => f.toLowerCase().includes(q));
 }
 
-function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
-  const result: PRWithStatus[] = [];
-  const now = Date.now();
-
-  for (const repo of repos) {
-    validateRepo(repo);
-    const rawPRs = listOpenPRs(repo, STATUS_FIELDS);
-    const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly });
-
-    for (const pr of matching) {
-      const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
-      const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
-      const createdAt = (pr as { createdAt?: string }).createdAt ?? "";
-      const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
-      const ageDays = createdAt
-        ? Math.floor((now - new Date(createdAt).getTime()) / (24 * 60 * 60 * 1000))
-        : 0;
-
-      result.push({
-        repo,
-        number: pr.number,
-        headRefName: pr.headRefName,
-        title: pr.title ?? "",
-        author: pr.author,
-        mergeStateStatus,
-        mergeable: (pr as { mergeable?: string }).mergeable ?? "UNKNOWN",
-        reviewDecision,
-        updatedAt,
-        agent: getAgentForPR(pr),
-        autoMerge: (pr as { autoMergeRequest?: unknown }).autoMergeRequest != null,
-        ciStatus: "pending",
-        conflicts: mergeStateStatus === "HAS_CONFLICTS",
-        ageDays,
-        stale: ageDays >= STALE_DAYS,
-        readyToMerge: false,
-        commentCount: 0,
-      });
-    }
-  }
-
-  return sortPRs(result);
-}
-
-function applyCIStatus(pr: PRWithStatus, runs: WorkflowRun[]): void {
-  const failed = runs.filter((r) => r.conclusion === "failure");
-  const inProgress = runs.filter(
-    (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
-  );
-
-  if (failed.length > 0) pr.ciStatus = "fail";
-  else if (inProgress.length > 0) pr.ciStatus = "pending";
-  else if (runs.some((r) => r.conclusion === "success")) pr.ciStatus = "pass";
-  else pr.ciStatus = "none";
-
-  pr.readyToMerge =
-    pr.ciStatus === "pass" &&
-    !pr.conflicts &&
-    (pr.reviewDecision === "APPROVED" || pr.reviewDecision === null);
-}
-
-function updateCommentCounts(prs: PRWithStatus[]): void {
-  const byRepo = new Map<string, PRWithStatus[]>();
-  for (const pr of prs) {
-    const list = byRepo.get(pr.repo) ?? [];
-    list.push(pr);
-    byRepo.set(pr.repo, list);
-  }
-  for (const [repo, repoPrs] of byRepo) {
-    try {
-      const counts = getUnresolvedCommentCounts(repo, repoPrs.map(p => p.number));
-      for (const pr of repoPrs) {
-        pr.commentCount = counts.get(pr.number) ?? 0;
-      }
-    } catch { /* leave as 0 */ }
-  }
-}
-
-function updateAllCIStatuses(prs: PRWithStatus[]): void {
-  const branchCache = new Map<string, WorkflowRun[]>();
-  for (const pr of prs) {
-    const key = `${pr.repo}\0${pr.headRefName}`;
-    let runs = branchCache.get(key);
-    if (runs === undefined) {
-      try { runs = listWorkflowRuns(pr.repo, pr.headRefName); }
-      catch { runs = []; }
-      branchCache.set(key, runs);
-    }
-    applyCIStatus(pr, runs);
-  }
-}
-
-function fetchPRsWithStatus(repos: string[], mineOnly: boolean): PRWithStatus[] {
-  const prs = fetchPRsBase(repos, mineOnly);
-  updateCommentCounts(prs);
-  updateAllCIStatuses(prs);
-  return sortPRs(prs);
-}
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -323,7 +193,7 @@ function renderTable(prs: PRWithStatus[], singleRepo: boolean): void {
 }
 
 function runOnce(repos: string[], mineOnly: boolean): void {
-  const prs = fetchPRsWithStatus(repos, mineOnly);
+  const prs = fetchPRsWithStatusSync({ repos, mineOnly });
   renderTable(prs, repos.length === 1);
 }
 
@@ -748,22 +618,20 @@ function runWatch(
       (async () => {
         try {
           if (target.kind === "comment") {
-            if (cursorApiKey) {
-              const result = await sendReplyViaCursorApi({
-                repo: target.pr.repo,
-                prNumber: target.pr.number,
-                replyText: body,
-                cursorApiKey,
-              });
-              statusMsg = result.mode === "followup"
-                ? `${ANSI.green}Reply sent via Cursor API on #${target.pr.number}${ANSI.reset}`
-                : `${ANSI.green}No linked agent; launched Cursor agent for #${target.pr.number}${ANSI.reset}`;
-            } else {
-              await replyToPRCommentAsync(target.pr.repo, target.pr.number, target.comment.id, body);
-              statusMsg = `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
-            }
+            const result = await postPullRequestReply({
+              repo: target.pr.repo,
+              prNumber: target.pr.number,
+              inReplyToId: target.comment.id,
+              body,
+              cursorApiKey,
+            });
+            statusMsg = result.mode === "cursor-followup"
+              ? `${ANSI.green}Reply sent via Cursor API on #${target.pr.number}${ANSI.reset}`
+              : result.mode === "cursor-launch"
+                ? `${ANSI.green}No linked agent; launched Cursor agent for #${target.pr.number}${ANSI.reset}`
+                : `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
           } else {
-            await addPRCommentAsync(target.pr.repo, target.pr.number, body);
+            await postPullRequestComment(target.pr.repo, target.pr.number, body);
             statusMsg = `${ANSI.green}Comment posted on #${target.pr.number}${ANSI.reset}`;
           }
         } catch {
@@ -1011,34 +879,16 @@ function runWatch(
           try {
             const pr = selectedPR();
             const agent = pr?.agent || "cursor";
-            const mention = agent === "cursor" ? "@cursor" : agent === "claude" ? "@claude" : agent === "copilot" ? "@copilot" : "@cursor";
-
-            const commentTemplates = [
-              null,
-              `${mention} please deeply research this issue. Look at the codebase and related code, and provide a thorough analysis of what's involved, what the root cause is, and what options exist.`,
-              `${mention} please look at the codebase and create a detailed plan for implementing this. Don't make changes yet, just outline the approach, which files need changing, and any trade-offs.`,
-              `${mention} please go and build this.`,
-            ];
-
-            const issueBody = body || ".";
-            const createArgs = ["issue", "create", "--repo", repo, "--title", title, "--body", issueBody];
-            const out = await ghQuietAsync(...createArgs);
-            const match = out.trim().match(/github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/);
-            const issueNumber = match ? parseInt(match[1], 10) : null;
-
-            if (!issueNumber) {
-              statusMsg = `${ANSI.red}Failed to create issue${ANSI.reset}`;
-              drawFooter();
-              return;
-            }
-
-            const comment = commentTemplates[choice];
-            if (comment) {
-              await ghQuietAsync("issue", "comment", String(issueNumber), "--repo", repo, "--body", comment);
-              statusMsg = `${ANSI.green}Created issue #${issueNumber} with comment${ANSI.reset}`;
-            } else {
-              statusMsg = `${ANSI.green}Created issue #${issueNumber}${ANSI.reset}`;
-            }
+            const result = await createIssueWithAgentComment({
+              repo,
+              title,
+              body,
+              agent,
+              templateChoice: choice as 0 | 1 | 2 | 3,
+            });
+            statusMsg = result.commentAdded
+              ? `${ANSI.green}Created issue #${result.issueNumber} with comment${ANSI.reset}`
+              : `${ANSI.green}Created issue #${result.issueNumber}${ANSI.reset}`;
           } catch (e: unknown) {
             const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
             statusMsg = `${ANSI.red}Failed to create issue: ${msg.slice(0, 50)}${ANSI.reset}`;
@@ -1140,48 +990,8 @@ function runWatch(
 
     (async () => {
       try {
-        const prs: PRWithStatus[] = [];
-        const now = Date.now();
-        const oldByKey = new Map(currentPRs.map(p => [`${p.repo}#${p.number}`, p]));
-        for (const repo of repos) {
-          validateRepo(repo);
-          const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS);
-          if (gen !== ciGeneration || isInterrupted()) return;
-          const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly: mineOnlyFilter });
-
-          for (const pr of matching) {
-            const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
-            const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
-            const createdAt = (pr as { createdAt?: string }).createdAt ?? "";
-            const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
-            const ageDays = createdAt
-              ? Math.floor((now - new Date(createdAt).getTime()) / (24 * 60 * 60 * 1000))
-              : 0;
-
-            const prev = oldByKey.get(`${repo}#${pr.number}`);
-            prs.push({
-              repo,
-              number: pr.number,
-              headRefName: pr.headRefName,
-              title: pr.title ?? "",
-              author: pr.author,
-              mergeStateStatus,
-              mergeable: (pr as { mergeable?: string }).mergeable ?? "UNKNOWN",
-              reviewDecision,
-              updatedAt,
-              agent: getAgentForPR(pr),
-              autoMerge: (pr as { autoMergeRequest?: unknown }).autoMergeRequest != null,
-              ciStatus: prev?.ciStatus ?? "pending",
-              conflicts: mergeStateStatus === "HAS_CONFLICTS",
-              ageDays,
-              stale: ageDays >= STALE_DAYS,
-              readyToMerge: prev?.readyToMerge ?? false,
-              commentCount: prev?.commentCount ?? 0,
-            });
-          }
-        }
-
-        const sortedPrs = sortPRs(prs);
+        const sortedPrs = await fetchPRsWithStatus({ repos, mineOnly: mineOnlyFilter });
+        if (gen !== ciGeneration || isInterrupted()) return;
         const oldVirtualLen = virtualRows.length;
         currentPRs = sortedPrs;
 
@@ -1206,55 +1016,6 @@ function runWatch(
           process.stdout.write("No agent PRs found.");
         }
         drawFooter();
-
-        if (sortedPrs.length === 0) return;
-
-        // Comment counts phase
-        if (gen !== ciGeneration || isInterrupted()) return;
-        const byRepo = new Map<string, PRWithStatus[]>();
-        for (const pr of currentPRs) {
-          if (!matchesSearch(pr, searchQuery)) continue;
-          const list = byRepo.get(pr.repo) ?? [];
-          list.push(pr);
-          byRepo.set(pr.repo, list);
-        }
-        for (const [repo, repoPrs] of byRepo) {
-          if (gen !== ciGeneration || isInterrupted()) return;
-          try {
-            const counts = await getUnresolvedCommentCountsAsync(repo, repoPrs.map(p => p.number));
-            for (const pr of repoPrs) {
-              pr.commentCount = counts.get(pr.number) ?? 0;
-            }
-          } catch { /* leave as 0 */ }
-        }
-        if (gen !== ciGeneration || isInterrupted()) return;
-        drawAllRows();
-        drawFooter();
-
-        // CI status phase — one fetch per unique branch
-        const branchMap = new Map<string, { repo: string; branch: string; prIndices: number[] }>();
-        for (let i = 0; i < currentPRs.length; i++) {
-          const pr = currentPRs[i];
-          if (!matchesSearch(pr, searchQuery)) continue;
-          const key = `${pr.repo}\0${pr.headRefName}`;
-          if (!branchMap.has(key)) {
-            branchMap.set(key, { repo: pr.repo, branch: pr.headRefName, prIndices: [] });
-          }
-          branchMap.get(key)!.prIndices.push(i);
-        }
-
-        for (const { repo, branch, prIndices } of branchMap.values()) {
-          if (gen !== ciGeneration || isInterrupted()) break;
-          try {
-            const runs = await listWorkflowRunsAsync(repo, branch);
-            for (const i of prIndices) {
-              applyCIStatus(currentPRs[i], runs);
-              if (gen !== ciGeneration || isInterrupted()) break;
-              const vi = virtualRows.findIndex(vr => vr.kind === "pr" && vr.prIndex === i);
-              if (vi !== -1) drawRow(vi);
-            }
-          } catch { /* leave as pending */ }
-        }
       } catch (e: unknown) {
         if (isInterrupted()) return;
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
@@ -1358,23 +1119,7 @@ function runWatch(
 
     (async () => {
       try {
-        const runsJson = await ghQuietAsync(
-          "run", "list",
-          "--repo", pr.repo,
-          "--branch", pr.headRefName,
-          "--limit", "100",
-          "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
-        );
-        const runs = JSON.parse(runsJson || "[]") as WorkflowRun[];
-        const failed = runs.filter(r => r.conclusion === "failure");
-        let total = 0;
-        for (const run of failed) {
-          if (isInterrupted()) break;
-          try {
-            await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
-            total++;
-          } catch { /* skip */ }
-        }
+        const { total } = await rerunFailedWorkflowRuns(pr.repo, pr.headRefName);
         statusMsg = total > 0
           ? `${ANSI.green}Reran ${total} workflow(s) for #${pr.number}${ANSI.reset}`
           : `${ANSI.dim}No failed workflows on #${pr.number}${ANSI.reset}`;
@@ -1397,15 +1142,14 @@ function runWatch(
 
     (async () => {
       try {
-        await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
-        statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
-      } catch (e: unknown) {
-        const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
-        if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
+        const result = await mergeBaseIntoBranch(pr.repo, pr.headRefName, "main");
+        if (result.alreadyUpToDate) {
           statusMsg = `${ANSI.dim}#${pr.number} already up to date with main${ANSI.reset}`;
         } else {
-          statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
+          statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
         }
+      } catch {
+        statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
       } finally {
         if (isInterrupted()) { cleanup(); return; }
       }
@@ -1423,7 +1167,7 @@ function runWatch(
 
     (async () => {
       try {
-        await ghQuietAsync("pr", "review", "--repo", pr.repo, String(pr.number), "--approve");
+        await approvePullRequest(pr.repo, pr.number);
         statusMsg = `${ANSI.green}Approved #${pr.number}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
@@ -1451,7 +1195,7 @@ function runWatch(
 
     (async () => {
       try {
-        await ghQuietAsync("pr", "merge", "--repo", pr.repo, String(pr.number), "--auto");
+        await enableMergeWhenReady(pr.repo, pr.number);
         statusMsg = `${ANSI.green}Merge when ready enabled for #${pr.number}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
@@ -1503,22 +1247,8 @@ function runWatch(
         for (const pr of toRerun) {
           if (isInterrupted()) break;
           try {
-            const runsJson = await ghQuietAsync(
-              "run", "list",
-              "--repo", pr.repo,
-              "--branch", pr.headRefName,
-              "--limit", "100",
-              "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
-            );
-            const runs = JSON.parse(runsJson || "[]") as WorkflowRun[];
-            const failed = runs.filter(r => r.conclusion === "failure");
-            for (const run of failed) {
-              if (isInterrupted()) break;
-              try {
-                await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
-                total++;
-              } catch { /* skip */ }
-            }
+            const result = await rerunFailedWorkflowRuns(pr.repo, pr.headRefName);
+            total += result.total;
           } catch { /* skip PR */ }
         }
 
@@ -1552,13 +1282,14 @@ function runWatch(
           if (!matchesSearch(pr, searchQuery)) continue;
           if (isInterrupted()) break;
           try {
-            await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
-            updated++;
-          } catch (e: unknown) {
-            const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
-            if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
+            const result = await mergeBaseIntoBranch(pr.repo, pr.headRefName, "main");
+            if (result.alreadyUpToDate) {
               upToDate++;
+            } else {
+              updated++;
             }
+          } catch {
+            // Skip failures in bulk mode.
           }
         }
         statusMsg = `${ANSI.green}Updated ${updated}, ${upToDate} already up to date${ANSI.reset}`;
@@ -1650,8 +1381,8 @@ async function main(): Promise<void> {
   Unified dashboard across all configured repos. Shows every open agent PR with
   CI status, review state, conflicts, age, comments, and merge-readiness.
 
-  Uses origin remote when run inside a git repo (including submodules).
-  Falls back to ~/.copserc or .copserc: { "repos": ["owner/name", ...] }
+  Uses ~/.copserc or .copserc when present: { "repos": ["owner/name", ...] }
+  Falls back to the origin remote when run inside a git repo (including submodules).
 
   Defaults to live TUI mode when connected to a terminal.
 
@@ -1672,13 +1403,13 @@ TUI keys:
   if (filteredArgs.length >= 1 && REPO_PATTERN.test(filteredArgs[0])) {
     repos = [filteredArgs[0]];
   } else {
-    const origin = getOriginRepo();
-    if (origin) {
-      repos = [origin];
+    const configured = getConfiguredRepos();
+    if (configured && configured.length > 0) {
+      repos = configured;
     } else {
-      const configured = getConfiguredRepos();
-      if (configured && configured.length > 0) {
-        repos = configured;
+      const origin = getOriginRepo();
+      if (origin) {
+        repos = [origin];
       } else {
         console.error(help);
         console.error("\nNo repos configured. Run 'copse init' to set up ~/.copserc or run inside a git repo.");

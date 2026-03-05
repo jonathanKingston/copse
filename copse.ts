@@ -119,6 +119,16 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
+  web: {
+    file: "web.js",
+    description: "Runs local web app for status workflows",
+    usage: "copse web [--host HOST] [--port PORT] [--open]",
+    args: [
+      { name: "--host HOST", description: "Host to bind (default: 127.0.0.1)" },
+      { name: "--port PORT", description: "Port to bind (default: 4317)" },
+      { name: "--open", description: "Open browser after starting server" },
+    ],
+  },
 };
 
 function showHelp(): void {
@@ -173,6 +183,7 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
   const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };
   const createIssueOpts: Record<string, string> = { "--body-file": "Read body from file", "--template": "Issue template path", "--no-template": "Skip template", "--no-comment": "Skip agent comment", "--dry-run": "Preview without acting", "--help": "Show help" };
+  const webOpts: Record<string, string> = { "--host": "Host to bind", "--port": "Port to bind", "--open": "Open browser", "--help": "Show help" };
 
   if (shell === "zsh") {
     const subcmds = [
@@ -227,6 +238,9 @@ _copse() {
         create-issue)
           _arguments ${formatOptArgs(createIssueOpts)}
           ;;
+        web)
+          _arguments ${formatOptArgs(webOpts)}
+          ;;
       esac
       ;;
   esac
@@ -280,6 +294,9 @@ _copse_completion() {
             ;;
         create-issue)
             COMPREPLY=( $(compgen -W "${formatBashOpts(createIssueOpts)}" -- "$cur") )
+            ;;
+        web)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(webOpts)}" -- "$cur") )
             ;;
     esac
 }
