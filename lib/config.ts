@@ -1,10 +1,14 @@
 /**
- * Loads copse config from .copserc (JSON) in cwd or parent directories.
+ * Loads copse config from .copserc (JSON).
+ * Searches in order:
+ *   1. ~/.copserc (global config)
+ *   2. .copserc in cwd or parent directories (local config)
  * Format: { "repos": ["owner/name", ...] }
  */
 
 import { readFileSync, existsSync } from "fs";
 import { join, resolve } from "path";
+import { homedir } from "os";
 
 const CONFIG_FILENAME = ".copserc";
 
@@ -23,12 +27,11 @@ function findConfigDir(startDir: string): string | null {
   return null;
 }
 
-export function loadConfig(cwd: string = process.cwd()): Copserc | null {
-  const configDir = findConfigDir(cwd);
-  if (!configDir) return null;
+function loadConfigFromPath(configPath: string): Copserc | null {
+  if (!existsSync(configPath)) return null;
 
   try {
-    const raw = readFileSync(join(configDir, CONFIG_FILENAME), "utf-8");
+    const raw = readFileSync(configPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object" && "repos" in parsed) {
       const repos = (parsed as Copserc).repos;
@@ -40,6 +43,17 @@ export function loadConfig(cwd: string = process.cwd()): Copserc | null {
     // Invalid JSON or missing
   }
   return null;
+}
+
+export function loadConfig(cwd: string = process.cwd()): Copserc | null {
+  const homeConfig = join(homedir(), CONFIG_FILENAME);
+  const globalConfig = loadConfigFromPath(homeConfig);
+  if (globalConfig) return globalConfig;
+
+  const configDir = findConfigDir(cwd);
+  if (!configDir) return null;
+
+  return loadConfigFromPath(join(configDir, CONFIG_FILENAME));
 }
 
 export function getConfiguredRepos(cwd: string = process.cwd()): string[] | null {

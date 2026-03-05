@@ -13,11 +13,11 @@ const __dirname = dirname(__filename);
 const COMMANDS: Record<string, CommandDef> = {
   init: {
     file: "init.js",
-    description: "Scaffolds .copserc config and templates interactively",
+    description: "Scaffolds ~/.copserc config and templates interactively",
     usage: "copse init [--skip-templates] [--force]",
     args: [
       { name: "--skip-templates", description: "Skip template creation prompts" },
-      { name: "--force", description: "Overwrite existing .copserc file" },
+      { name: "--force", description: "Overwrite existing ~/.copserc file" },
     ],
   },
   approval: {

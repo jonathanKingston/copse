@@ -3,9 +3,9 @@
  *
  * Usage: copse init [options]
  *
- * Walks the user through creating a .copserc file with:
+ * Walks the user through creating a ~/.copserc file with:
  *   - Repository configuration
- *   - Template files (PR template, issue template)
+ *   - Template files (PR template, issue template in current repo)
  *
  * Options:
  *   --skip-templates  Skip template creation prompts
@@ -15,7 +15,8 @@
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { writeFileSync, existsSync, mkdirSync } from "fs";
-import { resolve, dirname } from "path";
+import { resolve, dirname, join } from "path";
+import { homedir } from "os";
 import { REPO_PATTERN } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
 
@@ -31,6 +32,10 @@ const ANSI = {
 
 const CONFIG_FILENAME = ".copserc";
 const GITHUB_DIR = ".github";
+
+function getConfigPath(): string {
+  return join(homedir(), CONFIG_FILENAME);
+}
 
 const DEFAULT_PR_TEMPLATE = `## Description
 
@@ -133,7 +138,7 @@ async function promptRepos(rl: readline.Interface): Promise<string[]> {
     
     if (!trimmed) {
       if (repos.length === 0) {
-        console.log(`${ANSI.yellow}Warning: No repositories configured. You can add them to .copserc later.${ANSI.reset}`);
+        console.log(`${ANSI.yellow}Warning: No repositories configured. You can add them to ~/.copserc later.${ANSI.reset}`);
       }
       break;
     }
@@ -207,16 +212,16 @@ function createIssueTemplate(): void {
 }
 
 function saveConfig(config: ScaffoldConfig, force: boolean): void {
-  const configPath = resolve(CONFIG_FILENAME);
+  const configPath = getConfigPath();
   
   if (existsSync(configPath) && !force) {
-    console.log(`${ANSI.red}Error: ${CONFIG_FILENAME} already exists. Use --force to overwrite${ANSI.reset}`);
+    console.log(`${ANSI.red}Error: ${configPath} already exists. Use --force to overwrite${ANSI.reset}`);
     process.exit(1);
   }
   
   const json = JSON.stringify(config, null, 2);
   writeFileSync(configPath, json + "\n", "utf-8");
-  console.log(`${ANSI.green}✓${ANSI.reset} Created ${CONFIG_FILENAME}`);
+  console.log(`${ANSI.green}✓${ANSI.reset} Created ${configPath}`);
 }
 
 async function main(): Promise<void> {
@@ -227,19 +232,19 @@ async function main(): Promise<void> {
 
   const help = `Usage: copse init [options]
 
-  Scaffolds a .copserc configuration file and optional templates interactively.
+  Scaffolds a ~/.copserc configuration file and optional templates interactively.
 
-  The .copserc file configures which GitHub repositories copse commands should
-  operate on. Templates help standardize PRs and issues across your repos.
+  The ~/.copserc file configures which GitHub repositories copse commands should
+  operate on. Templates are created in the current repo's .github directory.
 
 Options:
   --skip-templates  Skip template creation prompts
-  --force           Overwrite existing .copserc file
+  --force           Overwrite existing ~/.copserc file
 
 Examples:
   copse init                   # Interactive setup with all prompts
   copse init --skip-templates  # Only configure repos, skip templates
-  copse init --force           # Overwrite existing .copserc
+  copse init --force           # Overwrite existing ~/.copserc
 `;
 
   if (args.includes("--help") || args.includes("-h")) {
@@ -249,19 +254,19 @@ Examples:
 
   if (!isInteractive) {
     console.error(`${ANSI.red}Error: init command requires an interactive terminal${ANSI.reset}`);
-    console.error(`${ANSI.dim}You can manually create ${CONFIG_FILENAME} with: { "repos": ["owner/name"] }${ANSI.reset}`);
+    console.error(`${ANSI.dim}You can manually create ~/.copserc with: { "repos": ["owner/name"] }${ANSI.reset}`);
     process.exit(1);
   }
 
-  const configPath = resolve(CONFIG_FILENAME);
+  const configPath = getConfigPath();
   if (existsSync(configPath) && !force) {
-    console.log(`${ANSI.yellow}${CONFIG_FILENAME} already exists.${ANSI.reset}`);
+    console.log(`${ANSI.yellow}${configPath} already exists.${ANSI.reset}`);
     console.log(`${ANSI.dim}Use --force to overwrite, or edit ${configPath} manually${ANSI.reset}`);
     process.exit(1);
   }
 
   console.log(`${ANSI.bold}${ANSI.cyan}Copse Configuration Scaffolder${ANSI.reset}\n`);
-  console.log(`${ANSI.dim}This will help you set up .copserc for managing agent PRs${ANSI.reset}`);
+  console.log(`${ANSI.dim}This will help you set up ~/.copserc for managing agent PRs${ANSI.reset}`);
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
@@ -297,7 +302,7 @@ Examples:
       console.log(`  ${ANSI.cyan}copse status${ANSI.reset} - View all agent PRs across configured repos`);
       console.log(`  ${ANSI.cyan}copse pr-status${ANSI.reset} - Check PR status and CI failures`);
     } else {
-      console.log(`${ANSI.dim}Edit ${CONFIG_FILENAME} to add repositories:${ANSI.reset}`);
+      console.log(`${ANSI.dim}Edit ~/.copserc to add repositories:${ANSI.reset}`);
       console.log(`  ${ANSI.cyan}{ "repos": ["owner/name", ...] }${ANSI.reset}`);
     }
     console.log();
