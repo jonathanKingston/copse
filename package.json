@@ -1,6 +1,6 @@
 {
   "name": "@copse/cli",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Tools for managing agent-created PRs",
   "type": "module",
   "license": "MIT",
