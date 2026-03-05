@@ -45,6 +45,7 @@ const STATUS_FIELDS = [
 ];
 
 const STALE_DAYS = 7;
+const WATCH_INTERVAL_MS = 30_000;
 const BULK_COOLDOWN_MS = 2_000;
 
 export interface PRWithStatus {
@@ -1319,6 +1320,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   refresh();
+
+  function loop(): void {
+    if (isInterrupted()) { cleanup(); return; }
+    if (!busy && !ciUpdatePending) refresh();
+    setTimeout(loop, WATCH_INTERVAL_MS);
+  }
+  setTimeout(loop, WATCH_INTERVAL_MS);
 }
 
 function main(): void {
