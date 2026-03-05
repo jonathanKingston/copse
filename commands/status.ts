@@ -1341,7 +1341,7 @@ function main(): void {
   CI status, review state, conflicts, age, comments, and merge-readiness.
 
   Uses origin remote when run inside a git repo (including submodules).
-  Falls back to .copserc in cwd or parent: { "repos": ["owner/name", ...] }
+  Falls back to ~/.copserc or .copserc: { "repos": ["owner/name", ...] }
 
   Defaults to live TUI mode when connected to a terminal.
 
@@ -1370,7 +1370,7 @@ TUI keys:
         repos = configured;
       } else {
         console.error(help);
-        console.error("\nNo repos configured. Add a .copserc with { \"repos\": [\"owner/name\"] } or run inside a git repo.");
+        console.error("\nNo repos configured. Run 'copse init' to set up ~/.copserc or run inside a git repo.");
         process.exit(1);
       }
     }
