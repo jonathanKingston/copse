@@ -11,6 +11,15 @@ const __dirname = dirname(__filename);
 
 // File references use .js extensions — these point to the tsc-compiled output in dist/
 const COMMANDS: Record<string, CommandDef> = {
+  init: {
+    file: "init.js",
+    description: "Scaffolds .copserc config and templates interactively",
+    usage: "copse init [--skip-templates] [--force]",
+    args: [
+      { name: "--skip-templates", description: "Skip template creation prompts" },
+      { name: "--force", description: "Overwrite existing .copserc file" },
+    ],
+  },
   approval: {
     file: "approval.js",
     description: "Triggers merge when ready on matching PRs",
@@ -155,6 +164,7 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
   
   const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const initOpts: Record<string, string> = { "--skip-templates": "Skip template creation", "--force": "Overwrite existing config", "--help": "Show help" };
   const statusOpts: Record<string, string> = { "--no-watch": "One-shot output (default: live TUI)", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const prCommentsOpts: Record<string, string> = { "--no-interactive": "List only, no reply loop", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
@@ -191,6 +201,9 @@ _copse() {
       ;;
     args)
       case \$line[1] in
+        init)
+          _arguments ${formatOptArgs(initOpts)}
+          ;;
         approval|pr-status)
           _arguments ${formatOptArgs(commonOpts)}
           ;;
@@ -242,6 +255,9 @@ _copse_completion() {
     fi
 
     case "\${COMP_WORDS[1]}" in
+        init)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(initOpts)}" -- "$cur") )
+            ;;
         approval|pr-status)
             COMPREPLY=( $(compgen -W "${formatBashOpts(commonOpts)}" -- "$cur") )
             ;;
@@ -282,14 +298,16 @@ function runCommand(command: string, args: string[]): void {
     process.exit(1);
   }
 
-  try {
-    ensureGh();
-  } catch (e: unknown) {
-    if (e instanceof GhNotFoundError || e instanceof GhNotAuthenticatedError) {
-      console.error(e.message);
-      process.exit(1);
+  if (command !== "init") {
+    try {
+      ensureGh();
+    } catch (e: unknown) {
+      if (e instanceof GhNotFoundError || e instanceof GhNotAuthenticatedError) {
+        console.error(e.message);
+        process.exit(1);
+      }
+      throw e;
     }
-    throw e;
   }
 
   const commandPath = join(__dirname, "commands", cmd.file);
