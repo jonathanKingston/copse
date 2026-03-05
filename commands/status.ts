@@ -321,6 +321,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   const singleRepo = repos.length === 1;
   const TITLE = `copse status — refresh every ${WATCH_INTERVAL_MS / 1000}s`;
   const ROW_START = 5;
+  let mineOnlyFilter = mineOnly;
   let currentPRs: PRWithStatus[] = [];
   let statusMsg = "";
   let busy = false;
@@ -796,10 +797,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   function drawTitle(): void {
     process.stdout.write("\x1b[1;1H\x1b[2K");
-    let title = TITLE;
-    if (searchQuery) {
-      title += `  ${ANSI.dim}filter: ${searchQuery}${ANSI.reset}`;
-    }
+    let title = `${TITLE}  ${ANSI.dim}[${mineOnlyFilter ? "mine" : "all authors"}] [f] mine/all [/] filter:` +
+      `${searchQuery ? ` ${searchQuery}` : ""}${ANSI.reset}`;
     const vh = getViewportHeight();
     if (virtualRows.length > vh) {
       title += `  ${ANSI.dim}[${scrollOffset + 1}\u2013${Math.min(scrollOffset + vh, virtualRows.length)} of ${virtualRows.length}]${ANSI.reset}`;
@@ -813,7 +812,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment/reply  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment/reply  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -844,7 +843,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           validateRepo(repo);
           const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS);
           if (gen !== ciGeneration || isInterrupted()) return;
-          const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly });
+          const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly: mineOnlyFilter });
 
           for (const pr of matching) {
             const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
@@ -982,6 +981,17 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         drawRow(selectedIndex);
       }
     }
+  }
+
+  function toggleAuthorFilter(): void {
+    if (busy) return;
+    mineOnlyFilter = !mineOnlyFilter;
+    statusMsg = mineOnlyFilter
+      ? `${ANSI.dim}Showing only your PRs${ANSI.reset}`
+      : `${ANSI.dim}Showing PRs from all authors${ANSI.reset}`;
+    drawTitle();
+    drawFooter();
+    refresh();
   }
 
   function selectedPR(): PRWithStatus | null {
@@ -1259,7 +1269,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   process.stdout.write("\x1b[?25l\x1b[2J\x1b[H");
-  console.log(TITLE + "\n");
+  drawTitle();
+  process.stdout.write("\n\n");
   console.log(buildTableHeader(singleRepo));
   console.log(tableSeparator());
   process.stdout.write(`\x1b[${ROW_START};1H${ANSI.dim}Loading…${ANSI.reset}`);
@@ -1300,6 +1311,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       if (key === "m") { handleMergeWhenReady(); return; }
 
       if (key === "/") { startSearchMode(); return; }
+      if (key === "f") { toggleAuthorFilter(); return; }
 
       if (key === "R") handleRerunAllFailed();
       if (key === "U") handleUpdateAllMain();
@@ -1339,7 +1351,7 @@ Options:
   --all       Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment/reply
+  ↑↓/jk navigate  ⏎ expand  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply
   [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;
