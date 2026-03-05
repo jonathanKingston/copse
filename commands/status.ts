@@ -548,23 +548,54 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     for (let i = 0; i < currentRows.length; i++) {
       if (!matchesSearch(currentRows[i], searchQuery)) continue;
       virtualRows.push({ kind: "row", rowIndex: i });
-      if (expandedRowIndex === i && isPR(currentRows[i])) {
+      if (expandedRowIndex === i) {
         const row = currentRows[i];
-        if (expandedLoading) {
-          virtualRows.push({ kind: "info", rowIndex: i,
-            text: `  ${ANSI.dim}Loading comments for #${(row as PRWithStatus).number}…${ANSI.reset}` });
-        } else if (expandedComments.length === 0) {
-          virtualRows.push({ kind: "info", rowIndex: i,
-            text: `  ${ANSI.dim}No unresolved comments on #${(row as PRWithStatus).number}${ANSI.reset}` });
-        } else {
-          const maxVisible = Math.min(expandedComments.length, DETAIL_MAX_LINES);
-          for (let j = 0; j < maxVisible; j++) {
-            virtualRows.push({ kind: "comment", rowIndex: i, commentIndex: j });
-          }
-          if (expandedComments.length > maxVisible) {
+        if (isPR(row)) {
+          if (expandedLoading) {
             virtualRows.push({ kind: "info", rowIndex: i,
-              text: `    ${ANSI.dim}${expandedComments.length - maxVisible} more — press [o] to view on GitHub${ANSI.reset}` });
+              text: `  ${ANSI.dim}Loading comments for #${row.number}…${ANSI.reset}` });
+          } else if (expandedComments.length === 0) {
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.dim}No unresolved comments on #${row.number}${ANSI.reset}` });
+          } else {
+            const maxVisible = Math.min(expandedComments.length, DETAIL_MAX_LINES);
+            for (let j = 0; j < maxVisible; j++) {
+              virtualRows.push({ kind: "comment", rowIndex: i, commentIndex: j });
+            }
+            if (expandedComments.length > maxVisible) {
+              virtualRows.push({ kind: "info", rowIndex: i,
+                text: `    ${ANSI.dim}${expandedComments.length - maxVisible} more — press [o] to view on GitHub${ANSI.reset}` });
+            }
           }
+        } else if (isAgent(row)) {
+          virtualRows.push({ kind: "info", rowIndex: i,
+            text: `  ${ANSI.bold}Agent ID:${ANSI.reset} ${row.agentId}` });
+          virtualRows.push({ kind: "info", rowIndex: i,
+            text: `  ${ANSI.bold}Status:${ANSI.reset} ${row.status}` });
+          if (row.targetBranch) {
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.bold}Target Branch:${ANSI.reset} ${row.targetBranch}` });
+          }
+          if (row.summary) {
+            const summaryLines = row.summary.split('\n');
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.bold}Summary:${ANSI.reset}` });
+            const maxLines = Math.min(summaryLines.length, DETAIL_MAX_LINES - 3);
+            for (let j = 0; j < maxLines; j++) {
+              virtualRows.push({ kind: "info", rowIndex: i,
+                text: `    ${ANSI.dim}${summaryLines[j]}${ANSI.reset}` });
+            }
+            if (summaryLines.length > maxLines) {
+              virtualRows.push({ kind: "info", rowIndex: i,
+                text: `    ${ANSI.dim}...${summaryLines.length - maxLines} more lines${ANSI.reset}` });
+            }
+          }
+          if (row.prUrl) {
+            virtualRows.push({ kind: "info", rowIndex: i,
+              text: `  ${ANSI.bold}PR:${ANSI.reset} ${hyperlink(row.prUrl, row.prUrl)}` });
+          }
+          virtualRows.push({ kind: "info", rowIndex: i,
+            text: `  ${ANSI.dim}Press [o] to open in browser${ANSI.reset}` });
         }
       }
     }
@@ -648,12 +679,6 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     if (!vr || vr.kind !== "row") return;
     const rowIndex = vr.rowIndex;
     const row = currentRows[rowIndex];
-    
-    if (!isPR(row)) {
-      statusMsg = `${ANSI.dim}Agents don't have comments to expand${ANSI.reset}`;
-      drawFooter();
-      return;
-    }
 
     if (expandedRowIndex === rowIndex) {
       const rowVi = virtualRows.findIndex(v => v.kind === "row" && v.rowIndex === rowIndex);
@@ -664,32 +689,42 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     const oldLen = virtualRows.length;
     expandedRowIndex = rowIndex;
-    expandedRowKey = `pr-${row.number}`;
     expandedComments = [];
-    expandedLoading = true;
-    rebuildVirtualRows();
-    drawAllRows();
-    clearStaleRows(oldLen);
-    drawFooter();
+    expandedLoading = false;
 
-    (async () => {
-      try {
-        const comments = await listPRReviewCommentsAsync(row.repo, row.number);
-        if (expandedRowKey !== `pr-${row.number}`) return;
-        expandedComments = comments;
-      } catch {
-        expandedComments = [];
-      } finally {
-        expandedLoading = false;
-      }
-      if (expandedRowKey === `pr-${row.number}`) {
-        const oldLen2 = virtualRows.length;
-        rebuildVirtualRows();
-        drawAllRows();
-        clearStaleRows(oldLen2);
-        drawFooter();
-      }
-    })();
+    if (isPR(row)) {
+      expandedRowKey = `pr-${row.number}`;
+      expandedLoading = true;
+      rebuildVirtualRows();
+      drawAllRows();
+      clearStaleRows(oldLen);
+      drawFooter();
+
+      (async () => {
+        try {
+          const comments = await listPRReviewCommentsAsync(row.repo, row.number);
+          if (expandedRowKey !== `pr-${row.number}`) return;
+          expandedComments = comments;
+        } catch {
+          expandedComments = [];
+        } finally {
+          expandedLoading = false;
+        }
+        if (expandedRowKey === `pr-${row.number}`) {
+          const oldLen2 = virtualRows.length;
+          rebuildVirtualRows();
+          drawAllRows();
+          clearStaleRows(oldLen2);
+          drawFooter();
+        }
+      })();
+    } else if (isAgent(row)) {
+      expandedRowKey = `agent-${row.agentId}`;
+      rebuildVirtualRows();
+      drawAllRows();
+      clearStaleRows(oldLen);
+      drawFooter();
+    }
   }
 
   function handleCheckout(): void {
