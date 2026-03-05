@@ -9,6 +9,7 @@
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { getOriginRepo } from "../lib/utils.js";
+import { formatCommentBody } from "../lib/format.js";
 import type { PR, PRReviewComment } from "../lib/types.js";
 import {
   REPO_PATTERN,
@@ -37,73 +38,6 @@ const ANSI = {
 
 function hyperlink(url: string, text: string): string {
   return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
-}
-
-/** Format comment body for terminal: strip HTML, style markdown, extract actionable links. */
-function formatCommentBody(body: string): string {
-  let s = body;
-
-  // Strip HTML comments (e.g. <!-- DESCRIPTION START -->, <!-- BUGBOT_BUG_ID: ... -->)
-  s = s.replace(/<!--[\s\S]*?-->/g, "");
-
-  // Extract Fix in Cursor / Fix in Web URLs (match href anywhere; anchor body may contain img etc.)
-  const cursorUrl = s.match(/href="(https:\/\/cursor\.com\/open\?[^"]+)"/)?.[1];
-  const webUrl = s.match(/href="(https:\/\/cursor\.com\/agents\?[^"]+)"/)?.[1];
-
-  // Remove the full <a>...</a> blocks for Fix in Cursor/Web (we'll add them cleanly at the end)
-  s = s.replace(/<a[^>]*href="https:\/\/cursor\.com\/open\?[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "");
-  s = s.replace(/<a[^>]*href="https:\/\/cursor\.com\/agents\?[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "");
-
-  // Flatten <details> - show summary + content, remove tags
-  s = s.replace(/<details>\s*<summary>([^<]*)<\/summary>\s*/gi, "\n$1\n");
-  s = s.replace(/<\/details>/gi, "");
-
-  // Convert markdown links BEFORE inserting ANSI codes — the `[` in `\x1b[0m` etc. would cause
-  // the link regex to match huge false-positive spans
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    const plainText = text.trim().replace(/\*+/g, "").replace(/`/g, "").trim();
-    if (/^(High|Medium|Low)\s+Severity$/i.test(plainText)) {
-      const sev = plainText.split(/\s+/)[0];
-      const color = /high/i.test(sev) ? ANSI.red : /medium/i.test(sev) ? ANSI.yellow : ANSI.dim;
-      return `${color}${plainText}${ANSI.reset}`;
-    }
-    return hyperlink(url, plainText);
-  });
-
-  // Convert markdown headings (### Title) to bold
-  s = s.replace(/^###\s+(.+)$/gm, (_, t) => `${ANSI.bold}${t.trim()}${ANSI.reset}`);
-
-  // Style severity markers
-  s = s.replace(/\*\*(High|Medium|Low)\s+Severity\*\*/gi, (_, sev) => {
-    const color = /high/i.test(sev) ? ANSI.red : /medium/i.test(sev) ? ANSI.yellow : ANSI.dim;
-    return `${color}${sev} Severity${ANSI.reset}`;
-  });
-
-  // Convert **bold** to ANSI bold
-  s = s.replace(/\*\*([^*]+)\*\*/g, `${ANSI.bold}$1${ANSI.reset}`);
-
-  // Convert inline `code` to dim
-  s = s.replace(/`([^`]+)`/g, `${ANSI.dim}$1${ANSI.reset}`);
-
-  // Strip remaining HTML tags
-  s = s.replace(/<[^>]+>/g, "");
-  // Decode common entities
-  s = s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
-  // Collapse excess newlines
-  s = s.replace(/\n{3,}/g, "\n\n").trim();
-
-  const linkLines: string[] = [];
-  if (cursorUrl) {
-    linkLines.push(`${ANSI.cyan}${hyperlink(cursorUrl, "Fix in Cursor")}${ANSI.reset}`);
-  }
-  if (webUrl) {
-    linkLines.push(`${ANSI.cyan}${hyperlink(webUrl, "Fix in Web")}${ANSI.reset}`);
-  }
-  if (linkLines.length > 0) {
-    s += `\n\n${ANSI.bold}Actions:${ANSI.reset}\n${linkLines.join("\n")}`;
-  }
-
-  return s;
 }
 
 interface CommentWithContext {
