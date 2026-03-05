@@ -74,34 +74,45 @@ source ~/.bashrc  # for bash
 
 ## Configuration
 
-Copse can be configured using a `.copserc` JSON file in your project root or any parent directory. The config file supports:
+### Default Repos (.copserc)
 
-- **repos** – array of default repos in `owner/name` format
-- **commentTemplates** – array of custom canned responses for issue creation
-
-### Example .copserc
+You can configure default repos using a `.copserc` JSON file in your project root or any parent directory:
 
 ```json
 {
-  "repos": ["acme/cool-project"],
-  "commentTemplates": [
-    {
-      "label": "Research – deeply investigate the issue and report findings",
-      "message": "please deeply research this issue. Look at the codebase and related code, and provide a thorough analysis of what's involved, what the root cause is, and what options exist."
-    },
-    {
-      "label": "Plan – review the code and create an implementation plan",
-      "message": "please look at the codebase and create a detailed plan for implementing this. Don't make changes yet, just outline the approach, which files need changing, and any trade-offs."
-    },
-    {
-      "label": "Fix – go and build / fix this",
-      "message": "please go and build this."
-    }
-  ]
+  "repos": ["acme/cool-project"]
 }
 ```
 
-When creating issues with `copse create-issue`, your custom comment templates will be presented as options. The agent mention (e.g. `@cursor`) is automatically prepended to your message if not already present.
+### Comment Templates (.copse/comment-templates/)
+
+Create custom canned responses for `copse create-issue` by adding Markdown files to `.copse/comment-templates/`. Files are loaded alphabetically, so prefix with numbers to control order:
+
+**Example: .copse/comment-templates/01-research.md**
+```markdown
+---
+label: Research – deeply investigate the issue
+---
+please deeply research this issue. Look at the codebase and related code, and provide a thorough analysis of what's involved, what the root cause is, and what options exist.
+```
+
+**Example: .copse/comment-templates/02-plan.md**
+```markdown
+---
+label: Plan – create an implementation plan
+---
+please look at the codebase and create a detailed plan for implementing this. Don't make changes yet, just outline the approach, which files need changing, and any trade-offs.
+```
+
+**Example: .copse/comment-templates/03-fix.md**
+```markdown
+---
+label: Fix – go and build this
+---
+please go and build this.
+```
+
+When creating issues, your custom templates will be presented as options. The agent mention (e.g. `@cursor`) is automatically prepended to your message if not already present. Multi-line messages are supported.
 
 ## Commands
 
