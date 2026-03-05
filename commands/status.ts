@@ -356,8 +356,9 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   let scrollOffset = 0;
 
   let issueCreateMode = false;
-  let issueCreateStep: "title" | "template" = "title";
+  let issueCreateStep: "title" | "body" | "template" = "title";
   let issueTitleBuffer = "";
+  let issueBodyBuffer = "";
   let issueTemplateChoice = -1;
   let issueTargetRepo: string | null = null;
 
@@ -778,6 +779,15 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       process.stdout.write(`${ANSI.dim}Enter to continue · Esc to cancel${ANSI.reset}`);
       process.stdout.write("\x1b[?25h");
       process.stdout.write(`\x1b[${footerLine - 1};${8 + issueTitleBuffer.length}H`);
+    } else if (issueCreateStep === "body") {
+      process.stdout.write(`\x1b[${footerLine - 2};1H`);
+      process.stdout.write(`${ANSI.dim}Title: ${issueTitleBuffer}${ANSI.reset}`);
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Body: ${ANSI.reset}${issueBodyBuffer}`);
+      process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+      process.stdout.write(`${ANSI.dim}Enter to continue (or skip) · Esc to cancel${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      process.stdout.write(`\x1b[${footerLine - 1};${7 + issueBodyBuffer.length}H`);
     } else if (issueCreateStep === "template") {
       process.stdout.write(`\x1b[${footerLine - 2};1H`);
       process.stdout.write(`${ANSI.bold}Select agent comment:${ANSI.reset} [0] None  [1] Research  [2] Plan  [3] Fix`);
@@ -810,6 +820,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     issueCreateMode = true;
     issueCreateStep = "title";
     issueTitleBuffer = "";
+    issueBodyBuffer = "";
     issueTemplateChoice = -1;
     issueTargetRepo = targetRepo;
     drawIssueCreateInput();
@@ -820,6 +831,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       issueCreateMode = false;
       issueCreateStep = "title";
       issueTitleBuffer = "";
+      issueBodyBuffer = "";
       issueTemplateChoice = -1;
       issueTargetRepo = null;
       process.stdout.write("\x1b[?25l");
@@ -837,12 +849,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           issueCreateMode = false;
           issueCreateStep = "title";
           issueTitleBuffer = "";
+          issueBodyBuffer = "";
           issueTargetRepo = null;
           process.stdout.write("\x1b[?25l");
           drawFooter();
           return;
         }
-        issueCreateStep = "template";
+        issueCreateStep = "body";
         drawIssueCreateInput();
         return;
       }
@@ -865,15 +878,42 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         issueTitleBuffer += key;
         drawIssueCreateInput();
       }
+    } else if (issueCreateStep === "body") {
+      if (key === "\r") {
+        issueCreateStep = "template";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x7f" || key === "\b") {
+        if (issueBodyBuffer.length > 0) {
+          issueBodyBuffer = issueBodyBuffer.slice(0, -1);
+        }
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x15") {
+        issueBodyBuffer = "";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key.length === 1 && key.charCodeAt(0) >= 32) {
+        issueBodyBuffer += key;
+        drawIssueCreateInput();
+      }
     } else if (issueCreateStep === "template") {
       if (key === "\r") {
         const choice = issueTemplateChoice;
         const title = issueTitleBuffer.trim();
+        const body = issueBodyBuffer.trim();
         const repo = issueTargetRepo;
 
         issueCreateMode = false;
         issueCreateStep = "title";
         issueTitleBuffer = "";
+        issueBodyBuffer = "";
         issueTemplateChoice = -1;
         issueTargetRepo = null;
         process.stdout.write("\x1b[?25l");
@@ -906,7 +946,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
               `${mention} please go and build this.`,
             ];
 
-            const createArgs = ["issue", "create", "--repo", repo, "--title", title, "--body", "."];
+            const issueBody = body || ".";
+            const createArgs = ["issue", "create", "--repo", repo, "--title", title, "--body", issueBody];
             const out = await ghQuietAsync(...createArgs);
             const match = out.trim().match(/github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/);
             const issueNumber = match ? parseInt(match[1], 10) : null;
