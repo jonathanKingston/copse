@@ -812,7 +812,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [g]refresh  [o]pen  [c]heckout  [C]omment/reply  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment/reply  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1310,7 +1310,6 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       if (key === "a") { handleApproveSelected(); return; }
       if (key === "m") { handleMergeWhenReady(); return; }
 
-      if (key === "g") { if (!ciUpdatePending) refresh(); return; }
       if (key === "/") { startSearchMode(); return; }
       if (key === "f") { toggleAuthorFilter(); return; }
 
@@ -1352,8 +1351,8 @@ Options:
   --all       Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [g]refresh  [/]filter  [f]mine/all  [o]pen  [c]heckout
-  [C]omment/reply  [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
+  ↑↓/jk navigate  ⏎ expand  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply
+  [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;
 
