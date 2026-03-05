@@ -27,6 +27,7 @@ import type { WorkflowRun, PRReviewComment } from "../lib/types.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { getConfiguredRepos } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
+import { formatCommentBody, wrapAnsiText } from "../lib/format.js";
 import { parseStandardFlags } from "../lib/args.js";
 
 function execAsync(command: string, args: string[]): Promise<string> {
@@ -333,6 +334,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   type VirtualRow =
     | { kind: "pr"; prIndex: number }
     | { kind: "comment"; prIndex: number; commentIndex: number }
+    | { kind: "comment-body"; prIndex: number; commentIndex: number; line: string }
     | { kind: "info"; prIndex: number; text: string };
 
   let virtualRows: VirtualRow[] = [];
@@ -381,7 +383,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   process.on("SIGINT", cleanup);
 
   process.on("SIGWINCH", () => {
-    ensureVisible();
+    rebuildVirtualRows();
+    clampSelection();
     process.stdout.write("\x1b[2J\x1b[H");
     drawTitle();
     process.stdout.write(`\x1b[3;1H${buildTableHeader(singleRepo)}`);
@@ -405,13 +408,23 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           virtualRows.push({ kind: "info", prIndex: i,
             text: `  ${ANSI.dim}No unresolved comments on #${currentPRs[i].number}${ANSI.reset}` });
         } else {
-          const maxVisible = Math.min(expandedComments.length, DETAIL_MAX_LINES);
-          for (let j = 0; j < maxVisible; j++) {
+          const columns = process.stdout.columns || 80;
+          const bodyIndent = "      ";
+          const maxComments = Math.min(expandedComments.length, DETAIL_MAX_LINES);
+          for (let j = 0; j < maxComments; j++) {
             virtualRows.push({ kind: "comment", prIndex: i, commentIndex: j });
+            const formatted = formatCommentBody(expandedComments[j].body);
+            const bodyLines = wrapAnsiText(formatted, columns, bodyIndent);
+            for (const line of bodyLines) {
+              virtualRows.push({ kind: "comment-body", prIndex: i, commentIndex: j, line });
+            }
+            if (j < maxComments - 1) {
+              virtualRows.push({ kind: "info", prIndex: i, text: "" });
+            }
           }
-          if (expandedComments.length > maxVisible) {
+          if (expandedComments.length > maxComments) {
             virtualRows.push({ kind: "info", prIndex: i,
-              text: `    ${ANSI.dim}${expandedComments.length - maxVisible} more — press [o] to view on GitHub${ANSI.reset}` });
+              text: `    ${ANSI.dim}${expandedComments.length - maxComments} more — press [o] to view on GitHub${ANSI.reset}` });
           }
         }
       }
@@ -419,21 +432,9 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function formatCommentRow(comment: PRReviewComment): string {
-    const columns = process.stdout.columns || 80;
     const loc = String(comment.line ?? comment.original_line ?? "?");
     const pathLoc = `${comment.path}:${loc}`;
-    const pathLocMax = Math.max(12, Math.floor(columns * 0.36));
-    const pathLocTrunc = truncatePlain(pathLoc, pathLocMax);
-    const bodyRaw = comment.body
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .replace(/<[^>]+>/g, "")
-      .replace(/\n/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    const prefix = `    ${comment.user.login} · ${pathLocTrunc} · `;
-    const maxBodyLen = Math.max(10, columns - visibleLength(prefix) - 1);
-    const truncBody = truncatePlain(bodyRaw, maxBodyLen);
-    return `${prefix}${ANSI.dim}${truncBody}${ANSI.reset}`;
+    return `    ${ANSI.bold}${comment.user.login}${ANSI.reset} ${ANSI.dim}·${ANSI.reset} ${pathLoc}`;
   }
 
   function highlightRow(row: string): string {
@@ -451,6 +452,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       row = formatPRRow(currentPRs[vr.prIndex], singleRepo);
     } else if (vr.kind === "comment") {
       row = formatCommentRow(expandedComments[vr.commentIndex]);
+    } else if (vr.kind === "comment-body") {
+      row = vr.line;
     } else {
       row = vr.text;
     }
@@ -627,7 +630,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     if (!pr) return;
 
     commentInputMode = true;
-    if (vr.kind === "comment") {
+    if (vr.kind === "comment" || vr.kind === "comment-body") {
       const comment = expandedComments[vr.commentIndex];
       if (!comment) return;
       commentTarget = { kind: "comment", pr, comment };
@@ -1003,7 +1006,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function handleOpenSelected(): void {
     const vr = virtualRows[selectedIndex];
     if (!vr) return;
-    if (vr.kind === "comment") {
+    if (vr.kind === "comment" || vr.kind === "comment-body") {
       const comment = expandedComments[vr.commentIndex];
       if (!comment?.html_url) return;
       (async () => {
