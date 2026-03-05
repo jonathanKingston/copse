@@ -9,7 +9,7 @@ Seven commands for managing agent-created PRs:
 - **pr-comments** – Lists PR review comments on agent PRs; interactive reply for Cursor/Claude
 - **pr-status** – Outlines open agent PRs with test failures and rerun info (also available as `npm test`)
 - **rerun-failed** – Reruns failed workflow runs on recent agent branches
-- **create-issue** – Creates an issue and comments to instruct the specified agent (cursor or claude) to build it
+- **create-issue** – Creates an issue and instructs the specified agent to build it
 - **update-main** – Merges main (or specified base) into open PR branches to keep them up to date
 
 ## Requirements
@@ -73,6 +73,22 @@ source ~/.bashrc  # for bash
 | After a subcommand | `--dry-run`, `--all`, `--mine`, `--help` |
 
 ## Commands
+
+### Configuration (`.copserc`)
+
+You can configure repos and comment behavior with a `.copserc` JSON file in your repo (or any parent directory):
+
+```json
+{
+  "repos": ["acme/cool-project"],
+  "commentTemplates": "~/.copse/comment-templates",
+  "cursorApiKey": "cur_xxx"
+}
+```
+
+- `repos`: default repo list used by commands like `status` when no origin remote is available
+- `commentTemplates`: default path for `pr-comments`/`status` reply templates
+- `cursorApiKey`: when set, reply actions in `pr-comments` and `status` use Cursor Cloud Agents API directly. `create-issue` also uses Cursor API for `cursor` instructions; if absent, it uses GitHub comments.
 
 ### copse approval
 
@@ -261,7 +277,7 @@ copse rerun-failed acme/cool-project claude --hours 48 --dry-run
 
 ### copse create-issue
 
-Creates a GitHub issue and adds a comment instructing the specified agent (cursor or claude) to go and build it.
+Creates a GitHub issue and instructs the specified agent to go and build it.
 
 ```
 copse create-issue [repo] [title] [body] [agent] [options]
@@ -280,6 +296,8 @@ copse create-issue [repo] [title] [body] [agent] [options]
 | `--dry-run` | Show what would be created without creating |
 
 On success, prints the issue URL to stdout (e.g. for piping: `copse create-issue ... | xargs open`).
+
+When `agent=cursor` and `cursorApiKey` is configured in `.copserc`, the instruction is sent via Cursor Cloud Agents API (instead of posting a GitHub issue comment). Without the key, or for other agents, it uses GitHub issue comments.
 
 #### Issue template lookup
 

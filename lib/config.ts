@@ -15,6 +15,7 @@ const CONFIG_FILENAME = ".copserc";
 export interface Copserc {
   repos?: string[];
   commentTemplates?: string;
+  cursorApiKey?: string;
 }
 
 function findConfigDir(startDir: string): string | null {
@@ -34,11 +35,19 @@ function loadConfigFromPath(configPath: string): Copserc | null {
   try {
     const raw = readFileSync(configPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === "object" && "repos" in parsed) {
-      const repos = (parsed as Copserc).repos;
-      if (Array.isArray(repos) && repos.every((r) => typeof r === "string")) {
-        return parsed as Copserc;
-      }
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const config = parsed as Copserc;
+    const hasRepos =
+      !("repos" in config) ||
+      (Array.isArray(config.repos) && config.repos.every((r) => typeof r === "string"));
+    const hasCommentTemplates =
+      !("commentTemplates" in config) || typeof config.commentTemplates === "string";
+    const hasCursorApiKey =
+      !("cursorApiKey" in config) || typeof config.cursorApiKey === "string";
+
+    if (hasRepos && hasCommentTemplates && hasCursorApiKey) {
+      return config;
     }
   } catch {
     // Invalid JSON or missing

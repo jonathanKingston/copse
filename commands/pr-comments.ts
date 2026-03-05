@@ -25,6 +25,7 @@ import {
 import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { loadConfig } from "../lib/config.js";
+import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
 import {
   loadTemplates,
   scaffoldTemplates,
@@ -176,16 +177,18 @@ Examples:
   }
 
   let templatesPath: string;
+  let cursorApiKey: string | null = null;
   try {
     const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
     const config = loadConfig();
+    cursorApiKey = config?.cursorApiKey?.trim() || null;
     templatesPath = resolveTemplatesPath(templatesFromFlag ?? null, config?.commentTemplates ?? null);
   } catch (e: unknown) {
     console.error((e as Error).message);
     process.exit(1);
   }
 
-  runInteractiveLoop(repo, comments, templatesPath).catch((e: unknown) => {
+  runInteractiveLoop(repo, comments, templatesPath, cursorApiKey).catch((e: unknown) => {
     console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
     process.exit(1);
   });
@@ -194,7 +197,8 @@ Examples:
 async function runInteractiveLoop(
   repo: string,
   comments: CommentWithContext[],
-  templatesPath: string
+  templatesPath: string,
+  cursorApiKey: string | null
 ): Promise<void> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
@@ -277,10 +281,24 @@ async function runInteractiveLoop(
       }
 
       try {
-        const mention = ctx.agent || null;
-        const body = mention ? `@${mention} ${replyTrimmed}` : replyTrimmed;
-        replyToPRComment(repo, ctx.prNumber, ctx.comment.id, body);
-        console.log(`\x1b[32mReply posted${mention ? ` (cc @${mention})` : ""}.\x1b[0m`);
+        if (cursorApiKey) {
+          const result = await sendReplyViaCursorApi({
+            repo,
+            prNumber: ctx.prNumber,
+            replyText: replyTrimmed,
+            cursorApiKey,
+          });
+          if (result.mode === "followup") {
+            console.log(`\x1b[32mReply sent to Cursor agent (${result.agentId}) via follow-up.\x1b[0m`);
+          } else {
+            console.log(`\x1b[32mNo linked agent found; launched new Cursor agent (${result.agentId}).\x1b[0m`);
+          }
+        } else {
+          const mention = ctx.agent || null;
+          const body = mention ? `@${mention} ${replyTrimmed}` : replyTrimmed;
+          replyToPRComment(repo, ctx.prNumber, ctx.comment.id, body);
+          console.log(`\x1b[32mReply posted${mention ? ` (cc @${mention})` : ""}.\x1b[0m`);
+        }
       } catch (e: unknown) {
         const err = e as ExecError;
         console.error(`\x1b[31mFailed to post reply:\x1b[0m ${formatGhError(err)}`);

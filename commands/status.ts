@@ -31,6 +31,7 @@ import { formatCommentBody, wrapAnsiText } from "../lib/format.js";
 import { getConfiguredRepos, loadConfig } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
+import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
 import {
   loadTemplates,
   scaffoldTemplates,
@@ -329,7 +330,8 @@ function runOnce(repos: string[], mineOnly: boolean): void {
 function runWatch(
   repos: string[],
   mineOnly: boolean,
-  templatesMap: Map<string, string>
+  templatesMap: Map<string, string>,
+  cursorApiKey: string | null
 ): void {
   const singleRepo = repos.length === 1;
   const TITLE = "copse status";
@@ -746,8 +748,20 @@ function runWatch(
       (async () => {
         try {
           if (target.kind === "comment") {
-            await replyToPRCommentAsync(target.pr.repo, target.pr.number, target.comment.id, body);
-            statusMsg = `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
+            if (cursorApiKey) {
+              const result = await sendReplyViaCursorApi({
+                repo: target.pr.repo,
+                prNumber: target.pr.number,
+                replyText: body,
+                cursorApiKey,
+              });
+              statusMsg = result.mode === "followup"
+                ? `${ANSI.green}Reply sent via Cursor API on #${target.pr.number}${ANSI.reset}`
+                : `${ANSI.green}No linked agent; launched Cursor agent for #${target.pr.number}${ANSI.reset}`;
+            } else {
+              await replyToPRCommentAsync(target.pr.repo, target.pr.number, target.comment.id, body);
+              statusMsg = `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
+            }
           } else {
             await addPRCommentAsync(target.pr.repo, target.pr.number, body);
             statusMsg = `${ANSI.green}Comment posted on #${target.pr.number}${ANSI.reset}`;
@@ -1680,9 +1694,11 @@ TUI keys:
 
   if (watch) {
     let templatesMap = new Map<string, string>();
+    let cursorApiKey: string | null = null;
     try {
       const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
       const config = loadConfig();
+      cursorApiKey = config?.cursorApiKey?.trim() || null;
       const templatesPath = resolveTemplatesPath(
         templatesFromFlag ?? null,
         config?.commentTemplates ?? null
@@ -1705,7 +1721,7 @@ TUI keys:
         process.exit(1);
       }
     }
-    runWatch(repos, mineOnly, templatesMap);
+    runWatch(repos, mineOnly, templatesMap, cursorApiKey);
   } else {
     runOnce(repos, mineOnly);
   }
