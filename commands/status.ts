@@ -319,7 +319,7 @@ function runOnce(repos: string[], mineOnly: boolean): void {
 
 function runWatch(repos: string[], mineOnly: boolean): void {
   const singleRepo = repos.length === 1;
-  const TITLE = `copse status — refresh every ${WATCH_INTERVAL_MS / 1000}s`;
+  const TITLE = "copse status";
   const ROW_START = 5;
   let mineOnlyFilter = mineOnly;
   let currentPRs: PRWithStatus[] = [];
