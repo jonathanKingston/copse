@@ -793,18 +793,25 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function startIssueCreate(): void {
     if (busy) return;
 
-    const pr = selectedPR();
-    if (!pr) {
-      statusMsg = `${ANSI.red}No PR selected${ANSI.reset}`;
-      drawFooter();
-      return;
+    let targetRepo: string;
+    
+    if (singleRepo) {
+      targetRepo = repos[0];
+    } else {
+      const pr = selectedPR();
+      if (!pr) {
+        statusMsg = `${ANSI.red}No PR selected (select a PR to use its repo for the issue)${ANSI.reset}`;
+        drawFooter();
+        return;
+      }
+      targetRepo = pr.repo;
     }
 
     issueCreateMode = true;
     issueCreateStep = "title";
     issueTitleBuffer = "";
     issueTemplateChoice = -1;
-    issueTargetRepo = pr.repo;
+    issueTargetRepo = targetRepo;
     drawIssueCreateInput();
   }
 
@@ -890,7 +897,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           try {
             const pr = selectedPR();
             const agent = pr?.agent || "cursor";
-            const mention = agent === "cursor" ? "@cursor" : agent === "claude" ? "@claude" : "@copilot";
+            const mention = agent === "cursor" ? "@cursor" : agent === "claude" ? "@claude" : agent === "copilot" ? "@copilot" : "@cursor";
 
             const commentTemplates = [
               null,
