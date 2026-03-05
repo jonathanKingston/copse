@@ -2,8 +2,9 @@
 
 Tools for managing agent-created PRs. Available at [copse.dev](https://copse.dev).
 
-Seven commands for managing agent-created PRs:
+Eight commands for managing agent-created PRs:
 
+- **status** – Unified dashboard showing open agent PRs and active cloud agents with live TUI
 - **approval** – Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue)
 - **create-prs** – Finds recent agent branches and creates PRs from them
 - **pr-comments** – Lists PR review comments on agent PRs; interactive reply for Cursor/Claude
@@ -16,12 +17,27 @@ Seven commands for managing agent-created PRs:
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
 - Node.js 18+
+- (Optional) Cursor API key for viewing active cloud agents in status view
 
 ## Installation
 
 ```bash
 npm install -g @copse/cli
 ```
+
+## Configuration
+
+### Cursor API Key (Optional)
+
+To view active Cursor cloud agents in the status view, set the `CURSOR_API_KEY` environment variable:
+
+```bash
+export CURSOR_API_KEY=your_api_key_here
+```
+
+You can obtain your API key from the [Cursor Dashboard](https://cursor.com/settings). Add it to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to make it permanent.
+
+When configured, the `copse status` command will display both open PRs and active cloud agents in a unified view.
 
 ## Usage
 
@@ -73,6 +89,67 @@ source ~/.bashrc  # for bash
 | After a subcommand | `--dry-run`, `--all`, `--mine`, `--help` |
 
 ## Commands
+
+### copse status
+
+Unified dashboard showing all open agent PRs and active Cursor cloud agents across configured repos. Displays CI status, review state, conflicts, age, comments, and merge-readiness in a live TUI (terminal user interface).
+
+```
+copse status [options]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `--no-watch` | One-shot table output (no TUI) |
+| `--mine` | Only your PRs (default) |
+| `--all` | Include PRs from all authors |
+
+#### Features
+
+- **Unified View**: See both open PRs and active cloud agents in one place
+- **Live Updates**: Auto-refreshes every 30 seconds in TUI mode
+- **Interactive**: Navigate, expand comments, checkout branches, approve, merge, and more
+- **Agent Support**: When `CURSOR_API_KEY` is set, displays active Cursor cloud agents alongside PRs
+
+#### TUI Keys
+
+| Key | Action |
+|-----|--------|
+| `↑↓` or `jk` | Navigate up/down |
+| `⏎` | Expand/collapse PR comments |
+| `/` | Filter/search |
+| `f` | Toggle mine/all authors |
+| `o` | Open selected PR/agent in browser |
+| `c` | Checkout PR branch |
+| `C` | Comment on PR or reply to comment |
+| `r` | Rerun failed CI workflows |
+| `u` | Update PR with main branch |
+| `a` | Approve PR |
+| `m` | Enable merge when ready |
+| `R` | Rerun all failed workflows |
+| `U` | Update all PRs with main |
+| `q` | Quit |
+
+#### Examples
+
+```bash
+# Live TUI dashboard for current repo
+copse status
+
+# One-shot table view
+copse status --no-watch
+
+# Include PRs from all authors
+copse status --all
+```
+
+#### Configuration
+
+The command uses repos from:
+1. Current git repository's origin remote, or
+2. `.copserc` file in current or parent directory: `{ "repos": ["owner/name", ...] }`
+
+To view active Cursor cloud agents, set the `CURSOR_API_KEY` environment variable (see Configuration section above).
 
 ### copse approval
 
