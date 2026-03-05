@@ -72,6 +72,37 @@ source ~/.bashrc  # for bash
 | `copse ` (with space) | subcommands: `approval`, `create-prs`, `pr-status`, etc. |
 | After a subcommand | `--dry-run`, `--all`, `--mine`, `--help` |
 
+## Configuration
+
+Copse can be configured using a `.copserc` JSON file in your project root or any parent directory. The config file supports:
+
+- **repos** – array of default repos in `owner/name` format
+- **commentTemplates** – array of custom canned responses for issue creation
+
+### Example .copserc
+
+```json
+{
+  "repos": ["acme/cool-project"],
+  "commentTemplates": [
+    {
+      "label": "Research – deeply investigate the issue and report findings",
+      "message": "please deeply research this issue. Look at the codebase and related code, and provide a thorough analysis of what's involved, what the root cause is, and what options exist."
+    },
+    {
+      "label": "Plan – review the code and create an implementation plan",
+      "message": "please look at the codebase and create a detailed plan for implementing this. Don't make changes yet, just outline the approach, which files need changing, and any trade-offs."
+    },
+    {
+      "label": "Fix – go and build / fix this",
+      "message": "please go and build this."
+    }
+  ]
+}
+```
+
+When creating issues with `copse create-issue`, your custom comment templates will be presented as options. The agent mention (e.g. `@cursor`) is automatically prepended to your message if not already present.
+
 ## Commands
 
 ### copse approval
