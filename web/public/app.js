@@ -262,9 +262,7 @@ async function api(path, options = {}) {
 function rowCell(text, className = "", title = "") {
   const td = document.createElement("td");
   td.textContent = text;
-  if (className) {
-    td.className = className;
-  }
+  td.className = className ? `status-cell ${className}` : "status-cell";
   if (title) {
     td.title = title;
   }
@@ -442,6 +440,7 @@ function createPRRow(row) {
   if (selectedPRs.has(selectionKey(row))) tr.className = "selected";
   if (expandedDetailKey === rowKey) tr.classList.add("is-expanded");
   const checkTd = document.createElement("td");
+  checkTd.className = "select-cell";
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = selectedPRs.has(selectionKey(row));
@@ -464,6 +463,7 @@ function createPRRow(row) {
   );
 
   const actionTd = document.createElement("td");
+  actionTd.className = "actions-cell";
   const actions = document.createElement("div");
   actions.className = "actions";
   actions.append(

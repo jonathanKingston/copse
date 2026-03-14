@@ -80,19 +80,32 @@
     <section class="layout">
       <div class="panel">
         <table id="statusTable">
+          <colgroup>
+            <col class="col-select">
+            <col class="col-pr">
+            <col class="col-agent">
+            <col class="col-draft">
+            <col class="col-ci">
+            <col class="col-review">
+            <col class="col-conflicts">
+            <col class="col-auto">
+            <col class="col-age">
+            <col class="col-comments">
+            <col class="col-actions">
+          </colgroup>
           <thead>
             <tr>
-              <th><input id="selectAllCheckbox" type="checkbox" title="Select all"></th>
-              <th>PR</th>
-              <th>Agent</th>
-              <th>Draft</th>
-              <th>CI</th>
-              <th>Review</th>
-              <th>Conflicts</th>
-              <th>Auto</th>
-              <th>Age</th>
-              <th>Comments</th>
-              <th>Actions</th>
+              <th class="select-cell"><input id="selectAllCheckbox" type="checkbox" title="Select all"></th>
+              <th class="pr-cell">PR</th>
+              <th class="status-cell agent-cell">Agent</th>
+              <th class="status-cell draft-cell">Draft</th>
+              <th class="status-cell ci-cell">CI</th>
+              <th class="status-cell review-cell">Review</th>
+              <th class="status-cell conflicts-cell">Conflicts</th>
+              <th class="status-cell auto-cell">Auto</th>
+              <th class="status-cell age-cell">Age</th>
+              <th class="status-cell comments-cell">Comments</th>
+              <th class="actions-cell">Actions</th>
             </tr>
           </thead>
           <tbody id="statusRows"></tbody>
