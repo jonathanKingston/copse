@@ -8,6 +8,7 @@ import { getOriginRepo } from "../lib/utils.js";
 import { fetchPRsWithStatus } from "../lib/services/status-service.js";
 import {
   approvePullRequest,
+  chainMergePRs,
   createIssueWithAgentComment,
   enableMergeWhenReady,
   mergeBaseIntoBranch,
@@ -191,6 +192,31 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       message: result.commentAdded
         ? `Created issue #${result.issueNumber} with comment`
         : `Created issue #${result.issueNumber}`,
+    });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/chain-merge") {
+    const body = await readJsonBody(req);
+    const repo = String(body.repo || "");
+    validateRepo(repo);
+    const prs = body.prs as Array<{ number: number; headRefName: string }> | undefined;
+    if (!Array.isArray(prs) || prs.length < 2) {
+      throw new Error("prs must be an array of at least 2 items with number and headRefName");
+    }
+    for (const pr of prs) {
+      if (!Number.isInteger(pr.number) || pr.number <= 0 || typeof pr.headRefName !== "string") {
+        throw new Error("Each PR must have a valid number and headRefName");
+      }
+    }
+    const result = await chainMergePRs(repo, prs);
+    sendJson(res, 200, {
+      ok: true,
+      steps: result.steps,
+      stoppedEarly: result.stoppedEarly,
+      message: result.stoppedEarly
+        ? `Chain stopped early after ${result.steps.length} step(s) due to conflict`
+        : `Chain merge complete: ${result.steps.length} step(s)`,
     });
     return;
   }

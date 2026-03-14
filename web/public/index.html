@@ -23,6 +23,10 @@
         Only my PRs
       </label>
       <button id="refreshBtn">Refresh</button>
+      <span id="chainMergeControls" style="display:none">
+        <span id="selectedCount">0 selected</span>
+        <button id="chainMergeBtn" title="Merge selected PRs into each other in order, then auto-merge last into default branch">Chain Merge</button>
+      </span>
       <span id="statusText"></span>
     </section>
 
@@ -31,7 +35,7 @@
         <table id="statusTable">
           <thead>
             <tr>
-              <th>Repo</th>
+              <th><input id="selectAllCheckbox" type="checkbox" title="Select all"></th>
               <th>PR</th>
               <th>Agent</th>
               <th>CI</th>

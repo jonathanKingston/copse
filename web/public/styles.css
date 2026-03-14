@@ -326,6 +326,27 @@ aside.panel {
   color: var(--accent-2);
 }
 
+#chainMergeControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#selectedCount {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+th input[type="checkbox"],
+td input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+tr.selected td {
+  background: rgba(47, 111, 78, 0.1);
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;

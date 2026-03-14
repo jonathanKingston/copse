@@ -115,6 +115,104 @@ export async function postPullRequestReply(params: {
   return { mode: "github" };
 }
 
+export interface ChainMergeStep {
+  fromPR: number;
+  intoPR: number | "default";
+  success: boolean;
+  alreadyUpToDate?: boolean;
+  error?: string;
+}
+
+export interface ChainMergeResult {
+  steps: ChainMergeStep[];
+  stoppedEarly: boolean;
+}
+
+/**
+ * Merges a chain of PRs into each other in order.
+ * For PRs [A, B, C], merges A's branch into B's branch, then B's into C's branch.
+ * If all intermediate merges succeed cleanly, enables auto-merge on the last PR
+ * into the default branch.
+ *
+ * Stops at the first merge that fails (conflict or error).
+ */
+export async function chainMergePRs(
+  repo: string,
+  prs: Array<{ number: number; headRefName: string }>,
+  defaultBranch: string = "main"
+): Promise<ChainMergeResult> {
+  validateRepo(repo);
+  if (prs.length < 2) {
+    throw new Error("Chain merge requires at least 2 PRs");
+  }
+
+  const steps: ChainMergeStep[] = [];
+  let stoppedEarly = false;
+
+  // Merge each PR's branch into the next PR's branch
+  for (let i = 0; i < prs.length - 1; i++) {
+    const from = prs[i];
+    const into = prs[i + 1];
+
+    try {
+      // Use the GitHub merges API: merge from.headRefName into into.headRefName
+      await ghQuietAsync(
+        "api", `repos/${repo}/merges`,
+        "-f", `base=${into.headRefName}`,
+        "-f", `head=${from.headRefName}`
+      );
+      steps.push({ fromPR: from.number, intoPR: into.number, success: true });
+    } catch (error: unknown) {
+      const message = messageFromError(error);
+      if (includesAny(message, UP_TO_DATE_ERRORS)) {
+        steps.push({ fromPR: from.number, intoPR: into.number, success: true, alreadyUpToDate: true });
+      } else {
+        steps.push({ fromPR: from.number, intoPR: into.number, success: false, error: message || "merge conflict or error" });
+        stoppedEarly = true;
+        break;
+      }
+    }
+  }
+
+  // If all intermediate merges succeeded, update the base branch of each
+  // intermediate PR to point to the next PR's branch, and enable auto-merge
+  // on the last PR into the default branch.
+  if (!stoppedEarly) {
+    const lastPR = prs[prs.length - 1];
+
+    // Retarget intermediate PRs so they merge into the next PR's branch
+    for (let i = 0; i < prs.length - 1; i++) {
+      const pr = prs[i];
+      const nextPR = prs[i + 1];
+      try {
+        await ghQuietAsync(
+          "pr", "edit", String(pr.number),
+          "--repo", repo,
+          "--base", nextPR.headRefName
+        );
+      } catch {
+        // Best effort - retargeting may fail if branch protection prevents it
+      }
+    }
+
+    // Enable auto-merge on the last PR
+    try {
+      await ghQuietAsync("pr", "merge", "--repo", repo, String(lastPR.number), "--auto");
+      steps.push({ fromPR: lastPR.number, intoPR: "default", success: true });
+    } catch (error: unknown) {
+      const message = messageFromError(error);
+      if (includesAny(message, ["already"])) {
+        steps.push({ fromPR: lastPR.number, intoPR: "default", success: true, alreadyUpToDate: true });
+      } else {
+        steps.push({ fromPR: lastPR.number, intoPR: "default", success: false, error: message });
+      }
+    }
+  }
+
+  invalidateStatusCache();
+  return { steps, stoppedEarly };
+}
+
 export async function createIssueWithAgentComment(params: {
   repo: string;
   title: string;
