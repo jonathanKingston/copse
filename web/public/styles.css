@@ -21,6 +21,10 @@ html {
   --radius: 16px;
   --radius-sm: 10px;
   --stack-indent: 18px;
+  --stack-connector-offset-x: 9px;
+  --stack-connector-top: 0.35rem;
+  --stack-connector-width: 0.7rem;
+  --stack-connector-height: 0.55rem;
 }
 
 body {
@@ -92,6 +96,10 @@ header p {
   box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
 }
 
+#refreshBtn {
+  align-self: flex-end;
+}
+
 .layout {
   display: block;
   margin-bottom: 1rem;
@@ -130,16 +138,11 @@ th, td {
   width: 5.5rem;
 }
 
-#statusTable col.col-draft,
 #statusTable col.col-conflicts,
 #statusTable col.col-auto,
 #statusTable col.col-age,
 #statusTable col.col-comments {
   width: 4.75rem;
-}
-
-#statusTable col.col-ci {
-  width: 6rem;
 }
 
 #statusTable col.col-review {
@@ -182,7 +185,8 @@ tbody tr:hover td {
 
 td.pr-cell {
   white-space: normal;
-  word-break: break-word;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 td.pr-cell {
@@ -197,10 +201,10 @@ td.pr-cell {
 .pr-main.is-stacked::before {
   content: "";
   position: absolute;
-  left: calc((var(--stack-depth, 0) * var(--stack-indent)) - 10px);
-  top: 0.1rem;
-  width: 0.55rem;
-  height: 0.8rem;
+  left: calc((var(--stack-depth, 0) * var(--stack-indent)) - var(--stack-connector-offset-x));
+  top: var(--stack-connector-top);
+  width: var(--stack-connector-width);
+  height: var(--stack-connector-height);
   border-left: 1px solid rgba(30, 42, 34, 0.26);
   border-bottom: 1px solid rgba(30, 42, 34, 0.26);
   border-bottom-left-radius: 8px;
@@ -213,8 +217,56 @@ td.pr-cell {
   text-decoration: none;
 }
 
+.pr-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .pr-number:hover {
   text-decoration: underline;
+}
+
+.draft-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(192, 140, 23, 0.42);
+  background: rgba(192, 140, 23, 0.14);
+  color: rgb(137, 96, 6);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.ci-indicator {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(30, 42, 34, 0.18);
+  background: rgba(30, 42, 34, 0.18);
+  flex: 0 0 auto;
+}
+
+.ci-indicator.is-success {
+  background: rgba(47, 111, 78, 0.85);
+  border-color: rgba(47, 111, 78, 0.95);
+}
+
+.ci-indicator.is-error {
+  background: rgba(171, 58, 58, 0.88);
+  border-color: rgba(171, 58, 58, 0.96);
+}
+
+.ci-indicator.is-pending {
+  background: rgba(192, 140, 23, 0.9);
+  border-color: rgba(192, 140, 23, 0.98);
 }
 
 .pr-stack-meta {
@@ -320,14 +372,36 @@ button.secondary {
 .comment-body-html {
   white-space: normal;
   font-family: inherit;
+  line-height: 1.55;
 }
 
 .comment-body-html p {
-  margin: 0.35rem 0 0;
+  margin: 0.55rem 0 0;
 }
 
 .comment-body-html p:first-child {
   margin-top: 0;
+}
+
+.comment-body-html h1,
+.comment-body-html h2,
+.comment-body-html h3,
+.comment-body-html h4 {
+  margin: 0.9rem 0 0.4rem;
+  line-height: 1.3;
+}
+
+.comment-body-html h1:first-child,
+.comment-body-html h2:first-child,
+.comment-body-html h3:first-child,
+.comment-body-html h4:first-child {
+  margin-top: 0;
+}
+
+.comment-body-html hr {
+  margin: 0.8rem 0;
+  border: 0;
+  border-top: 1px solid var(--border-strong);
 }
 
 .comment-body-html a {
@@ -695,6 +769,10 @@ tr.selected td {
   background: rgba(47, 111, 78, 0.1);
 }
 
+tr.is-expandable td {
+  cursor: pointer;
+}
+
 .repo-group-row td {
   padding: 0;
   border-bottom: 0;
@@ -877,6 +955,23 @@ tr.selected td {
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 1.1rem;
+}
+
+@media (max-width: 1200px) {
+  #statusTable {
+    width: max-content;
+    min-width: 1040px;
+    table-layout: auto;
+  }
+
+  #statusTable col.col-pr {
+    width: 22rem;
+  }
+
+  #statusTable th.pr-cell,
+  #statusTable td.pr-cell {
+    min-width: 18rem;
+  }
 }
 
 @media (max-width: 900px) {
