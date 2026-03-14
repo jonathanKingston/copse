@@ -24,9 +24,42 @@ import {
 import { parseStandardFlags } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 
+const autoMergeStrategyCache = new Map<string, string>();
+
+function getAutoMergeStrategy(repo: string): string {
+  const cached = autoMergeStrategyCache.get(repo);
+  if (cached) {
+    return cached;
+  }
+
+  const out = gh(
+    "api",
+    `repos/${repo}`,
+    "-q",
+    "{allowSquashMerge: .allow_squash_merge, allowMergeCommit: .allow_merge_commit, allowRebaseMerge: .allow_rebase_merge}"
+  );
+  const settings = JSON.parse(out) as {
+    allowSquashMerge?: boolean;
+    allowMergeCommit?: boolean;
+    allowRebaseMerge?: boolean;
+  };
+  const strategy = settings.allowSquashMerge
+    ? "--squash"
+    : settings.allowMergeCommit
+      ? "--merge"
+      : settings.allowRebaseMerge
+        ? "--rebase"
+        : null;
+  if (!strategy) {
+    throw new Error(`Cannot enable auto-merge for ${repo}: repository does not allow squash, merge, or rebase merges.`);
+  }
+  autoMergeStrategyCache.set(repo, strategy);
+  return strategy;
+}
+
 function enableMergeWhenReady(repo: string, prNumber: number): boolean {
   try {
-    gh("pr", "merge", "--repo", repo, String(prNumber), "--auto");
+    gh("pr", "merge", "--repo", repo, String(prNumber), "--auto", getAutoMergeStrategy(repo));
     return true;
   } catch (e: unknown) {
     const err = e as ExecError;
@@ -41,6 +74,11 @@ function enableMergeWhenReady(repo: string, prNumber: number): boolean {
     if (msg.includes("draft") && msg.includes("enablepullrequestautomerge")) {
       throw new Error(
         `Cannot enable merge when ready on #${prNumber}: PR is still in draft. Mark it as ready for review first.`
+      );
+    }
+    if (msg.includes("--merge, --rebase, or --squash required")) {
+      throw new Error(
+        `Cannot enable merge when ready on #${prNumber}: GitHub CLI needs an explicit merge strategy for this repository.`
       );
     }
     throw new Error(formatGhError(err, `gh pr merge failed for #${prNumber}`));

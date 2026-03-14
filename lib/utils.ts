@@ -1,4 +1,13 @@
 import { execSync } from "child_process";
+import type { PRReviewComment } from "./types.js";
+
+/** True if the comment was posted by a bot/automated account. */
+export function isBotComment(comment: PRReviewComment): boolean {
+  const type = comment.user?.type;
+  if (type === "Bot") return true;
+  const login = (comment.user?.login ?? "").toLowerCase();
+  return login.endsWith("-bot") || login.endsWith("[bot]");
+}
 
 export function getOriginRepo(): string | null {
   try {

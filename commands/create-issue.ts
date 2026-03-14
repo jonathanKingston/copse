@@ -31,6 +31,8 @@ import { tmpdir } from "os";
 import { REPO_PATTERN, validateRepo, validateAgent } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { getCommentTemplates } from "../lib/config.js";
+import { loadConfig } from "../lib/config.js";
+import { launchAgentForRepository } from "../lib/cursor-api.js";
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -180,6 +182,40 @@ function addComment(repo: string, issueNumber: number, comment: string, dryRun: 
   execFileSync("gh", ["issue", "comment", String(issueNumber), "--repo", repo, "--body", comment], {
     encoding: "utf-8",
   });
+}
+
+function stripAgentMention(comment: string, agent: string): string {
+  const mention = `@${agent}`;
+  const trimmed = comment.trim();
+  if (trimmed.toLowerCase().startsWith(mention.toLowerCase())) {
+    return trimmed.slice(mention.length).trimStart();
+  }
+  return trimmed;
+}
+
+async function sendInstructionViaCursorApi(
+  repo: string,
+  issueNumber: number,
+  agent: string,
+  comment: string,
+  cursorApiKey: string,
+  dryRun: boolean
+): Promise<void> {
+  const issueUrl = `https://github.com/${repo}/issues/${issueNumber}`;
+  const instruction = stripAgentMention(comment, agent);
+  const prompt = `${instruction}\n\nIssue: ${issueUrl}`;
+  if (dryRun) {
+    console.error(`Would launch Cursor agent for ${issueUrl} with prompt: "${prompt.slice(0, 120)}${prompt.length > 120 ? "..." : ""}"`);
+    return;
+  }
+
+  const id = await launchAgentForRepository(
+    cursorApiKey,
+    `https://github.com/${repo}`,
+    prompt,
+    { autoCreatePr: true, openAsCursorGithubApp: true }
+  );
+  console.error(`${ANSI.green}Cursor agent launched: ${id}${ANSI.reset}`);
 }
 
 async function promptTitle(rl: readline.Interface): Promise<string> {
@@ -375,6 +411,9 @@ Examples:
 
   validateRepo(repo);
   agent = validateAgent(agent);
+  const config = loadConfig();
+  const cursorApiKey = config?.cursorApiKey?.trim() || null;
+  const shouldUseCursorApi = agent === "cursor" && cursorApiKey !== null;
 
   const isInteractive = stdout.isTTY;
 
@@ -420,16 +459,28 @@ Examples:
 
     if (issueNumber) {
       if (comment) {
-        addComment(repo, issueNumber, comment, dryRun);
+        if (shouldUseCursorApi) {
+          await sendInstructionViaCursorApi(repo, issueNumber, agent, comment, cursorApiKey!, dryRun);
+        } else {
+          addComment(repo, issueNumber, comment, dryRun);
+        }
       }
       const url = `https://github.com/${repo}/issues/${issueNumber}`;
       console.log(url);
       if (!dryRun && comment) {
-        console.error(`${ANSI.green}Commented: ${comment}${ANSI.reset}`);
+        if (shouldUseCursorApi) {
+          console.error(`${ANSI.green}Sent instruction to Cursor API (instead of issue comment).${ANSI.reset}`);
+        } else {
+          console.error(`${ANSI.green}Commented: ${comment}${ANSI.reset}`);
+        }
       }
     } else if (dryRun) {
       if (comment) {
-        console.error(`Would add comment: "${comment}"`);
+        if (shouldUseCursorApi) {
+          console.error(`Would send instruction to Cursor API: "${comment}"`);
+        } else {
+          console.error(`Would add comment: "${comment}"`);
+        }
       }
       console.error("(dry run – no issue created)");
     } else {

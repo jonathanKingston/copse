@@ -1,5 +1,8 @@
 /**
- * Loads copse config from .copserc (JSON) in cwd or parent directories.
+ * Loads copse config from .copserc (JSON).
+ * Searches in order:
+ *   1. ~/.copserc (global config)
+ *   2. .copserc in cwd or parent directories (local config)
  * Format: { "repos": ["owner/name", ...] }
  * 
  * Comment templates are loaded from ~/.copse/comment-templates/*.md files
@@ -20,6 +23,8 @@ export interface CommentTemplate {
 
 export interface Copserc {
   repos?: string[];
+  commentTemplates?: string;
+  cursorApiKey?: string;
 }
 
 function findConfigDir(startDir: string): string | null {
@@ -33,27 +38,41 @@ function findConfigDir(startDir: string): string | null {
   return null;
 }
 
-export function loadConfig(cwd: string = process.cwd()): Copserc | null {
-  const configDir = findConfigDir(cwd);
-  if (!configDir) return null;
+function loadConfigFromPath(configPath: string): Copserc | null {
+  if (!existsSync(configPath)) return null;
 
   try {
-    const raw = readFileSync(join(configDir, CONFIG_FILENAME), "utf-8");
+    const raw = readFileSync(configPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === "object") {
-      const config = parsed as Copserc;
-      
-      if ("repos" in config) {
-        if (!Array.isArray(config.repos) || !config.repos.every((r) => typeof r === "string")) {
-          return null;
-        }
-        return config;
-      }
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const config = parsed as Copserc;
+    const hasRepos =
+      !("repos" in config) ||
+      (Array.isArray(config.repos) && config.repos.every((r) => typeof r === "string"));
+    const hasCommentTemplates =
+      !("commentTemplates" in config) || typeof config.commentTemplates === "string";
+    const hasCursorApiKey =
+      !("cursorApiKey" in config) || typeof config.cursorApiKey === "string";
+
+    if (hasRepos && hasCommentTemplates && hasCursorApiKey) {
+      return config;
     }
   } catch {
     // Invalid JSON or missing
   }
   return null;
+}
+
+export function loadConfig(cwd: string = process.cwd()): Copserc | null {
+  const homeConfig = join(homedir(), CONFIG_FILENAME);
+  const globalConfig = loadConfigFromPath(homeConfig);
+  if (globalConfig) return globalConfig;
+
+  const configDir = findConfigDir(cwd);
+  if (!configDir) return null;
+
+  return loadConfigFromPath(join(configDir, CONFIG_FILENAME));
 }
 
 export function getConfiguredRepos(cwd: string = process.cwd()): string[] | null {

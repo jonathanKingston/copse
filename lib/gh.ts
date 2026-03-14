@@ -392,6 +392,7 @@ export function listPRReviewComments(repo: string, prNumber: number): PRReviewCo
       "api",
       `repos/${repo}/pulls/${prNumber}/comments`,
       "--method", "GET",
+      "-H", "Accept: application/vnd.github.v3.html+json",
       "-f", "per_page=100"
     );
     const arr = JSON.parse(out) as unknown;
@@ -618,6 +619,7 @@ export async function listPRReviewCommentsAsync(repo: string, prNumber: number):
       "api",
       `repos/${repo}/pulls/${prNumber}/comments`,
       "--method", "GET",
+      "-H", "Accept: application/vnd.github.v3.html+json",
       "-f", "per_page=100"
     );
     const arr = JSON.parse(out) as unknown;
