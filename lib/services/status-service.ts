@@ -1,5 +1,6 @@
 import {
   getAgentForPR,
+  getCurrentUser,
   getUnresolvedCommentCounts,
   getUnresolvedCommentCountsAsync,
   listOpenPRs,
@@ -12,13 +13,19 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { filterPRs } from "../filters.js";
 import type { WorkflowRun } from "../types.js";
-import { STALE_DAYS, WATCH_INTERVAL_MS, STATUS_FIELDS, type PRWithStatus, type StatusBasePR } from "./status-types.js";
+import {
+  STALE_DAYS,
+  WATCH_INTERVAL_MS,
+  STATUS_FIELDS,
+  type PRWithStatus,
+  type StatusBasePR,
+  type StatusFilterScope,
+} from "./status-types.js";
 
 export interface StatusQueryOptions {
   repos: string[];
-  mineOnly: boolean;
+  scope: StatusFilterScope;
 }
 
 interface CacheEntry {
@@ -36,7 +43,7 @@ const STATUS_CACHE_DIR = join(tmpdir(), "copse", "status-cache");
 let diskCacheDirPromise: Promise<string | null> | null = null;
 
 function cacheKey(options: StatusQueryOptions): string {
-  return `${[...options.repos].sort().join(",")}\0${options.mineOnly}`;
+  return `${[...options.repos].sort().join(",")}\0${options.scope}`;
 }
 
 export function invalidateStatusCache(): void {
@@ -154,6 +161,7 @@ function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithSta
     repo,
     number: raw.number,
     headRefName: raw.headRefName,
+    baseRefName: raw.baseRefName ?? "",
     labels: (raw.labels || []).map((label) => label.name).filter(Boolean),
     title: raw.title ?? "",
     author: raw.author,
@@ -173,14 +181,54 @@ function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithSta
   };
 }
 
+export function filterPRsByStatusScope(
+  prs: StatusBasePR[],
+  scope: StatusFilterScope,
+  currentUser: string
+): StatusBasePR[] {
+  if (scope === "all") {
+    return prs;
+  }
+
+  const myPrs = prs.filter((pr) => (pr.author?.login ?? "") === currentUser);
+  if (myPrs.length === 0) {
+    return [];
+  }
+
+  const includedNumbers = new Set(myPrs.map((pr) => pr.number));
+  const queuedBranches = myPrs.map((pr) => pr.headRefName);
+  const childrenByBase = new Map<string, StatusBasePR[]>();
+
+  for (const pr of prs) {
+    const baseRefName = pr.baseRefName ?? "";
+    if (!baseRefName) continue;
+    const children = childrenByBase.get(baseRefName) ?? [];
+    children.push(pr);
+    childrenByBase.set(baseRefName, children);
+  }
+
+  for (let i = 0; i < queuedBranches.length; i++) {
+    const branch = queuedBranches[i];
+    const children = childrenByBase.get(branch) ?? [];
+    for (const child of children) {
+      if (includedNumbers.has(child.number)) continue;
+      includedNumbers.add(child.number);
+      queuedBranches.push(child.headRefName);
+    }
+  }
+
+  return prs.filter((pr) => includedNumbers.has(pr.number));
+}
+
 export function fetchPRsWithStatusSync(options: StatusQueryOptions): PRWithStatus[] {
   const result: PRWithStatus[] = [];
   const now = Date.now();
+  const currentUser = options.scope === "my-stacks" ? getCurrentUser() : "";
 
   for (const repo of options.repos) {
     validateRepo(repo);
     const rawPRs = listOpenPRs(repo, STATUS_FIELDS) as StatusBasePR[];
-    const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly: options.mineOnly }) as StatusBasePR[];
+    const matching = filterPRsByStatusScope(rawPRs, options.scope, currentUser);
     for (const pr of matching) {
       result.push(toPRWithStatus(repo, pr, now));
     }
@@ -225,11 +273,12 @@ export function fetchPRsWithStatusSync(options: StatusQueryOptions): PRWithStatu
 async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<PRWithStatus[]> {
   const result: PRWithStatus[] = [];
   const now = Date.now();
+  const currentUser = options.scope === "my-stacks" ? getCurrentUser() : "";
 
   for (const repo of options.repos) {
     validateRepo(repo);
     const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS) as StatusBasePR[];
-    const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly: options.mineOnly }) as StatusBasePR[];
+    const matching = filterPRsByStatusScope(rawPRs, options.scope, currentUser);
     for (const pr of matching) {
       result.push(toPRWithStatus(repo, pr, now));
     }

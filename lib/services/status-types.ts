@@ -1,7 +1,7 @@
 import type { PR } from "../types.js";
 
 export const STATUS_FIELDS = [
-  "number", "headRefName", "labels", "title", "author",
+  "number", "headRefName", "baseRefName", "labels", "title", "author",
   "isDraft",
   "mergeStateStatus", "mergeable", "reviewDecision", "createdAt", "updatedAt",
   "autoMergeRequest",
@@ -9,11 +9,15 @@ export const STATUS_FIELDS = [
 
 export const STALE_DAYS = 7;
 export const WATCH_INTERVAL_MS = 30_000;
+export const STATUS_FILTER_SCOPES = ["my-stacks", "all"] as const;
+
+export type StatusFilterScope = typeof STATUS_FILTER_SCOPES[number];
 
 export interface PRWithStatus {
   repo: string;
   number: number;
   headRefName: string;
+  baseRefName: string;
   labels: string[];
   title: string;
   author: { login: string };

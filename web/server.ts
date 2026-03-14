@@ -18,7 +18,11 @@ import {
   retargetPullRequest,
   rerunFailedWorkflowRuns,
 } from "../lib/services/status-actions.js";
-import { WATCH_INTERVAL_MS } from "../lib/services/status-types.js";
+import {
+  STATUS_FILTER_SCOPES,
+  WATCH_INTERVAL_MS,
+  type StatusFilterScope,
+} from "../lib/services/status-types.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
@@ -106,6 +110,20 @@ function parsePathSegments(url: URL): string[] {
   return url.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
 }
 
+function parseStatusFilterScope(url: URL): StatusFilterScope {
+  const scope = url.searchParams.get("scope");
+  if (scope == null || scope === "") {
+    if (url.searchParams.get("mineOnly") === "false") {
+      return "all";
+    }
+    return "my-stacks";
+  }
+  if ((STATUS_FILTER_SCOPES as readonly string[]).includes(scope)) {
+    return scope as StatusFilterScope;
+  }
+  throw new Error(`Invalid scope: "${scope}"`);
+}
+
 function parsePrTarget(segments: string[]): { repo: string; prNumber: number; action: string } | null {
   if (segments.length !== 5) {
     return null;
@@ -145,12 +163,12 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
   const segments = parsePathSegments(url);
 
   if (method === "GET" && url.pathname === "/api/status") {
-    const mineOnly = url.searchParams.get("mineOnly") !== "false";
+    const scope = parseStatusFilterScope(url);
     const repos = resolveReposFromRequest(url);
-    const rows = await fetchPRsWithStatus({ repos, mineOnly });
+    const rows = await fetchPRsWithStatus({ repos, scope });
     sendJson(res, 200, {
       repos,
-      mineOnly,
+      scope,
       pollIntervalMs: WATCH_INTERVAL_MS,
       rows,
       cursorApiConfigured: Boolean(loadConfig()?.cursorApiKey?.trim()),
