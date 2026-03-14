@@ -2,6 +2,7 @@ import type { PR } from "../types.js";
 
 export const STATUS_FIELDS = [
   "number", "headRefName", "labels", "title", "author",
+  "isDraft",
   "mergeStateStatus", "mergeable", "reviewDecision", "createdAt", "updatedAt",
   "autoMergeRequest",
 ];
@@ -13,8 +14,10 @@ export interface PRWithStatus {
   repo: string;
   number: number;
   headRefName: string;
+  labels: string[];
   title: string;
   author: { login: string };
+  isDraft: boolean;
   mergeStateStatus: string;
   mergeable: string;
   reviewDecision: string;
@@ -30,6 +33,7 @@ export interface PRWithStatus {
 }
 
 export type StatusBasePR = PR & {
+  isDraft?: boolean;
   mergeStateStatus?: string;
   mergeable?: string;
   reviewDecision?: string;

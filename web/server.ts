@@ -11,9 +11,11 @@ import {
   chainMergePRs,
   createIssueWithAgentComment,
   enableMergeWhenReady,
+  markPullRequestReady,
   mergeBaseIntoBranch,
   postPullRequestComment,
   postPullRequestReply,
+  retargetPullRequest,
   rerunFailedWorkflowRuns,
 } from "../lib/services/status-actions.js";
 import { WATCH_INTERVAL_MS } from "../lib/services/status-types.js";
@@ -215,8 +217,8 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       steps: result.steps,
       stoppedEarly: result.stoppedEarly,
       message: result.stoppedEarly
-        ? `Chain stopped early after ${result.steps.length} step(s) due to conflict`
-        : `Chain merge complete: ${result.steps.length} step(s)`,
+        ? `Stack queue stopped early after ${result.steps.length} step(s)`
+        : `Stack queued: ${result.steps.length} step(s)`,
     });
     return;
   }
@@ -244,9 +246,37 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       sendJson(res, 200, { ok: true, message: "Approved PR" });
       return;
     }
+    if (target.action === "ready") {
+      const result = await markPullRequestReady(target.repo, target.prNumber);
+      sendJson(res, 200, {
+        ok: true,
+        alreadyReady: result.alreadyReady,
+        message: result.alreadyReady ? "PR already ready for review" : "Marked PR ready for review",
+      });
+      return;
+    }
+    if (target.action === "retarget") {
+      const baseBranch = String(body.baseBranch || "");
+      const result = await retargetPullRequest(target.repo, target.prNumber, baseBranch);
+      sendJson(res, 200, {
+        ok: true,
+        closedRedundant: result.closedRedundant,
+        alreadyTargeted: result.alreadyTargeted,
+        message: result.closedRedundant
+          ? `Closed PR after finding no commits unique beyond ${baseBranch}`
+          : result.alreadyTargeted
+            ? `PR already targets ${baseBranch}`
+          : `Retargeted PR to ${baseBranch}`,
+      });
+      return;
+    }
     if (target.action === "merge-auto") {
-      await enableMergeWhenReady(target.repo, target.prNumber);
-      sendJson(res, 200, { ok: true, message: "Merge when ready enabled" });
+      const result = await enableMergeWhenReady(target.repo, target.prNumber);
+      sendJson(res, 200, {
+        ok: true,
+        alreadyEnabled: result.alreadyEnabled,
+        message: result.alreadyEnabled ? "Merge when ready already enabled" : "Merge when ready enabled",
+      });
       return;
     }
     if (target.action === "comment") {

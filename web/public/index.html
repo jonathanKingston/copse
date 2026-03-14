@@ -25,7 +25,8 @@
       <button id="refreshBtn">Refresh</button>
       <span id="chainMergeControls" style="display:none">
         <span id="selectedCount">0 selected</span>
-        <button id="chainMergeBtn" title="Merge selected PRs into each other in order, then auto-merge last into default branch">Chain Merge</button>
+        <button id="markReadyBtn" title="Mark selected PRs as ready for review">Mark Ready</button>
+        <button id="chainMergeBtn" title="Retarget selected PRs into a stack and enable auto-merge in order">Chain Merge</button>
       </span>
       <span id="statusText"></span>
     </section>
@@ -36,8 +37,10 @@
           <thead>
             <tr>
               <th><input id="selectAllCheckbox" type="checkbox" title="Select all"></th>
+              <th>Repo</th>
               <th>PR</th>
               <th>Agent</th>
+              <th>Draft</th>
               <th>CI</th>
               <th>Review</th>
               <th>Conflicts</th>
@@ -84,6 +87,22 @@
       </form>
     </section>
   </main>
+
+  <dialog id="chainMergeDialog" class="modal">
+    <div class="modal-card">
+      <p id="chainMergeRepo" class="modal-kicker"></p>
+      <h2 id="chainMergeTitle">Queue selected PRs as a stack?</h2>
+      <div id="chainMergePreview" class="merge-preview"></div>
+      <p id="chainMergeCopy" class="modal-copy">
+        This retargets each selected PR to the next PR's branch, then enables auto-merge so GitHub can merge the stack in order.
+      </p>
+      <p id="chainMergeStatus" class="modal-status" hidden></p>
+      <div class="modal-actions">
+        <button id="chainMergeSecondaryBtn" type="button" class="secondary">Cancel</button>
+        <button id="chainMergePrimaryBtn" type="button">Queue Stack</button>
+      </div>
+    </div>
+  </dialog>
 
   <script src="/app.js"></script>
 </body>
