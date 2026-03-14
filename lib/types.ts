@@ -1,6 +1,7 @@
 export interface PR {
   number: number;
   headRefName: string;
+  baseRefName?: string;
   labels: { name: string }[];
   title: string;
   body?: string;
@@ -38,11 +39,12 @@ export interface PRReviewComment {
   id: number;
   node_id: string;
   body: string;
+  body_html?: string;
   path: string;
   line: number | null;
   original_line: number | null;
   diff_hunk: string;
-  user: { login: string };
+  user: { login: string; type?: string };
   created_at: string;
   html_url: string;
   pull_request_url: string;

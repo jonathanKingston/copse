@@ -2,42 +2,28 @@
 
 Tools for managing agent-created PRs. Available at [copse.dev](https://copse.dev).
 
-Eight commands for managing agent-created PRs:
+Nine commands for managing agent-created PRs:
 
-- **status** – Unified dashboard showing open agent PRs and active cloud agents with live TUI
 - **approval** – Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue)
 - **create-prs** – Finds recent agent branches and creates PRs from them
 - **pr-comments** – Lists PR review comments on agent PRs; interactive reply for Cursor/Claude
 - **pr-status** – Outlines open agent PRs with test failures and rerun info (also available as `npm test`)
 - **rerun-failed** – Reruns failed workflow runs on recent agent branches
-- **create-issue** – Creates an issue and comments to instruct the specified agent (cursor or claude) to build it
+- **create-issue** – Creates an issue and instructs the specified agent to build it
 - **update-main** – Merges main (or specified base) into open PR branches to keep them up to date
+- **status** – Unified dashboard of agent PRs across all repos (TUI)
+- **web** – Local web app for status workflows (comments, issue creation, reruns, update-main, approve, merge)
 
 ## Requirements
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
 - Node.js 18+
-- (Optional) Cursor API key for viewing active cloud agents in status view
 
 ## Installation
 
 ```bash
 npm install -g @copse/cli
 ```
-
-## Configuration
-
-### Cursor API Key (Optional)
-
-To view active Cursor cloud agents in the status view, set the `CURSOR_API_KEY` environment variable:
-
-```bash
-export CURSOR_API_KEY=your_api_key_here
-```
-
-You can obtain your API key from the [Cursor Dashboard](https://cursor.com/settings). Add it to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to make it permanent.
-
-When configured, the `copse status` command will display both open PRs and active cloud agents in a unified view.
 
 ## Usage
 
@@ -52,6 +38,7 @@ Run `copse <command>` to see arguments for a specific command:
 ```bash
 copse approval
 copse create-prs
+copse web --open
 ```
 
 ### Tab Completion
@@ -90,66 +77,21 @@ source ~/.bashrc  # for bash
 
 ## Commands
 
-### copse status
+### Configuration (`.copserc`)
 
-Unified dashboard showing all open agent PRs and active Cursor cloud agents across configured repos. Displays CI status, review state, conflicts, age, comments, and merge-readiness in a live TUI (terminal user interface).
+You can configure repos and comment behavior with a `.copserc` JSON file in your repo (or any parent directory):
 
-```
-copse status [options]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `--no-watch` | One-shot table output (no TUI) |
-| `--mine` | Only your PRs (default) |
-| `--all` | Include PRs from all authors |
-
-#### Features
-
-- **Unified View**: See both open PRs and active cloud agents in one place
-- **Live Updates**: Auto-refreshes every 30 seconds in TUI mode
-- **Interactive**: Navigate, expand comments, checkout branches, approve, merge, and more
-- **Agent Support**: When `CURSOR_API_KEY` is set, displays active Cursor cloud agents alongside PRs
-
-#### TUI Keys
-
-| Key | Action |
-|-----|--------|
-| `↑↓` or `jk` | Navigate up/down |
-| `⏎` | Expand/collapse PR comments |
-| `/` | Filter/search |
-| `f` | Toggle mine/all authors |
-| `o` | Open selected PR/agent in browser |
-| `c` | Checkout PR branch |
-| `C` | Comment on PR or reply to comment |
-| `r` | Rerun failed CI workflows |
-| `u` | Update PR with main branch |
-| `a` | Approve PR |
-| `m` | Enable merge when ready |
-| `R` | Rerun all failed workflows |
-| `U` | Update all PRs with main |
-| `q` | Quit |
-
-#### Examples
-
-```bash
-# Live TUI dashboard for current repo
-copse status
-
-# One-shot table view
-copse status --no-watch
-
-# Include PRs from all authors
-copse status --all
+```json
+{
+  "repos": ["acme/cool-project"],
+  "commentTemplates": "~/.copse/comment-templates",
+  "cursorApiKey": "cur_xxx"
+}
 ```
 
-#### Configuration
-
-The command uses repos from:
-1. Current git repository's origin remote, or
-2. `.copserc` file in current or parent directory: `{ "repos": ["owner/name", ...] }`
-
-To view active Cursor cloud agents, set the `CURSOR_API_KEY` environment variable (see Configuration section above).
+- `repos`: default repo list used by commands like `status` when no origin remote is available
+- `commentTemplates`: default path for `pr-comments`/`status` reply templates
+- `cursorApiKey`: when set, reply actions in `pr-comments` and `status` use Cursor Cloud Agents API directly. `create-issue` also uses Cursor API for `cursor` instructions; if absent, it uses GitHub comments.
 
 ### copse approval
 
@@ -282,8 +224,13 @@ copse pr-comments [repo] [pr-number|agent] [options]
 | `pr-number` | Specific PR to list comments for. |
 | `agent` | Filter PRs by `cursor` or `claude`. Omit to match both. |
 | `--no-interactive` | Only list comments; do not enter the reply loop. |
+| `--templates PATH` | Comment template directory (default: `~/.copse/comment-templates`) |
 | `--mine` | Only your PRs (default) |
 | `--all` | Include PRs from all authors |
+
+#### Comment templates
+
+When replying, you can choose from canned responses stored in a directory of `.md` files. By default uses `~/.copse/comment-templates`. Override with `--templates` or set `commentTemplates` in `.copserc`. If the directory is missing or empty, you'll be prompted to create starter templates (e.g. `please-fix.md`, `add-tests.md`, `review-again.md`). Comments from bots are marked with `[bot]` so you can quickly spot automated review feedback to reply to.
 
 #### Examples
 
@@ -333,7 +280,7 @@ copse rerun-failed acme/cool-project claude --hours 48 --dry-run
 
 ### copse create-issue
 
-Creates a GitHub issue and adds a comment instructing the specified agent (cursor or claude) to go and build it.
+Creates a GitHub issue and instructs the specified agent to go and build it.
 
 ```
 copse create-issue [repo] [title] [body] [agent] [options]
@@ -352,6 +299,8 @@ copse create-issue [repo] [title] [body] [agent] [options]
 | `--dry-run` | Show what would be created without creating |
 
 On success, prints the issue URL to stdout (e.g. for piping: `copse create-issue ... | xargs open`).
+
+When `agent=cursor` and `cursorApiKey` is configured in `.copserc`, the instruction is sent via Cursor Cloud Agents API (instead of posting a GitHub issue comment). Without the key, or for other agents, it uses GitHub issue comments.
 
 #### Issue template lookup
 
@@ -418,4 +367,31 @@ copse update-main acme/cool-project cursor --dry-run
 
 # Update all authors' PRs
 copse update-main acme/cool-project cursor --all
+```
+
+### copse web
+
+Runs a local-only web app for `status` workflows. Uses your local `gh` authentication and binds to localhost by default.
+
+```
+copse web [--host HOST] [--port PORT] [--open]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `--host HOST` | Host to bind (default: `127.0.0.1`) |
+| `--port PORT` | Port to bind (default: `4317`) |
+| `--open` | Open the default browser after startup |
+
+#### Examples
+
+```bash
+# Start the local web app
+copse web
+
+# Start and open browser
+copse web --open
+
+# Custom host/port
+copse web --host 127.0.0.1 --port 8080
 ```

@@ -1,6 +1,6 @@
 {
   "name": "@copse/cli",
-  "version": "1.1.1",
+  "version": "2.0.1",
   "description": "Tools for managing agent-created PRs",
   "type": "module",
   "license": "MIT",
@@ -25,9 +25,12 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && rm -rf dist/web/public && cp -R web/public dist/web/public",
     "pretest": "npm run build",
     "start": "node dist/copse.js",
+    "web": "node dist/copse.js web",
+    "web:dev": "npm run build && node dist/copse.js web --open",
+    "web:build": "npm run build",
     "test": "node --test \"dist/tests/**/*.test.js\"",
     "test:pr-status": "node dist/copse.js pr-status",
     "prepublishOnly": "npm run build",
