@@ -24,6 +24,7 @@ import {
   type StatusFilterScope,
 } from "../lib/services/status-types.js";
 import { findLatestAgentByPrUrl, getArtifactDownloadUrl, listAgentArtifacts, listAgentsByPrUrl } from "../lib/cursor-api.js";
+import { loadTemplates, resolveTemplatesPath } from "../lib/templates.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
@@ -170,6 +171,18 @@ async function serveStatic(url: URL, res: ServerResponse): Promise<void> {
 async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): Promise<void> {
   const method = req.method || "GET";
   const segments = parsePathSegments(url);
+
+  if (method === "GET" && url.pathname === "/api/templates") {
+    const config = loadConfig() ?? {};
+    const templatesPath = resolveTemplatesPath(null, (config as Record<string, string>).commentTemplates ?? null);
+    const templates = loadTemplates(templatesPath);
+    const result: Array<{ label: string; body: string }> = [];
+    for (const [label, body] of templates) {
+      result.push({ label, body });
+    }
+    sendJson(res, 200, { templates: result });
+    return;
+  }
 
   if (method === "GET" && url.pathname === "/api/status") {
     const scope = parseStatusFilterScope(url);
@@ -415,6 +428,33 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
         cursorApiKey,
       });
       sendJson(res, 200, { ok: true, mode: result.mode, message: "Reply posted" });
+      return;
+    }
+    if (target.action === "batch-reply") {
+      const text = String(body.body || "");
+      const commentIds = body.commentIds;
+      if (!Array.isArray(commentIds) || commentIds.length === 0) {
+        throw new Error("commentIds must be a non-empty array");
+      }
+      const cursorApiKey = loadConfig()?.cursorApiKey?.trim() || null;
+      let succeeded = 0;
+      for (const id of commentIds) {
+        const inReplyToId = Number(id);
+        if (!Number.isInteger(inReplyToId) || inReplyToId <= 0) continue;
+        try {
+          await postPullRequestReply({
+            repo: target.repo,
+            prNumber: target.prNumber,
+            inReplyToId,
+            body: text,
+            cursorApiKey,
+          });
+          succeeded++;
+        } catch {
+          // Continue with remaining replies.
+        }
+      }
+      sendJson(res, 200, { ok: true, total: succeeded, message: `Replied to ${succeeded} comment(s)` });
       return;
     }
   }

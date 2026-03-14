@@ -42,7 +42,7 @@
     "url": "https://github.com/jonathanKingston/copse.git"
   },
   "devDependencies": {
-    "@types/node": "^25.3.2",
+    "@types/node": "^25.5.0",
     "typescript": "^5.9.3"
   }
 }

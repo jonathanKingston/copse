@@ -45,6 +45,7 @@ let currentRows = [];
 let pollTimer = null;
 let pollIntervalMs = 30000;
 let cursorApiConfigured = false;
+let commentTemplates = [];
 let collapsedRepos = new Set();
 /** @type {Set<string>} PRs currently selected for bulk actions */
 let selectedPRs = new Set();
@@ -68,6 +69,8 @@ function createDetailState() {
     artifactsError: "",
     newCommentDraft: "",
     replyDrafts: {},
+    selectedCommentIds: new Set(),
+    selectedBatchTemplate: "",
     openPatches: new Set(),
   };
 }
@@ -1027,6 +1030,12 @@ function createCommentsPanel(row, state) {
   panel.append(addCommentContainer);
 
   const comments = state.comments ?? [];
+  const availableCommentIds = new Set(comments.map((comment) => Number(comment.id)));
+  state.selectedCommentIds = new Set(
+    [...state.selectedCommentIds].filter((id) => availableCommentIds.has(id))
+  );
+  const selectedCount = state.selectedCommentIds.size;
+
   if (comments.length === 0) {
     panel.append(createInlineMessage(state.commentsLoading ? "Refreshing comments..." : "No open review comments yet."));
     return panel;
@@ -1036,12 +1045,107 @@ function createCommentsPanel(row, state) {
     panel.append(createInlineMessage("Refreshing comments...", "detail-loading"));
   }
 
+  const batchBar = document.createElement("div");
+  batchBar.className = "batch-reply-bar";
+  batchBar.style.display = selectedCount > 0 ? "flex" : "none";
+
+  const selectAllLabel = document.createElement("label");
+  selectAllLabel.className = "batch-select-all";
+  const selectAllCb = document.createElement("input");
+  selectAllCb.type = "checkbox";
+  selectAllCb.checked = comments.length > 0 && selectedCount === comments.length;
+  selectAllCb.indeterminate = selectedCount > 0 && selectedCount < comments.length;
+  selectAllCb.addEventListener("change", () => {
+    if (selectAllCb.checked) {
+      state.selectedCommentIds = new Set(comments.map((comment) => Number(comment.id)));
+    } else {
+      state.selectedCommentIds = new Set();
+    }
+    renderRows();
+  });
+  selectAllLabel.append(selectAllCb, " Select all");
+
+  const countSpan = document.createElement("span");
+  countSpan.className = "batch-selected-count";
+  countSpan.textContent = `${selectedCount} comment(s) selected`;
+
+  const templateSelect = document.createElement("select");
+  templateSelect.className = "batch-template-select";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = commentTemplates.length > 0 ? "Select template..." : "No templates configured";
+  templateSelect.append(defaultOpt);
+  for (const tpl of commentTemplates) {
+    const opt = document.createElement("option");
+    opt.value = tpl.body;
+    opt.textContent = tpl.label;
+    opt.selected = tpl.body === state.selectedBatchTemplate;
+    templateSelect.append(opt);
+  }
+  templateSelect.value = state.selectedBatchTemplate || "";
+  templateSelect.addEventListener("change", () => {
+    state.selectedBatchTemplate = templateSelect.value;
+  });
+
+  const batchReplyBtn = document.createElement("button");
+  batchReplyBtn.className = "batch-reply-btn";
+  batchReplyBtn.textContent = "Reply to selected";
+  batchReplyBtn.disabled = selectedCount === 0;
+  batchReplyBtn.addEventListener("click", async () => {
+    const body = state.selectedBatchTemplate || templateSelect.value;
+    if (!body) {
+      setStatus("Select a template first");
+      return;
+    }
+    if (state.selectedCommentIds.size === 0) {
+      setStatus("No comments selected");
+      return;
+    }
+    batchReplyBtn.disabled = true;
+    batchReplyBtn.textContent = "Sending...";
+    try {
+      await performAction(row, "batch-reply", {
+        body,
+        commentIds: Array.from(state.selectedCommentIds),
+      });
+      setStatus(`Replied to ${state.selectedCommentIds.size} comment(s)`);
+      state.selectedCommentIds = new Set();
+      await ensureCommentsLoaded(row, true);
+    } catch (error) {
+      setStatus(error.message);
+      batchReplyBtn.disabled = false;
+      batchReplyBtn.textContent = "Reply to selected";
+    }
+  });
+
+  batchBar.append(selectAllLabel, countSpan, templateSelect, batchReplyBtn);
+  panel.append(batchBar);
+
   for (const comment of comments) {
     const container = document.createElement("div");
     container.className = "comment";
 
+    const headRow = document.createElement("div");
+    headRow.className = "comment-header";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "comment-select";
+    checkbox.dataset.commentId = String(comment.id);
+    checkbox.checked = state.selectedCommentIds.has(Number(comment.id));
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        state.selectedCommentIds.add(Number(comment.id));
+      } else {
+        state.selectedCommentIds.delete(Number(comment.id));
+      }
+      renderRows();
+    });
+
     const head = document.createElement("p");
     head.textContent = `${comment.user.login} · ${comment.path}:${comment.line || comment.original_line || "?"}`;
+    headRow.append(checkbox, head);
+
     const body = document.createElement("div");
     body.className = "comment-body";
     if (comment.body_html) {
@@ -1068,7 +1172,7 @@ function createCommentsPanel(row, state) {
     const replyActions = document.createElement("div");
     replyActions.className = "comment-actions";
     replyActions.append(replyBtn);
-    container.append(head, body, replyText, replyActions);
+    container.append(headRow, body, replyText, replyActions);
     panel.append(container);
   }
 
@@ -1636,6 +1740,15 @@ async function fetchStatus(options = {}) {
   schedulePoll();
 }
 
+async function fetchTemplates() {
+  try {
+    const data = await api("/api/templates");
+    commentTemplates = data.templates || [];
+  } catch {
+    commentTemplates = [];
+  }
+}
+
 function schedulePoll() {
   if (pollTimer) {
     clearTimeout(pollTimer);
@@ -1707,4 +1820,8 @@ issueFormEl.addEventListener("submit", async (event) => {
   }
 });
 
-fetchStatus().catch((error) => setStatus(error.message));
+// Load templates and status in parallel on startup
+Promise.all([
+  fetchTemplates(),
+  fetchStatus(),
+]).catch((error) => setStatus(error.message));
