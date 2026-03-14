@@ -7,6 +7,11 @@
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { execFile as execFileCb } from "child_process";
+import { createWriteStream } from "node:fs";
+import { basename as pathBasename } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
   REPO_PATTERN,
   ghQuietAsync,
@@ -23,6 +28,12 @@ import { getOriginRepo } from "../lib/utils.js";
 import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
 import { fetchPRsWithStatus, fetchPRsWithStatusSync } from "../lib/services/status-service.js";
 import {
+  findLatestAgentByPrUrl,
+  getArtifactDownloadUrl,
+  listAgentArtifacts,
+  type CursorArtifact,
+} from "../lib/cursor-api.js";
+import {
   approvePullRequest,
   createIssueWithAgentComment,
   enableMergeWhenReady,
@@ -38,6 +49,7 @@ import {
   needsScaffold,
   resolveTemplatesPath,
 } from "../lib/templates.js";
+import { formatBytes } from "../lib/format.js";
 
 function execAsync(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -221,7 +233,7 @@ function runWatch(
     | { kind: "comment"; prIndex: number; commentIndex: number }
     | { kind: "comment-body"; prIndex: number; commentIndex: number; line: string }
     | { kind: "diff-file"; prIndex: number; fileIndex: number }
-    | { kind: "diff-patch-line"; prIndex: number; fileIndex: number; line: string }
+    | { kind: "artifact"; prIndex: number; artifactIndex: number }
     | { kind: "info"; prIndex: number; text: string };
 
   let virtualRows: VirtualRow[] = [];
@@ -229,8 +241,10 @@ function runWatch(
   let expandedPRNumber: number | null = null;
   let expandedComments: PRReviewComment[] = [];
   let expandedFiles: PRChangedFile[] = [];
+  let expandedArtifacts: CursorArtifact[] = [];
+  let expandedCursorAgentId: string | null = null;
   let expandedLoading = false;
-  let expandedMode: "comments" | "diff" = "comments";
+  let expandedMode: "comments" | "diff" | "artifacts" = "comments";
   const DETAIL_MAX_LINES = 10;
 
   let commentInputMode = false;
@@ -300,26 +314,42 @@ function runWatch(
       virtualRows.push({ kind: "pr", prIndex: i });
       if (expandedPRIndex === i) {
         if (expandedLoading) {
-          const loadLabel = expandedMode === "diff" ? "files" : "comments";
-          virtualRows.push({ kind: "info", prIndex: i,
-            text: `  ${ANSI.dim}Loading ${loadLabel} for #${currentPRs[i].number}…${ANSI.reset}` });
+          const loadLabel = expandedMode === "diff"
+            ? "files"
+            : expandedMode === "artifacts"
+              ? "artifacts"
+              : "comments";
+          virtualRows.push({
+            kind: "info",
+            prIndex: i,
+            text: `  ${ANSI.dim}Loading ${loadLabel} for #${currentPRs[i].number}…${ANSI.reset}`,
+          });
         } else if (expandedMode === "diff") {
           if (expandedFiles.length === 0) {
-            virtualRows.push({ kind: "info", prIndex: i,
-              text: `  ${ANSI.dim}No changed files on #${currentPRs[i].number}${ANSI.reset}` });
+            virtualRows.push({
+              kind: "info",
+              prIndex: i,
+              text: `  ${ANSI.dim}No changed files on #${currentPRs[i].number}${ANSI.reset}`,
+            });
           } else {
             const totalAdd = expandedFiles.reduce((s, f) => s + f.additions, 0);
             const totalDel = expandedFiles.reduce((s, f) => s + f.deletions, 0);
-            virtualRows.push({ kind: "info", prIndex: i,
-              text: `  ${ANSI.dim}${expandedFiles.length} file(s) changed, ${ANSI.green}+${totalAdd}${ANSI.reset} ${ANSI.red}-${totalDel}${ANSI.reset}` });
+            virtualRows.push({
+              kind: "info",
+              prIndex: i,
+              text: `  ${ANSI.dim}${expandedFiles.length} file(s) changed, ${ANSI.green}+${totalAdd}${ANSI.reset} ${ANSI.red}-${totalDel}${ANSI.reset}`,
+            });
             for (let j = 0; j < expandedFiles.length; j++) {
               virtualRows.push({ kind: "diff-file", prIndex: i, fileIndex: j });
             }
           }
-        } else {
+        } else if (expandedMode === "comments") {
           if (expandedComments.length === 0) {
-            virtualRows.push({ kind: "info", prIndex: i,
-              text: `  ${ANSI.dim}No unresolved comments on #${currentPRs[i].number}${ANSI.reset}` });
+            virtualRows.push({
+              kind: "info",
+              prIndex: i,
+              text: `  ${ANSI.dim}No unresolved comments on #${currentPRs[i].number}${ANSI.reset}`,
+            });
           } else {
             const columns = process.stdout.columns || 80;
             const bodyIndent = "      ";
@@ -336,8 +366,43 @@ function runWatch(
               }
             }
             if (expandedComments.length > maxComments) {
-              virtualRows.push({ kind: "info", prIndex: i,
-                text: `    ${ANSI.dim}${expandedComments.length - maxComments} more — press [o] to view on GitHub${ANSI.reset}` });
+              virtualRows.push({
+                kind: "info",
+                prIndex: i,
+                text: `    ${ANSI.dim}${expandedComments.length - maxComments} more — press [o] to view on GitHub${ANSI.reset}`,
+              });
+            }
+          }
+        } else {
+          if (!expandedCursorAgentId) {
+            virtualRows.push({
+              kind: "info",
+              prIndex: i,
+              text: `  ${ANSI.dim}No Cursor agent linked to #${currentPRs[i].number}${ANSI.reset}`,
+            });
+          } else if (expandedArtifacts.length === 0) {
+            virtualRows.push({
+              kind: "info",
+              prIndex: i,
+              text: `  ${ANSI.dim}No artifacts on Cursor agent ${expandedCursorAgentId}${ANSI.reset}`,
+            });
+          } else {
+            const maxArtifacts = Math.min(expandedArtifacts.length, DETAIL_MAX_LINES);
+            for (let j = 0; j < maxArtifacts; j++) {
+              virtualRows.push({ kind: "artifact", prIndex: i, artifactIndex: j });
+            }
+            if (expandedArtifacts.length > maxArtifacts) {
+              virtualRows.push({
+                kind: "info",
+                prIndex: i,
+                text: `    ${ANSI.dim}${expandedArtifacts.length - maxArtifacts} more — use [D] to download selected artifact${ANSI.reset}`,
+              });
+            } else {
+              virtualRows.push({
+                kind: "info",
+                prIndex: i,
+                text: `    ${ANSI.dim}Press [D] to download, [o] to open download URL${ANSI.reset}`,
+              });
             }
           }
         }
@@ -360,6 +425,15 @@ function runWatch(
     return `    ${statusColor}${statusChar}${ANSI.reset} ${filename} ${ANSI.green}+${file.additions}${ANSI.reset} ${ANSI.red}-${file.deletions}${ANSI.reset}`;
   }
 
+  function formatArtifactRow(artifact: CursorArtifact, index: number): string {
+    const columns = process.stdout.columns || 80;
+    const size = formatBytes(artifact.sizeBytes ?? null).padStart(8);
+    const date = artifact.updatedAt ? new Date(artifact.updatedAt).toISOString().slice(0, 10) : "";
+    const prefix = `    ${String(index + 1).padStart(2)} ${size}${date ? ` ${date}` : ""} `;
+    const maxPath = Math.max(10, columns - visibleLength(prefix));
+    return prefix + truncatePlain(artifact.absolutePath || "", maxPath);
+  }
+
   function highlightRow(row: string): string {
     return `\x1b[7m${row.replace(/\x1b\[0m/g, "\x1b[0m\x1b[7m")}\x1b[0m`;
   }
@@ -379,8 +453,8 @@ function runWatch(
       row = vr.line;
     } else if (vr.kind === "diff-file") {
       row = formatDiffFileRow(expandedFiles[vr.fileIndex]);
-    } else if (vr.kind === "diff-patch-line") {
-      row = vr.line;
+    } else if (vr.kind === "artifact") {
+      row = formatArtifactRow(expandedArtifacts[vr.artifactIndex], vr.artifactIndex);
     } else {
       row = vr.text;
     }
@@ -413,6 +487,8 @@ function runWatch(
     expandedPRNumber = null;
     expandedComments = [];
     expandedFiles = [];
+    expandedArtifacts = [];
+    expandedCursorAgentId = null;
     expandedLoading = false;
     expandedMode = "comments";
     rebuildVirtualRows();
@@ -440,6 +516,8 @@ function runWatch(
     expandedPRNumber = currentPRs[prIndex]?.number ?? null;
     expandedComments = [];
     expandedFiles = [];
+    expandedArtifacts = [];
+    expandedCursorAgentId = null;
     expandedLoading = true;
     expandedMode = "comments";
     rebuildVirtualRows();
@@ -490,6 +568,8 @@ function runWatch(
     expandedPRNumber = currentPRs[prIndex]?.number ?? null;
     expandedFiles = [];
     expandedComments = [];
+    expandedArtifacts = [];
+    expandedCursorAgentId = null;
     expandedLoading = true;
     expandedMode = "diff";
     rebuildVirtualRows();
@@ -515,6 +595,121 @@ function runWatch(
         rebuildVirtualRows();
         drawAllRows();
         clearStaleRows(oldLen2);
+        drawFooter();
+      }
+    })();
+  }
+
+  function handleShowArtifacts(): void {
+    if (virtualRows.length === 0) return;
+    const vr = virtualRows[selectedIndex];
+    if (!vr) return;
+    const prIndex = vr.prIndex;
+    const pr = currentPRs[prIndex];
+    if (!pr) return;
+
+    if (!cursorApiKey) {
+      statusMsg = `${ANSI.red}Cursor API not configured — set cursorApiKey in .copserc${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+
+    if (String(pr.agent || "").toLowerCase() !== "cursor") {
+      statusMsg = `${ANSI.red}Artifacts only available for Cursor PRs${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+
+    if (expandedPRIndex === prIndex && expandedMode === "artifacts") {
+      const prVi = virtualRows.findIndex(v => v.kind === "pr" && v.prIndex === prIndex);
+      if (prVi !== -1) selectedIndex = prVi;
+      collapseDetail();
+      return;
+    }
+
+    const oldLen = virtualRows.length;
+    expandedPRIndex = prIndex;
+    expandedPRNumber = pr.number;
+    expandedComments = [];
+    expandedFiles = [];
+    expandedArtifacts = [];
+    expandedCursorAgentId = null;
+    expandedLoading = true;
+    expandedMode = "artifacts";
+    rebuildVirtualRows();
+    drawAllRows();
+    clearStaleRows(oldLen);
+    drawFooter();
+
+    (async () => {
+      try {
+        const prUrl = `https://github.com/${pr.repo}/pull/${pr.number}`;
+        const agent = await findLatestAgentByPrUrl(cursorApiKey, prUrl);
+        if (expandedPRNumber !== pr.number || expandedMode !== "artifacts") return;
+        if (!agent) {
+          expandedCursorAgentId = null;
+          expandedArtifacts = [];
+          return;
+        }
+        expandedCursorAgentId = agent.id;
+        expandedArtifacts = await listAgentArtifacts(cursorApiKey, agent.id);
+      } catch (e: unknown) {
+        statusMsg = `${ANSI.red}${(e as Error).message}${ANSI.reset}`;
+        expandedCursorAgentId = null;
+        expandedArtifacts = [];
+      } finally {
+        expandedLoading = false;
+      }
+
+      if (expandedPRNumber === pr.number && expandedMode === "artifacts") {
+        const oldLen2 = virtualRows.length;
+        rebuildVirtualRows();
+        clampSelection();
+        drawAllRows();
+        clearStaleRows(oldLen2);
+        drawFooter();
+      }
+    })();
+  }
+
+  function handleDownloadSelected(): void {
+    const vr = virtualRows[selectedIndex];
+    if (!vr || vr.kind !== "artifact") return;
+    if (!cursorApiKey || !expandedCursorAgentId) {
+      statusMsg = `${ANSI.red}Cursor API not configured or no agent selected${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+
+    const artifact = expandedArtifacts[vr.artifactIndex];
+    if (!artifact?.absolutePath) return;
+
+    const defaultName = pathBasename(artifact.absolutePath) || `artifact-${vr.artifactIndex + 1}`;
+    const outPath = `./${defaultName}`;
+
+    busy = true;
+    statusMsg = `${ANSI.amber}Downloading ${defaultName}…${ANSI.reset}`;
+    drawFooter();
+
+    (async () => {
+      try {
+        const { url } = await getArtifactDownloadUrl(cursorApiKey, expandedCursorAgentId, artifact.absolutePath);
+        const res = await fetch(url);
+        if (!res.ok || !res.body) {
+          throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+        }
+        await pipeline(
+          Readable.fromWeb(res.body as unknown as NodeReadableStream),
+          createWriteStream(outPath, { flags: "wx" })
+        );
+        statusMsg = `${ANSI.green}Downloaded to ${outPath}${ANSI.reset}`;
+      } catch (e: unknown) {
+        const msg = (e as { code?: string }).code === "EEXIST"
+          ? "File already exists"
+          : (e as Error).message;
+        statusMsg = `${ANSI.red}Download failed: ${msg}${ANSI.reset}`;
+      } finally {
+        busy = false;
         drawFooter();
       }
     })();
@@ -757,6 +952,8 @@ function runWatch(
     expandedPRNumber = null;
     expandedComments = [];
     expandedFiles = [];
+    expandedArtifacts = [];
+    expandedCursorAgentId = null;
     expandedLoading = false;
     expandedMode = "comments";
     const oldLen = virtualRows.length;
@@ -1056,7 +1253,7 @@ function runWatch(
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [d]iff  [o]pen  [c]heckout  [C]omment/reply  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [d]iff  [p] artifacts  [D] download  [o]pen  [c]heckout  [C]omment/reply  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1092,6 +1289,8 @@ function runWatch(
             expandedPRNumber = null;
             expandedComments = [];
             expandedFiles = [];
+            expandedArtifacts = [];
+            expandedCursorAgentId = null;
             expandedMode = "comments";
           } else {
             expandedPRIndex = newIdx;
@@ -1170,6 +1369,27 @@ function runWatch(
           statusMsg = `${ANSI.green}Opened comment in browser${ANSI.reset}`;
         } catch {
           statusMsg = `${ANSI.red}Failed to open comment${ANSI.reset}`;
+        }
+        drawFooter();
+      })();
+      return;
+    }
+    if (vr.kind === "artifact") {
+      if (!cursorApiKey || !expandedCursorAgentId) {
+        statusMsg = `${ANSI.red}Cursor API not configured or no agent selected${ANSI.reset}`;
+        drawFooter();
+        return;
+      }
+      const artifact = expandedArtifacts[vr.artifactIndex];
+      if (!artifact?.absolutePath) return;
+      (async () => {
+        try {
+          const { url } = await getArtifactDownloadUrl(cursorApiKey, expandedCursorAgentId, artifact.absolutePath);
+          const opener = process.platform === "darwin" ? "open" : "xdg-open";
+          await execAsync(opener, [url]);
+          statusMsg = `${ANSI.green}Opened artifact download URL${ANSI.reset}`;
+        } catch (e: unknown) {
+          statusMsg = `${ANSI.red}Failed to open artifact: ${(e as Error).message}${ANSI.reset}`;
         }
         drawFooter();
       })();
@@ -1435,6 +1655,8 @@ function runWatch(
 
       if (key === "\r") { handleToggleExpand(); return; }
       if (key === "d") { handleToggleDiff(); return; }
+      if (key === "p") { handleShowArtifacts(); return; }
+      if (key === "D") { handleDownloadSelected(); return; }
       if (key === "o") { handleOpenSelected(); return; }
       if (key === "c") { handleCheckout(); return; }
       if (key === "C") { startCommentInput(); return; }
@@ -1486,7 +1708,7 @@ Options:
   --all        Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [d]iff  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
+  ↑↓/jk navigate  ⏎ expand  [d]iff  [p]artifacts  [D]download  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
   [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;

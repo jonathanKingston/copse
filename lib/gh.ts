@@ -1,5 +1,6 @@
 import { execFileSync, execFile } from "child_process";
 import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
+import { WATCH_INTERVAL_MS } from "./services/status-types.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -26,6 +27,91 @@ const COAUTHOR_SCAN_COMMIT_COUNT = 100;
 
 let _interrupted = false;
 let _pipeStdio = false;
+
+type CacheDecision = { ok: true; key: string; ttlMs: number } | { ok: false };
+
+const GH_READ_CACHE_MAX_ENTRIES = 500;
+const ghReadCache = new Map<string, { expiresAt: number; value: string }>();
+
+function maybePruneGhReadCache(now: number): void {
+  // Opportunistic prune: remove expired entries and cap size.
+  for (const [k, v] of ghReadCache) {
+    if (v.expiresAt <= now) ghReadCache.delete(k);
+  }
+  if (ghReadCache.size > GH_READ_CACHE_MAX_ENTRIES) {
+    ghReadCache.clear();
+  }
+}
+
+function getFlagValue(args: string[], flag: string): string | null {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return null;
+  const v = args[idx + 1];
+  return typeof v === "string" ? v : null;
+}
+
+function hasArg(args: string[], value: string): boolean {
+  return args.includes(value);
+}
+
+function getApiMethod(args: string[]): string {
+  const method = (getFlagValue(args, "--method") || getFlagValue(args, "-X") || "").trim();
+  return method ? method.toUpperCase() : "GET";
+}
+
+function getGraphqlQuery(args: string[]): string | null {
+  // We pass GraphQL queries like: -f query=... (or -f `query=${query}`)
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] !== "-f") continue;
+    const next = args[i + 1] || "";
+    if (next.startsWith("query=")) return next.slice("query=".length);
+  }
+  return null;
+}
+
+function isGraphqlMutation(query: string): boolean {
+  // Best-effort: treat any query containing "mutation" as non-cacheable.
+  // This is conservative and avoids caching stateful operations.
+  return /\bmutation\b/i.test(query);
+}
+
+function cacheDecisionForGhArgs(args: string[]): CacheDecision {
+  if (args.length === 0) return { ok: false };
+
+  const sub = args[0];
+
+  // Never cache anything that opens a browser or relies on interactive output.
+  if (hasArg(args, "--web") || hasArg(args, "--browser")) return { ok: false };
+
+  // Read-only gh api GET requests (including --paginate) are cacheable.
+  if (sub === "api") {
+    const target = args[1] || "";
+    if (target === "graphql") {
+      const query = getGraphqlQuery(args);
+      if (query && isGraphqlMutation(query)) return { ok: false };
+      // GraphQL requests are POST under the hood but typically read-only queries in our usage.
+      return { ok: true, key: `gh\0${args.join("\0")}`, ttlMs: WATCH_INTERVAL_MS };
+    }
+
+    const method = getApiMethod(args);
+    if (method !== "GET") return { ok: false };
+    return { ok: true, key: `gh\0${args.join("\0")}`, ttlMs: WATCH_INTERVAL_MS };
+  }
+
+  // These list commands are read-only and frequently repeated.
+  if (sub === "pr" && args[1] === "list") {
+    // Avoid caching implicit-repo calls; require explicit --repo.
+    if (!hasArg(args, "--repo")) return { ok: false };
+    return { ok: true, key: `gh\0${args.join("\0")}`, ttlMs: WATCH_INTERVAL_MS };
+  }
+
+  if (sub === "run" && args[1] === "list") {
+    if (!hasArg(args, "--repo")) return { ok: false };
+    return { ok: true, key: `gh\0${args.join("\0")}`, ttlMs: WATCH_INTERVAL_MS };
+  }
+
+  return { ok: false };
+}
 
 function isGhNotFound(e: unknown): boolean {
   return (e as { code?: string }).code === "ENOENT";
@@ -83,9 +169,23 @@ export function setPipeStdio(on: boolean): void { _pipeStdio = on; }
 
 export function gh(...args: string[]): string {
   const stdio = _pipeStdio ? "pipe" as const : undefined;
+  const decision = cacheDecisionForGhArgs(args);
+  if (decision.ok) {
+    const now = Date.now();
+    maybePruneGhReadCache(now);
+    const cached = ghReadCache.get(decision.key);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+  }
   for (let attempt = 0; ; attempt++) {
     try {
-      return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
+      const out = execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
+      if (decision.ok) {
+        const now = Date.now();
+        ghReadCache.set(decision.key, { value: out, expiresAt: now + decision.ttlMs });
+      }
+      return out;
     } catch (e: unknown) {
       if (isGhNotFound(e)) throw new GhNotFoundError();
       const sig = (e as { signal?: string }).signal;
@@ -101,9 +201,23 @@ export function gh(...args: string[]): string {
 
 /** Like gh() but suppresses stderr output (for use in TUI watch modes). */
 export function ghQuiet(...args: string[]): string {
+  const decision = cacheDecisionForGhArgs(args);
+  if (decision.ok) {
+    const now = Date.now();
+    maybePruneGhReadCache(now);
+    const cached = ghReadCache.get(decision.key);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+  }
   for (let attempt = 0; ; attempt++) {
     try {
-      return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio: "pipe" });
+      const out = execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio: "pipe" });
+      if (decision.ok) {
+        const now = Date.now();
+        ghReadCache.set(decision.key, { value: out, expiresAt: now + decision.ttlMs });
+      }
+      return out;
     } catch (e: unknown) {
       if (isGhNotFound(e)) throw new GhNotFoundError();
       const sig = (e as { signal?: string }).signal;
@@ -119,6 +233,15 @@ export function ghQuiet(...args: string[]): string {
 
 /** Non-blocking variant of ghQuiet — keeps the event loop responsive for TUI key handling. */
 export function ghQuietAsync(...args: string[]): Promise<string> {
+  const decision = cacheDecisionForGhArgs(args);
+  if (decision.ok) {
+    const now = Date.now();
+    maybePruneGhReadCache(now);
+    const cached = ghReadCache.get(decision.key);
+    if (cached && cached.expiresAt > now) {
+      return Promise.resolve(cached.value);
+    }
+  }
   return new Promise((resolve, reject) => {
     let attempt = 0;
     function tryExec(): void {
@@ -134,6 +257,10 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
           }
           reject(error);
           return;
+        }
+        if (decision.ok) {
+          const now = Date.now();
+          ghReadCache.set(decision.key, { value: stdout, expiresAt: now + decision.ttlMs });
         }
         resolve(stdout);
       });
