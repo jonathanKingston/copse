@@ -44,6 +44,7 @@ let allRows = [];
 let currentRows = [];
 let pollTimer = null;
 let pollIntervalMs = 30000;
+let cursorApiConfigured = false;
 let collapsedRepos = new Set();
 /** @type {Set<string>} PRs currently selected for bulk actions */
 let selectedPRs = new Set();
@@ -58,6 +59,13 @@ function createDetailState() {
     files: null,
     filesLoading: false,
     filesError: "",
+    agents: null,
+    agentsLoading: false,
+    agentsError: "",
+    selectedAgentId: "",
+    artifacts: null,
+    artifactsLoading: false,
+    artifactsError: "",
     newCommentDraft: "",
     replyDrafts: {},
     openPatches: new Set(),
@@ -243,6 +251,14 @@ function formatCommentBody(value) {
 
 function repoSegment(repo) {
   return encodeURIComponent(repo);
+}
+
+function formatAgentOption(agent) {
+  const id = String(agent.id || "");
+  const status = String(agent.status || "").trim();
+  const created = String(agent.createdAt || "").trim();
+  const createdShort = created ? created.replace("T", " ").replace(/\.000Z$/, "Z") : "";
+  return `${createdShort || "?"}${status ? ` · ${status}` : ""} · ${id}`;
 }
 
 async function api(path, options = {}) {
@@ -844,6 +860,7 @@ async function toggleDetail(row) {
   await Promise.allSettled([
     ensureCommentsLoaded(row),
     ensureDiffLoaded(row),
+    ensureArtifactsLoaded(row),
   ]);
 }
 
@@ -891,6 +908,72 @@ async function ensureDiffLoaded(row, force = false) {
     state.filesLoading = false;
     renderRows();
   }
+}
+
+async function loadArtifactsForSelectedAgent(row, force = false) {
+  const state = getDetailState(row);
+  if (!cursorApiConfigured || !state.selectedAgentId) return;
+  if (state.artifactsLoading) return;
+  if (!force && state.artifacts !== null) return;
+
+  state.artifactsLoading = true;
+  state.artifactsError = "";
+  renderRows();
+
+  try {
+    const data = await api(
+      `/api/pr/${repoSegment(row.repo)}/${row.number}/artifacts?agentId=${encodeURIComponent(state.selectedAgentId)}`
+    );
+    state.artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+  } catch (error) {
+    state.artifactsError = error.message;
+    if (state.artifacts === null) {
+      state.artifacts = [];
+    }
+  } finally {
+    state.artifactsLoading = false;
+    renderRows();
+  }
+}
+
+async function ensureArtifactsLoaded(row, force = false) {
+  const state = getDetailState(row);
+  if (!cursorApiConfigured) return;
+  if (state.agentsLoading) return;
+  if (!force && state.agents !== null) return;
+
+  state.agentsLoading = true;
+  state.agentsError = "";
+  renderRows();
+
+  try {
+    const data = await api(`/api/pr/${repoSegment(row.repo)}/${row.number}/agents`);
+    state.agents = Array.isArray(data.agents) ? data.agents : [];
+    if (state.agents.length === 0) {
+      state.selectedAgentId = "";
+      state.artifacts = [];
+      state.artifactsError = "";
+      return;
+    }
+    if (!state.selectedAgentId || !state.agents.some((agent) => String(agent.id || "") === state.selectedAgentId)) {
+      state.selectedAgentId = String(state.agents[0].id || "");
+    }
+  } catch (error) {
+    state.agentsError = error.message;
+    if (state.agents === null) {
+      state.agents = [];
+    }
+    if (state.artifacts === null) {
+      state.artifacts = [];
+    }
+    return;
+  } finally {
+    state.agentsLoading = false;
+    renderRows();
+  }
+
+  state.artifacts = null;
+  await loadArtifactsForSelectedAgent(row, true);
 }
 
 function createInlineMessage(text, className = "detail-empty") {
@@ -982,6 +1065,115 @@ function createCommentsPanel(row, state) {
     panel.append(container);
   }
 
+  return panel;
+}
+
+function createArtifactsPanel(row, state) {
+  const panel = document.createElement("div");
+  panel.className = "detail-tab-panel";
+
+  if (!cursorApiConfigured) {
+    panel.append(createInlineMessage('Cursor API not configured. Set "cursorApiKey" in `.copserc`.', "detail-empty"));
+    return panel;
+  }
+
+  if (state.agentsError) {
+    panel.append(createInlineMessage(state.agentsError, "detail-error"));
+  }
+
+  const controls = document.createElement("div");
+  controls.className = "artifacts-controls";
+
+  const label = document.createElement("label");
+  label.className = "artifacts-label";
+  label.textContent = "Agent run";
+
+  const agentSelect = document.createElement("select");
+  agentSelect.className = "artifacts-agent";
+  agentSelect.disabled = state.agentsLoading || !state.agents || state.agents.length === 0;
+
+  const agents = state.agents ?? [];
+  if (agents.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = state.agentsLoading ? "Loading Cursor agent runs..." : "No Cursor agent runs found";
+    agentSelect.append(option);
+  } else {
+    for (const agent of agents) {
+      const option = document.createElement("option");
+      option.value = String(agent.id || "");
+      option.textContent = formatAgentOption(agent);
+      option.selected = option.value === state.selectedAgentId;
+      agentSelect.append(option);
+    }
+  }
+
+  agentSelect.addEventListener("change", async () => {
+    state.selectedAgentId = agentSelect.value;
+    state.artifacts = null;
+    await loadArtifactsForSelectedAgent(row, true);
+  });
+
+  label.append(agentSelect);
+
+  const reloadBtn = makeActionButton("Reload", async () => {
+    state.agents = null;
+    state.artifacts = null;
+    state.selectedAgentId = "";
+    await ensureArtifactsLoaded(row, true);
+  }, true);
+
+  controls.append(label, reloadBtn);
+  panel.append(controls);
+
+  if (state.agentsLoading && state.agents === null) {
+    panel.append(createInlineMessage("Loading Cursor agent runs...", "detail-loading"));
+    return panel;
+  }
+
+  if (agents.length === 0) {
+    panel.append(createInlineMessage("No Cursor agent linked to this PR.", "detail-empty"));
+    return panel;
+  }
+
+  if (state.artifactsError) {
+    panel.append(createInlineMessage(state.artifactsError, "detail-error"));
+  }
+
+  if (state.artifactsLoading && state.artifacts === null) {
+    panel.append(createInlineMessage("Loading artifacts...", "detail-loading"));
+    return panel;
+  }
+
+  const artifacts = state.artifacts ?? [];
+  if (artifacts.length === 0) {
+    panel.append(createInlineMessage(state.artifactsLoading ? "Refreshing artifacts..." : "No artifacts found.", "detail-empty"));
+    return panel;
+  }
+
+  if (state.artifactsLoading) {
+    panel.append(createInlineMessage("Refreshing artifacts...", "detail-loading"));
+  }
+
+  const list = document.createElement("ul");
+  list.className = "artifacts-list";
+  for (const artifact of artifacts) {
+    const item = document.createElement("li");
+    const path = document.createElement("span");
+    path.className = "artifact-path";
+    path.textContent = String(artifact.absolutePath || "");
+
+    const link = document.createElement("a");
+    link.textContent = "Download";
+    link.href = `/api/cursor/agents/${encodeURIComponent(state.selectedAgentId)}/artifacts/download?path=${encodeURIComponent(String(artifact.absolutePath || ""))}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+
+    item.append(path, document.createTextNode(" "), link);
+    list.append(item);
+  }
+
+  panel.append(list);
   return panel;
 }
 
@@ -1132,7 +1324,14 @@ function createDetailRow(row) {
   diffTitle.textContent = "Code Changes";
   diffSection.append(diffTitle, createDiffPanel(row, getDetailState(row)));
 
-  detailGrid.append(commentsSection, diffSection);
+  const artifactsSection = document.createElement("section");
+  artifactsSection.className = "detail-section";
+  const artifactsTitle = document.createElement("h3");
+  artifactsTitle.className = "detail-section-title";
+  artifactsTitle.textContent = "Cursor Artifacts";
+  artifactsSection.append(artifactsTitle, createArtifactsPanel(row, getDetailState(row)));
+
+  detailGrid.append(commentsSection, diffSection, artifactsSection);
   panel.append(header);
   panel.append(detailGrid);
   panel.append(createDetailMetaSection(row));
@@ -1407,6 +1606,7 @@ async function fetchStatus(options = {}) {
   }
   allRows = data.rows;
   pollIntervalMs = data.pollIntervalMs;
+  cursorApiConfigured = Boolean(data.cursorApiConfigured);
   syncVisibleRows(!silentStatus);
   schedulePoll();
 }

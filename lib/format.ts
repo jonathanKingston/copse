@@ -9,6 +9,22 @@ const ANSI = {
   red: "\x1b[31m",
 };
 
+const BYTES_STEP = 1024;
+const BYTES_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
+
+export function formatBytes(bytes: number | null | undefined): string {
+  const value = typeof bytes === "number" ? bytes : NaN;
+  if (!Number.isFinite(value) || value < 0) return "?";
+  let unitIndex = 0;
+  let v = value;
+  while (v >= BYTES_STEP && unitIndex < BYTES_UNITS.length - 1) {
+    v /= BYTES_STEP;
+    unitIndex++;
+  }
+  const decimals = unitIndex === 0 ? 0 : v < 10 ? 1 : 0;
+  return `${v.toFixed(decimals)}${BYTES_UNITS[unitIndex]}`;
+}
+
 /** Format comment body for terminal: strip HTML, style markdown, extract actionable links. */
 export function formatCommentBody(body: string): string {
   let s = body;

@@ -129,6 +129,17 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--open", description: "Open browser after starting server" },
     ],
   },
+  artifacts: {
+    file: "artifacts.js",
+    description: "Lists Cursor agent artifacts for a PR; optionally download",
+    usage: "copse artifacts <repo> <pr-number> [--download ABSOLUTE_PATH] [--out FILE]",
+    args: [
+      { name: "repo", description: "GitHub repo in owner/name format" },
+      { name: "pr-number", description: "Pull request number" },
+      { name: "--download PATH", description: "Artifact absolutePath to download (from list)" },
+      { name: "--out FILE", description: "Output file path (default: ./<basename>)" },
+    ],
+  },
 };
 
 function showHelp(): void {
@@ -184,6 +195,7 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };
   const createIssueOpts: Record<string, string> = { "--body-file": "Read body from file", "--template": "Issue template path", "--no-template": "Skip template", "--no-comment": "Skip agent comment", "--dry-run": "Preview without acting", "--help": "Show help" };
   const webOpts: Record<string, string> = { "--host": "Host to bind", "--port": "Port to bind", "--open": "Open browser", "--help": "Show help" };
+  const artifactsOpts: Record<string, string> = { "--download": "Artifact absolutePath to download", "--out": "Output file path", "--help": "Show help" };
 
   if (shell === "zsh") {
     const subcmds = [
@@ -241,6 +253,9 @@ _copse() {
         web)
           _arguments ${formatOptArgs(webOpts)}
           ;;
+        artifacts)
+          _arguments ${formatOptArgs(artifactsOpts)}
+          ;;
       esac
       ;;
   esac
@@ -297,6 +312,9 @@ _copse_completion() {
             ;;
         web)
             COMPREPLY=( $(compgen -W "${formatBashOpts(webOpts)}" -- "$cur") )
+            ;;
+        artifacts)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(artifactsOpts)}" -- "$cur") )
             ;;
     esac
 }

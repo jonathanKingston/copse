@@ -25,6 +25,7 @@ html {
   --stack-connector-top: 0.35rem;
   --stack-connector-width: 0.7rem;
   --stack-connector-height: 0.55rem;
+  --focus: rgba(47, 111, 78, 0.28);
 }
 
 body {
@@ -88,6 +89,24 @@ header p {
   padding: 0.45rem 0.5rem;
 }
 
+.controls select {
+  width: 100%;
+  display: block;
+  margin-top: 0.25rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.5rem;
+  min-height: 34px;
+}
+
+.controls select:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
+}
+
 .controls input[type="text"]:focus,
 .controls input:not([type]):focus,
 .controls select:focus {
@@ -120,9 +139,9 @@ table {
 th, td {
   text-align: left;
   border-bottom: 1px solid var(--border);
-  padding: 0.35rem 0.5rem;
+  padding: 0.5rem 0.65rem;
   vertical-align: top;
-  line-height: 1.3;
+  line-height: 1.35;
   white-space: nowrap;
 }
 
@@ -307,7 +326,7 @@ td.pr-cell {
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 
 button {
@@ -323,6 +342,20 @@ button {
 
 button:hover {
   box-shadow: var(--shadow-lg);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 button.secondary {
@@ -343,6 +376,138 @@ button.secondary {
   font-size: 0.7rem;
   line-height: 1.1;
   white-space: nowrap;
+}
+
+.table-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0 0 0.55rem;
+}
+
+.density-compact table {
+  font-size: 0.82rem;
+}
+
+.density-compact th,
+.density-compact td {
+  padding: 0.32rem 0.5rem;
+  line-height: 1.25;
+}
+
+.density-compact td.title-cell .clamp {
+  -webkit-line-clamp: 2;
+}
+
+.menu-popover {
+  position: fixed;
+  z-index: 50;
+  min-width: 210px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 0.35rem;
+}
+
+.menu-popover .menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.85rem;
+  box-shadow: none;
+  text-align: left;
+}
+
+.menu-popover .menu-item:hover {
+  background: rgba(47, 111, 78, 0.08);
+}
+
+.menu-popover .menu-item[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.menu-popover .menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 0.25rem 0.2rem;
+}
+
+.menu-popover .menu-check {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.35rem 0.55rem;
+  border-radius: 12px;
+}
+
+.menu-popover .menu-check:hover {
+  background: rgba(47, 111, 78, 0.08);
+}
+
+.menu-popover .menu-check input {
+  width: 16px;
+  height: 16px;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(30, 42, 34, 0.18);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  vertical-align: -2px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Column visibility (class applied to #statusTable) */
+#statusTable.hide-col-repo .col-repo,
+#statusTable.hide-col-pr .col-pr,
+#statusTable.hide-col-agent .col-agent,
+#statusTable.hide-col-ci .col-ci,
+#statusTable.hide-col-review .col-review,
+#statusTable.hide-col-conflicts .col-conflicts,
+#statusTable.hide-col-auto .col-auto,
+#statusTable.hide-col-age .col-age,
+#statusTable.hide-col-comments .col-comments,
+#statusTable.hide-col-title .col-title,
+#statusTable.hide-col-actions .col-actions {
+  display: none;
+}
+
+#commentsDock {
+  margin-top: 1rem;
+}
+
+.details-row {
+  cursor: default;
+}
+
+.details-row td {
+  background: rgba(255, 255, 255, 0.75);
+  white-space: normal;
+}
+
+tbody tr.details-row:hover td {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.details-cell {
+  padding: 0.65rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .comment {
@@ -367,6 +532,46 @@ button.secondary {
 .comment-body-plain {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.artifacts-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1.15rem;
+}
+
+.artifact-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.artifacts-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.artifacts-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.artifacts-agent {
+  min-height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.45rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+}
+
+.artifacts-list-container {
+  margin-top: 0.35rem;
 }
 
 .comment-body-html {
@@ -414,8 +619,14 @@ button.secondary {
   font-size: 0.95em;
   background: rgba(47, 111, 78, 0.12);
   border: 1px solid rgba(47, 111, 78, 0.22);
-  padding: 0.1rem 0.25rem;
+  /* Inline elements don't expand line boxes; use inline-block to prevent overlap between lines. */
+  display: inline-block;
+  line-height: 1.15;
+  padding: 0.08em 0.32em;
   border-radius: var(--radius-sm);
+  vertical-align: baseline;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 .comment-body-html pre {

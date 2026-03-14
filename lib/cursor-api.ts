@@ -10,9 +10,24 @@ export interface CursorAgent {
   };
 }
 
+export interface CursorArtifact {
+  absolutePath: string;
+  sizeBytes?: number;
+  updatedAt?: string;
+}
+
 interface CursorListAgentsResponse {
   agents?: CursorAgent[];
   nextCursor?: string;
+}
+
+interface CursorListArtifactsResponse {
+  artifacts?: CursorArtifact[];
+}
+
+interface CursorArtifactDownloadResponse {
+  url?: string;
+  expiresAt?: string;
 }
 
 interface CursorFollowupResponse {
@@ -160,4 +175,30 @@ export async function launchAgentForRepository(
     throw new Error("Cursor API launch response did not include agent id");
   }
   return response.id;
+}
+
+export async function listAgentArtifacts(apiKey: string, agentId: string): Promise<CursorArtifact[]> {
+  const response = await cursorRequest<CursorListArtifactsResponse>(
+    apiKey,
+    `/v0/agents/${encodeURIComponent(agentId)}/artifacts`,
+    { method: "GET" }
+  );
+  return response.artifacts ?? [];
+}
+
+export async function getArtifactDownloadUrl(
+  apiKey: string,
+  agentId: string,
+  absolutePath: string
+): Promise<{ url: string; expiresAt?: string }> {
+  const params = new URLSearchParams({ path: absolutePath });
+  const response = await cursorRequest<CursorArtifactDownloadResponse>(
+    apiKey,
+    `/v0/agents/${encodeURIComponent(agentId)}/artifacts/download?${params.toString()}`,
+    { method: "GET" }
+  );
+  if (!response.url) {
+    throw new Error("Cursor API artifact download response did not include url");
+  }
+  return { url: response.url, expiresAt: response.expiresAt };
 }
