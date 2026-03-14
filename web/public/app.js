@@ -269,6 +269,43 @@ function rowCell(text, className = "", title = "") {
   return td;
 }
 
+function mergeStatusTitle(row) {
+  return [
+    `mergeable: ${row.mergeable || "UNKNOWN"}`,
+    `mergeStateStatus: ${row.mergeStateStatus || "UNKNOWN"}`,
+  ].join("\n");
+}
+
+function createDetailMetaSection(row) {
+  const section = document.createElement("section");
+  section.className = "detail-section detail-section-meta";
+
+  const title = document.createElement("h3");
+  title.className = "detail-section-title";
+  title.textContent = "GitHub Status";
+
+  const list = document.createElement("dl");
+  list.className = "detail-meta-list";
+
+  const fields = [
+    ["Mergeable", row.mergeable || "UNKNOWN"],
+    ["Merge state", row.mergeStateStatus || "UNKNOWN"],
+    ["Head", row.headRefName],
+    ["Base", row.baseRefName || "(default branch)"],
+  ];
+
+  for (const [label, value] of fields) {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    list.append(term, description);
+  }
+
+  section.append(title, list);
+  return section;
+}
+
 function buildDisplayRows(rows) {
   const { rowMetaByKey } = buildStackMeta(rows);
 
@@ -456,7 +493,7 @@ function createPRRow(row) {
     rowCell(row.isDraft ? "yes" : "no"),
     rowCell(row.ciStatus),
     rowCell(reviewLabel, "review-cell", row.reviewDecision),
-    rowCell(row.conflicts ? "yes" : "no"),
+    rowCell(row.conflicts ? "yes" : "no", "", mergeStatusTitle(row)),
     rowCell(row.autoMerge ? "yes" : "no"),
     rowCell(`${row.ageDays}d`),
     rowCell(String(row.commentCount))
@@ -1064,6 +1101,7 @@ function createDetailRow(row) {
   detailGrid.append(commentsSection, diffSection);
   panel.append(header);
   panel.append(detailGrid);
+  panel.append(createDetailMetaSection(row));
   td.append(panel);
   tr.append(td);
   return tr;

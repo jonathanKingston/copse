@@ -152,8 +152,16 @@ export function applyCIStatus(pr: PRWithStatus, runs: WorkflowRun[]): void {
     (pr.reviewDecision === "APPROVED" || pr.reviewDecision === null);
 }
 
+export function hasPRConflicts(raw: Pick<StatusBasePR, "mergeStateStatus" | "mergeable">): boolean {
+  const mergeable = raw.mergeable ?? "UNKNOWN";
+  if (mergeable === "CONFLICTING") return true;
+  if (mergeable === "MERGEABLE") return false;
+  return (raw.mergeStateStatus ?? "") === "HAS_CONFLICTS";
+}
+
 function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithStatus {
   const mergeStateStatus = raw.mergeStateStatus ?? "";
+  const mergeable = raw.mergeable ?? "UNKNOWN";
   const reviewDecision = raw.reviewDecision ?? "REVIEW_REQUIRED";
   const createdAt = raw.createdAt ?? "";
   const updatedAt = raw.updatedAt ?? "";
@@ -171,13 +179,13 @@ function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithSta
     author: raw.author,
     isDraft: raw.isDraft === true,
     mergeStateStatus,
-    mergeable: raw.mergeable ?? "UNKNOWN",
+    mergeable,
     reviewDecision,
     updatedAt,
     agent: getAgentForPR(raw),
     autoMerge: raw.autoMergeRequest != null,
     ciStatus: "pending",
-    conflicts: mergeStateStatus === "HAS_CONFLICTS",
+    conflicts: hasPRConflicts({ mergeStateStatus, mergeable }),
     ageDays,
     stale: ageDays >= STALE_DAYS,
     readyToMerge: false,
