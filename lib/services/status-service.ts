@@ -8,6 +8,10 @@ import {
   listWorkflowRunsAsync,
   validateRepo,
 } from "../gh.js";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { filterPRs } from "../filters.js";
 import type { WorkflowRun } from "../types.js";
 import { STALE_DAYS, WATCH_INTERVAL_MS, STATUS_FIELDS, type PRWithStatus, type StatusBasePR } from "./status-types.js";
@@ -22,8 +26,14 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+interface SerializedCacheEntry extends CacheEntry {
+  key: string;
+}
+
 const statusCache = new Map<string, CacheEntry>();
 const inflightRequests = new Map<string, Promise<PRWithStatus[]>>();
+const STATUS_CACHE_DIR = join(tmpdir(), "copse", "status-cache");
+let diskCacheDirPromise: Promise<string | null> | null = null;
 
 function cacheKey(options: StatusQueryOptions): string {
   return `${[...options.repos].sort().join(",")}\0${options.mineOnly}`;
@@ -32,10 +42,86 @@ function cacheKey(options: StatusQueryOptions): string {
 export function invalidateStatusCache(): void {
   statusCache.clear();
   inflightRequests.clear();
+  void clearDiskStatusCache();
 }
 
 function sortPRs(prs: PRWithStatus[]): PRWithStatus[] {
   return prs.sort((a, b) => a.ageDays - b.ageDays);
+}
+
+function cacheFileName(key: string): string {
+  return `${createHash("sha256").update(key).digest("hex")}.json`;
+}
+
+async function getDiskCacheDir(): Promise<string | null> {
+  if (!diskCacheDirPromise) {
+    diskCacheDirPromise = mkdir(STATUS_CACHE_DIR, { recursive: true })
+      .then(() => STATUS_CACHE_DIR)
+      .catch(() => null);
+  }
+  return diskCacheDirPromise;
+}
+
+function isValidCacheEntry(value: unknown): value is SerializedCacheEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<SerializedCacheEntry>;
+  return (
+    typeof entry.key === "string" &&
+    typeof entry.expiresAt === "number" &&
+    Array.isArray(entry.result)
+  );
+}
+
+async function readDiskStatusCache(key: string): Promise<CacheEntry | null> {
+  const dir = await getDiskCacheDir();
+  if (!dir) return null;
+
+  try {
+    const raw = await readFile(join(dir, cacheFileName(key)), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isValidCacheEntry(parsed) || parsed.key !== key) {
+      return null;
+    }
+    if (parsed.expiresAt <= Date.now()) {
+      return null;
+    }
+    return {
+      result: parsed.result,
+      expiresAt: parsed.expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeDiskStatusCache(key: string, entry: CacheEntry): Promise<void> {
+  const dir = await getDiskCacheDir();
+  if (!dir) return;
+
+  const finalPath = join(dir, cacheFileName(key));
+  const tempPath = `${finalPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await mkdir(dir, { recursive: true });
+    const payload = JSON.stringify({ key, ...entry });
+    await writeFile(tempPath, payload, "utf8");
+    await rename(tempPath, finalPath);
+  } catch {
+    try {
+      await rm(tempPath, { force: true });
+    } catch {
+      // Ignore cache cleanup failures and keep using in-memory cache.
+    }
+  }
+}
+
+async function clearDiskStatusCache(): Promise<void> {
+  const dir = await getDiskCacheDir();
+  if (!dir) return;
+  try {
+    await rm(dir, { recursive: true, force: true });
+  } catch {
+    // Ignore cache cleanup failures and keep serving fresh data.
+  }
 }
 
 export function applyCIStatus(pr: PRWithStatus, runs: WorkflowRun[]): void {
@@ -198,10 +284,18 @@ export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<P
     return inflight;
   }
 
+  const diskCached = await readDiskStatusCache(key);
+  if (diskCached) {
+    statusCache.set(key, diskCached);
+    return diskCached.result;
+  }
+
   const promise = fetchPRsWithStatusUncached(options).then(
     (result) => {
-      statusCache.set(key, { result, expiresAt: Date.now() + WATCH_INTERVAL_MS });
+      const entry = { result, expiresAt: Date.now() + WATCH_INTERVAL_MS };
+      statusCache.set(key, entry);
       inflightRequests.delete(key);
+      void writeDiskStatusCache(key, entry);
       return result;
     },
     (error) => {
