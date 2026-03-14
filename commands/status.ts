@@ -193,7 +193,7 @@ function renderTable(prs: PRWithStatus[], singleRepo: boolean): void {
 }
 
 function runOnce(repos: string[], mineOnly: boolean): void {
-  const prs = fetchPRsWithStatusSync({ repos, mineOnly });
+  const prs = fetchPRsWithStatusSync({ repos, scope: mineOnly ? "my-stacks" : "all" });
   renderTable(prs, repos.length === 1);
 }
 
@@ -990,7 +990,7 @@ function runWatch(
 
     (async () => {
       try {
-        const sortedPrs = await fetchPRsWithStatus({ repos, mineOnly: mineOnlyFilter });
+        const sortedPrs = await fetchPRsWithStatus({ repos, scope: mineOnlyFilter ? "my-stacks" : "all" });
         if (gen !== ciGeneration || isInterrupted()) return;
         const oldVirtualLen = virtualRows.length;
         currentPRs = sortedPrs;

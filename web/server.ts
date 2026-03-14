@@ -8,14 +8,21 @@ import { getOriginRepo } from "../lib/utils.js";
 import { fetchPRsWithStatus } from "../lib/services/status-service.js";
 import {
   approvePullRequest,
+  chainMergePRs,
   createIssueWithAgentComment,
   enableMergeWhenReady,
+  markPullRequestReady,
   mergeBaseIntoBranch,
   postPullRequestComment,
   postPullRequestReply,
+  retargetPullRequest,
   rerunFailedWorkflowRuns,
 } from "../lib/services/status-actions.js";
-import { WATCH_INTERVAL_MS } from "../lib/services/status-types.js";
+import {
+  STATUS_FILTER_SCOPES,
+  WATCH_INTERVAL_MS,
+  type StatusFilterScope,
+} from "../lib/services/status-types.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
@@ -103,6 +110,20 @@ function parsePathSegments(url: URL): string[] {
   return url.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
 }
 
+function parseStatusFilterScope(url: URL): StatusFilterScope {
+  const scope = url.searchParams.get("scope");
+  if (scope == null || scope === "") {
+    if (url.searchParams.get("mineOnly") === "false") {
+      return "all";
+    }
+    return "my-stacks";
+  }
+  if ((STATUS_FILTER_SCOPES as readonly string[]).includes(scope)) {
+    return scope as StatusFilterScope;
+  }
+  throw new Error(`Invalid scope: "${scope}"`);
+}
+
 function parsePrTarget(segments: string[]): { repo: string; prNumber: number; action: string } | null {
   if (segments.length !== 5) {
     return null;
@@ -142,12 +163,12 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
   const segments = parsePathSegments(url);
 
   if (method === "GET" && url.pathname === "/api/status") {
-    const mineOnly = url.searchParams.get("mineOnly") !== "false";
+    const scope = parseStatusFilterScope(url);
     const repos = resolveReposFromRequest(url);
-    const rows = await fetchPRsWithStatus({ repos, mineOnly });
+    const rows = await fetchPRsWithStatus({ repos, scope });
     sendJson(res, 200, {
       repos,
-      mineOnly,
+      scope,
       pollIntervalMs: WATCH_INTERVAL_MS,
       rows,
       cursorApiConfigured: Boolean(loadConfig()?.cursorApiKey?.trim()),
@@ -195,6 +216,31 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/chain-merge") {
+    const body = await readJsonBody(req);
+    const repo = String(body.repo || "");
+    validateRepo(repo);
+    const prs = body.prs as Array<{ number: number; headRefName: string }> | undefined;
+    if (!Array.isArray(prs) || prs.length < 2) {
+      throw new Error("prs must be an array of at least 2 items with number and headRefName");
+    }
+    for (const pr of prs) {
+      if (!Number.isInteger(pr.number) || pr.number <= 0 || typeof pr.headRefName !== "string") {
+        throw new Error("Each PR must have a valid number and headRefName");
+      }
+    }
+    const result = await chainMergePRs(repo, prs);
+    sendJson(res, 200, {
+      ok: true,
+      steps: result.steps,
+      stoppedEarly: result.stoppedEarly,
+      message: result.stoppedEarly
+        ? `Stack queue stopped early after ${result.steps.length} step(s)`
+        : `Stack queued: ${result.steps.length} step(s)`,
+    });
+    return;
+  }
+
   const target = parsePrTarget(segments);
   if (method === "POST" && target) {
     const body = await readJsonBody(req);
@@ -218,9 +264,37 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       sendJson(res, 200, { ok: true, message: "Approved PR" });
       return;
     }
+    if (target.action === "ready") {
+      const result = await markPullRequestReady(target.repo, target.prNumber);
+      sendJson(res, 200, {
+        ok: true,
+        alreadyReady: result.alreadyReady,
+        message: result.alreadyReady ? "PR already ready for review" : "Marked PR ready for review",
+      });
+      return;
+    }
+    if (target.action === "retarget") {
+      const baseBranch = String(body.baseBranch || "");
+      const result = await retargetPullRequest(target.repo, target.prNumber, baseBranch);
+      sendJson(res, 200, {
+        ok: true,
+        closedRedundant: result.closedRedundant,
+        alreadyTargeted: result.alreadyTargeted,
+        message: result.closedRedundant
+          ? `Closed PR after finding no commits unique beyond ${baseBranch}`
+          : result.alreadyTargeted
+            ? `PR already targets ${baseBranch}`
+          : `Retargeted PR to ${baseBranch}`,
+      });
+      return;
+    }
     if (target.action === "merge-auto") {
-      await enableMergeWhenReady(target.repo, target.prNumber);
-      sendJson(res, 200, { ok: true, message: "Merge when ready enabled" });
+      const result = await enableMergeWhenReady(target.repo, target.prNumber);
+      sendJson(res, 200, {
+        ok: true,
+        alreadyEnabled: result.alreadyEnabled,
+        message: result.alreadyEnabled ? "Merge when ready already enabled" : "Merge when ready enabled",
+      });
       return;
     }
     if (target.action === "comment") {
