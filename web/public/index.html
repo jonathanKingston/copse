@@ -18,11 +18,62 @@
         Repos (comma separated)
         <input id="reposInput" placeholder="owner/repo, owner/repo2">
       </label>
-      <label class="checkbox">
-        <input id="mineOnlyInput" type="checkbox" checked>
-        Only my PRs
+      <label>
+        Search
+        <input id="textFilterInput" placeholder="repo, #, title, branch, author">
+      </label>
+      <label>
+        Scope
+        <select id="filterScopeInput">
+          <option value="my-stacks" selected>My stacks</option>
+          <option value="all">All PRs</option>
+        </select>
+      </label>
+      <label>
+        Draft
+        <select id="draftFilterInput">
+          <option value="any" selected>Any</option>
+          <option value="draft">Draft only</option>
+          <option value="ready">Ready only</option>
+        </select>
+      </label>
+      <label>
+        Conflicts
+        <select id="conflictFilterInput">
+          <option value="any" selected>Any</option>
+          <option value="conflict">Has conflicts</option>
+          <option value="clean">No conflicts</option>
+        </select>
+      </label>
+      <label>
+        Review
+        <select id="reviewFilterInput">
+          <option value="any" selected>Any</option>
+          <option value="APPROVED">Approved</option>
+          <option value="CHANGES_REQUESTED">Changes requested</option>
+          <option value="REVIEW_REQUIRED">Review required</option>
+        </select>
+      </label>
+      <label>
+        Comments
+        <select id="commentFilterInput">
+          <option value="any" selected>Any</option>
+          <option value="0">0</option>
+          <option value="1+">1+</option>
+          <option value="2+">2+</option>
+          <option value="5+">5+</option>
+        </select>
       </label>
       <button id="refreshBtn">Refresh</button>
+      <span id="chainMergeControls" style="display:none">
+        <span id="selectedCount">0 selected</span>
+        <button id="markReadyBtn" title="Mark selected PRs as ready for review">Mark Ready</button>
+        <button id="bulkApproveBtn" title="Approve selected PRs">Approve</button>
+        <button id="bulkMergeAutoBtn" title="Enable merge when ready on selected PRs">M.Auto</button>
+        <button id="bulkRerunBtn" title="Rerun failed workflows on selected PRs">Rerun</button>
+        <button id="bulkUpdateBtn" title="Merge main into selected PR branches">Update</button>
+        <button id="chainMergeBtn" title="Retarget selected PRs into a stack and enable auto-merge in order">Chain Merge</button>
+      </span>
       <span id="statusText"></span>
     </section>
 
@@ -31,16 +82,16 @@
         <table id="statusTable">
           <thead>
             <tr>
-              <th>Repo</th>
+              <th><input id="selectAllCheckbox" type="checkbox" title="Select all"></th>
               <th>PR</th>
               <th>Agent</th>
+              <th>Draft</th>
               <th>CI</th>
               <th>Review</th>
               <th>Conflicts</th>
               <th>Auto</th>
               <th>Age</th>
               <th>Comments</th>
-              <th>Title</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -80,6 +131,22 @@
       </form>
     </section>
   </main>
+
+  <dialog id="chainMergeDialog" class="modal">
+    <div class="modal-card">
+      <p id="chainMergeRepo" class="modal-kicker"></p>
+      <h2 id="chainMergeTitle">Queue selected PRs as a stack?</h2>
+      <div id="chainMergePreview" class="merge-preview"></div>
+      <p id="chainMergeCopy" class="modal-copy">
+        This retargets each selected PR to the next PR's branch, then enables auto-merge so GitHub can merge the stack in order.
+      </p>
+      <p id="chainMergeStatus" class="modal-status" hidden></p>
+      <div class="modal-actions">
+        <button id="chainMergeSecondaryBtn" type="button" class="secondary">Cancel</button>
+        <button id="chainMergePrimaryBtn" type="button">Queue Stack</button>
+      </div>
+    </div>
+  </dialog>
 
   <script src="/app.js"></script>
 </body>
