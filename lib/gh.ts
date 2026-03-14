@@ -1,5 +1,5 @@
 import { execFileSync, execFile } from "child_process";
-import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment } from "./types.js";
+import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -633,6 +633,38 @@ export async function listPRReviewCommentsAsync(repo: string, prNumber: number):
 
 export async function addPRCommentAsync(repo: string, prNumber: number, body: string): Promise<void> {
   await ghQuietAsync("pr", "comment", String(prNumber), "--repo", repo, "--body", body);
+}
+
+export function listPRFiles(repo: string, prNumber: number): PRChangedFile[] {
+  try {
+    const out = gh(
+      "api",
+      `repos/${repo}/pulls/${prNumber}/files`,
+      "--method", "GET",
+      "-f", "per_page=100"
+    );
+    const arr = JSON.parse(out) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr as PRChangedFile[];
+  } catch {
+    return [];
+  }
+}
+
+export async function listPRFilesAsync(repo: string, prNumber: number): Promise<PRChangedFile[]> {
+  try {
+    const out = await ghQuietAsync(
+      "api",
+      `repos/${repo}/pulls/${prNumber}/files`,
+      "--method", "GET",
+      "-f", "per_page=100"
+    );
+    const arr = JSON.parse(out) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr as PRChangedFile[];
+  } catch {
+    return [];
+  }
 }
 
 export function getCommitInfo(repo: string, branchRef: string, includeMessage: boolean = false): CommitInfo {

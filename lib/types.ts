@@ -50,6 +50,17 @@ export interface PRReviewComment {
   in_reply_to_id?: number | null;
 }
 
+export interface PRChangedFile {
+  sha: string;
+  filename: string;
+  status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+  previous_filename?: string;
+}
+
 export interface CommandArg {
   name: string;
   description: string;

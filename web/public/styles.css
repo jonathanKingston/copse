@@ -264,6 +264,126 @@ aside.panel {
   overflow-y: auto;
 }
 
+.sidebar-section {
+  margin-bottom: 1rem;
+}
+
+.sidebar-section:last-child {
+  margin-bottom: 0;
+}
+
+.sidebar-section h2 {
+  margin: 0 0 0.35rem;
+}
+
+/* --- Diff view --- */
+
+.diff-summary {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: rgba(47, 111, 78, 0.06);
+  border-radius: var(--radius-sm);
+}
+
+.diff-empty {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.diff-file {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.35rem;
+  overflow: hidden;
+}
+
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.78rem;
+  background: rgba(30, 42, 34, 0.04);
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.diff-status.diff-added {
+  background: rgba(46, 160, 67, 0.18);
+  color: #1a7f37;
+}
+
+.diff-status.diff-removed {
+  background: rgba(248, 81, 73, 0.18);
+  color: #cf222e;
+}
+
+.diff-status.diff-modified {
+  background: rgba(227, 179, 65, 0.18);
+  color: #9a6700;
+}
+
+.diff-filename {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.diff-stats {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.diff-stats .diff-added {
+  color: #1a7f37;
+}
+
+.diff-stats .diff-removed {
+  color: #cf222e;
+}
+
+.diff-patch {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow-x: auto;
+  background: var(--bg);
+  white-space: pre;
+}
+
+.diff-line-add {
+  background: rgba(46, 160, 67, 0.12);
+  color: #1a7f37;
+}
+
+.diff-line-del {
+  background: rgba(248, 81, 73, 0.12);
+  color: #cf222e;
+}
+
+.diff-line-hunk {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* --- Issue form --- */
 
 .issue {

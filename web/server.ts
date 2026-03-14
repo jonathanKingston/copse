@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getConfiguredRepos, loadConfig } from "../lib/config.js";
-import { REPO_PATTERN, listPRReviewCommentsAsync, validateRepo } from "../lib/gh.js";
+import { REPO_PATTERN, listPRReviewCommentsAsync, listPRFilesAsync, validateRepo } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { fetchPRsWithStatus } from "../lib/services/status-service.js";
 import {
@@ -164,6 +164,18 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
     }
     const comments = await listPRReviewCommentsAsync(repo, prNumber);
     sendJson(res, 200, { repo, prNumber, comments });
+    return;
+  }
+
+  if (method === "GET" && segments.length === 5 && segments[0] === "api" && segments[1] === "pr" && segments[4] === "files") {
+    const repo = segments[2];
+    const prNumber = parseInt(segments[3], 10);
+    validateRepo(repo);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      throw new Error(`Invalid pull request number: "${segments[3]}"`);
+    }
+    const files = await listPRFilesAsync(repo, prNumber);
+    sendJson(res, 200, { repo, prNumber, files });
     return;
   }
 

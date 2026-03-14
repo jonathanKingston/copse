@@ -5,6 +5,8 @@ const mineOnlyInputEl = document.getElementById("mineOnlyInput");
 const refreshBtnEl = document.getElementById("refreshBtn");
 const commentsListEl = document.getElementById("commentsList");
 const selectedPrTextEl = document.getElementById("selectedPrText");
+const diffListEl = document.getElementById("diffList");
+const selectedDiffPrTextEl = document.getElementById("selectedDiffPrText");
 const issueFormEl = document.getElementById("issueForm");
 const issueRepoEl = document.getElementById("issueRepo");
 const issueTitleEl = document.getElementById("issueTitle");
@@ -141,6 +143,88 @@ async function loadComments(row) {
   }
 }
 
+function statusIcon(status) {
+  if (status === "added") return "+";
+  if (status === "removed") return "-";
+  if (status === "renamed") return "R";
+  return "M";
+}
+
+function statusClass(status) {
+  if (status === "added") return "diff-added";
+  if (status === "removed") return "diff-removed";
+  return "diff-modified";
+}
+
+async function loadDiff(row) {
+  selectedDiffPrTextEl.textContent = `${row.repo} #${row.number}`;
+  diffListEl.innerHTML = "";
+  const data = await api(`/api/pr/${repoSegment(row.repo)}/${row.number}/files`);
+
+  if (data.files.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "diff-empty";
+    empty.textContent = "No changed files.";
+    diffListEl.append(empty);
+    return;
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "diff-summary";
+  const totalAdd = data.files.reduce((s, f) => s + f.additions, 0);
+  const totalDel = data.files.reduce((s, f) => s + f.deletions, 0);
+  summary.textContent = `${data.files.length} file(s) changed, +${totalAdd} -${totalDel}`;
+  diffListEl.append(summary);
+
+  for (const file of data.files) {
+    const container = document.createElement("div");
+    container.className = "diff-file";
+
+    const header = document.createElement("div");
+    header.className = "diff-file-header";
+    const badge = document.createElement("span");
+    badge.className = `diff-status ${statusClass(file.status)}`;
+    badge.textContent = statusIcon(file.status);
+    const name = document.createElement("span");
+    name.className = "diff-filename";
+    name.textContent = file.status === "renamed" && file.previous_filename
+      ? `${file.previous_filename} → ${file.filename}`
+      : file.filename;
+    const stats = document.createElement("span");
+    stats.className = "diff-stats";
+    stats.innerHTML = `<span class="diff-added">+${file.additions}</span> <span class="diff-removed">-${file.deletions}</span>`;
+    header.append(badge, name, stats);
+
+    container.append(header);
+
+    if (file.patch) {
+      const patchEl = document.createElement("pre");
+      patchEl.className = "diff-patch";
+      const lines = file.patch.split("\n");
+      for (const line of lines) {
+        const lineEl = document.createElement("span");
+        if (line.startsWith("+")) {
+          lineEl.className = "diff-line-add";
+        } else if (line.startsWith("-")) {
+          lineEl.className = "diff-line-del";
+        } else if (line.startsWith("@@")) {
+          lineEl.className = "diff-line-hunk";
+        }
+        lineEl.textContent = line + "\n";
+        patchEl.append(lineEl);
+      }
+      header.style.cursor = "pointer";
+      patchEl.style.display = "none";
+      header.addEventListener("click", () => {
+        patchEl.style.display = patchEl.style.display === "none" ? "block" : "none";
+      });
+      container.append(patchEl);
+    }
+
+    diffListEl.append(container);
+  }
+}
+
 function renderRows() {
   statusRowsEl.innerHTML = "";
   for (const row of currentRows) {
@@ -169,6 +253,13 @@ function renderRows() {
       makeActionButton("Cmts", async () => {
         try {
           await loadComments(row);
+        } catch (error) {
+          setStatus(error.message);
+        }
+      }, true),
+      makeActionButton("Diff", async () => {
+        try {
+          await loadDiff(row);
         } catch (error) {
           setStatus(error.message);
         }
