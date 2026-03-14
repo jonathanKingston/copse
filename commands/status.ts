@@ -4,30 +4,39 @@
  *        Defaults to live TUI mode; use --no-watch for one-shot output.
  */
 
+import * as readline from "node:readline/promises";
+import { stdin, stdout } from "node:process";
 import { execFile as execFileCb } from "child_process";
 import {
-  listOpenPRs,
-  listOpenPRsAsync,
-  listWorkflowRuns,
-  listWorkflowRunsAsync,
-  getAgentForPR,
-  validateRepo,
   REPO_PATTERN,
-  gh,
   ghQuietAsync,
-  getUnresolvedCommentCounts,
-  getUnresolvedCommentCountsAsync,
   listPRReviewCommentsAsync,
-  addPRCommentAsync,
-  replyToPRCommentAsync,
   isInterrupted,
   setPipeStdio,
 } from "../lib/gh.js";
-import type { WorkflowRun, PRReviewComment } from "../lib/types.js";
-import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
-import { getConfiguredRepos } from "../lib/config.js";
+import type { PRReviewComment } from "../lib/types.js";
+import { getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
+import { formatCommentBody, wrapAnsiText } from "../lib/format.js";
+import { getConfiguredRepos, loadConfig } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
-import { parseStandardFlags } from "../lib/args.js";
+import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
+import { fetchPRsWithStatus, fetchPRsWithStatusSync } from "../lib/services/status-service.js";
+import {
+  approvePullRequest,
+  createIssueWithAgentComment,
+  enableMergeWhenReady,
+  mergeBaseIntoBranch,
+  postPullRequestComment,
+  postPullRequestReply,
+  rerunFailedWorkflowRuns,
+} from "../lib/services/status-actions.js";
+import { STALE_DAYS, WATCH_INTERVAL_MS, type PRWithStatus } from "../lib/services/status-types.js";
+import {
+  loadTemplates,
+  scaffoldTemplates,
+  needsScaffold,
+  resolveTemplatesPath,
+} from "../lib/templates.js";
 
 function execAsync(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -38,35 +47,7 @@ function execAsync(command: string, args: string[]): Promise<string> {
   });
 }
 
-const STATUS_FIELDS = [
-  "number", "headRefName", "labels", "title", "author",
-  "mergeStateStatus", "mergeable", "reviewDecision", "createdAt", "updatedAt",
-  "autoMergeRequest",
-];
-
-const STALE_DAYS = 7;
-const WATCH_INTERVAL_MS = 30_000;
 const BULK_COOLDOWN_MS = 2_000;
-
-export interface PRWithStatus {
-  repo: string;
-  number: number;
-  headRefName: string;
-  title: string;
-  author: { login: string };
-  mergeStateStatus: string;
-  mergeable: string;
-  reviewDecision: string;
-  updatedAt: string;
-  agent: string | null;
-  autoMerge: boolean;
-  ciStatus: "pass" | "fail" | "pending" | "none";
-  conflicts: boolean;
-  ageDays: number;
-  stale: boolean;
-  readyToMerge: boolean;
-  commentCount: number;
-}
 
 export type Urgency = "red" | "amber" | "green";
 
@@ -74,10 +55,6 @@ function getUrgency(pr: PRWithStatus): Urgency {
   if (pr.ciStatus === "fail" || pr.conflicts) return "red";
   if (pr.stale || pr.reviewDecision === "CHANGES_REQUESTED" || pr.ciStatus === "pending") return "amber";
   return "green";
-}
-
-function sortPRs(prs: PRWithStatus[]): PRWithStatus[] {
-  return prs.sort((a, b) => a.ageDays - b.ageDays);
 }
 
 function matchesSearch(pr: PRWithStatus, query: string): boolean {
@@ -99,102 +76,6 @@ function matchesSearch(pr: PRWithStatus, query: string): boolean {
   return searchable.some(f => f.toLowerCase().includes(q));
 }
 
-function fetchPRsBase(repos: string[], mineOnly: boolean): PRWithStatus[] {
-  const result: PRWithStatus[] = [];
-  const now = Date.now();
-
-  for (const repo of repos) {
-    validateRepo(repo);
-    const rawPRs = listOpenPRs(repo, STATUS_FIELDS);
-    const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly });
-
-    for (const pr of matching) {
-      const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
-      const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
-      const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
-      const ageDays = updatedAt
-        ? Math.floor((now - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000))
-        : 0;
-
-      result.push({
-        repo,
-        number: pr.number,
-        headRefName: pr.headRefName,
-        title: pr.title ?? "",
-        author: pr.author,
-        mergeStateStatus,
-        mergeable: (pr as { mergeable?: string }).mergeable ?? "UNKNOWN",
-        reviewDecision,
-        updatedAt,
-        agent: getAgentForPR(pr),
-        autoMerge: (pr as { autoMergeRequest?: unknown }).autoMergeRequest != null,
-        ciStatus: "pending",
-        conflicts: mergeStateStatus === "HAS_CONFLICTS",
-        ageDays,
-        stale: ageDays >= STALE_DAYS,
-        readyToMerge: false,
-        commentCount: 0,
-      });
-    }
-  }
-
-  return sortPRs(result);
-}
-
-function applyCIStatus(pr: PRWithStatus, runs: WorkflowRun[]): void {
-  const failed = runs.filter((r) => r.conclusion === "failure");
-  const inProgress = runs.filter(
-    (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
-  );
-
-  if (failed.length > 0) pr.ciStatus = "fail";
-  else if (inProgress.length > 0) pr.ciStatus = "pending";
-  else if (runs.some((r) => r.conclusion === "success")) pr.ciStatus = "pass";
-  else pr.ciStatus = "none";
-
-  pr.readyToMerge =
-    pr.ciStatus === "pass" &&
-    !pr.conflicts &&
-    (pr.reviewDecision === "APPROVED" || pr.reviewDecision === null);
-}
-
-function updateCommentCounts(prs: PRWithStatus[]): void {
-  const byRepo = new Map<string, PRWithStatus[]>();
-  for (const pr of prs) {
-    const list = byRepo.get(pr.repo) ?? [];
-    list.push(pr);
-    byRepo.set(pr.repo, list);
-  }
-  for (const [repo, repoPrs] of byRepo) {
-    try {
-      const counts = getUnresolvedCommentCounts(repo, repoPrs.map(p => p.number));
-      for (const pr of repoPrs) {
-        pr.commentCount = counts.get(pr.number) ?? 0;
-      }
-    } catch { /* leave as 0 */ }
-  }
-}
-
-function updateAllCIStatuses(prs: PRWithStatus[]): void {
-  const branchCache = new Map<string, WorkflowRun[]>();
-  for (const pr of prs) {
-    const key = `${pr.repo}\0${pr.headRefName}`;
-    let runs = branchCache.get(key);
-    if (runs === undefined) {
-      try { runs = listWorkflowRuns(pr.repo, pr.headRefName); }
-      catch { runs = []; }
-      branchCache.set(key, runs);
-    }
-    applyCIStatus(pr, runs);
-  }
-}
-
-function fetchPRsWithStatus(repos: string[], mineOnly: boolean): PRWithStatus[] {
-  const prs = fetchPRsBase(repos, mineOnly);
-  updateCommentCounts(prs);
-  updateAllCIStatuses(prs);
-  return sortPRs(prs);
-}
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -288,7 +169,7 @@ function buildTableHeader(singleRepo: boolean): string {
     pad(headerLink("REV", "review-status"), 4),
     pad(headerLink("CON", "merge-conflicts"), 4),
     pad(headerLink("MWR", "merge-when-ready"), 4),
-    pad(headerLink("AGE", "days-since-last-update"), 5),
+    pad(headerLink("AGE", "days-since-pr-opened"), 5),
     pad(headerLink("CMT", "unresolved-review-comments"), 4),
     headerLink("TITLE", "pr-title"),
   ].join("")}${ANSI.reset}`;
@@ -312,14 +193,20 @@ function renderTable(prs: PRWithStatus[], singleRepo: boolean): void {
 }
 
 function runOnce(repos: string[], mineOnly: boolean): void {
-  const prs = fetchPRsWithStatus(repos, mineOnly);
+  const prs = fetchPRsWithStatusSync({ repos, scope: mineOnly ? "my-stacks" : "all" });
   renderTable(prs, repos.length === 1);
 }
 
-function runWatch(repos: string[], mineOnly: boolean): void {
+function runWatch(
+  repos: string[],
+  mineOnly: boolean,
+  templatesMap: Map<string, string>,
+  cursorApiKey: string | null
+): void {
   const singleRepo = repos.length === 1;
-  const TITLE = `copse status — refresh every ${WATCH_INTERVAL_MS / 1000}s`;
+  const TITLE = "copse status";
   const ROW_START = 5;
+  let mineOnlyFilter = mineOnly;
   let currentPRs: PRWithStatus[] = [];
   let statusMsg = "";
   let busy = false;
@@ -331,6 +218,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   type VirtualRow =
     | { kind: "pr"; prIndex: number }
     | { kind: "comment"; prIndex: number; commentIndex: number }
+    | { kind: "comment-body"; prIndex: number; commentIndex: number; line: string }
     | { kind: "info"; prIndex: number; text: string };
 
   let virtualRows: VirtualRow[] = [];
@@ -341,6 +229,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   const DETAIL_MAX_LINES = 10;
 
   let commentInputMode = false;
+  let templatePickerMode = false;
   let commentBuffer = "";
   let commentTarget:
     | { kind: "pr"; pr: PRWithStatus }
@@ -352,6 +241,13 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   let searchQuery = "";
   let preSearchQuery = "";
   let scrollOffset = 0;
+
+  let issueCreateMode = false;
+  let issueCreateStep: "title" | "body" | "template" = "title";
+  let issueTitleBuffer = "";
+  let issueBodyBuffer = "";
+  let issueTemplateChoice = -1;
+  let issueTargetRepo: string | null = null;
 
   setPipeStdio(true);
 
@@ -379,7 +275,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   process.on("SIGINT", cleanup);
 
   process.on("SIGWINCH", () => {
-    ensureVisible();
+    rebuildVirtualRows();
+    clampSelection();
     process.stdout.write("\x1b[2J\x1b[H");
     drawTitle();
     process.stdout.write(`\x1b[3;1H${buildTableHeader(singleRepo)}`);
@@ -387,6 +284,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     drawAllRows();
     if (commentInputMode) drawCommentInput();
     else if (searchMode) drawSearchInput();
+    else if (issueCreateMode) drawIssueCreateInput();
     else drawFooter();
   });
 
@@ -403,13 +301,23 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           virtualRows.push({ kind: "info", prIndex: i,
             text: `  ${ANSI.dim}No unresolved comments on #${currentPRs[i].number}${ANSI.reset}` });
         } else {
-          const maxVisible = Math.min(expandedComments.length, DETAIL_MAX_LINES);
-          for (let j = 0; j < maxVisible; j++) {
+          const columns = process.stdout.columns || 80;
+          const bodyIndent = "      ";
+          const maxComments = Math.min(expandedComments.length, DETAIL_MAX_LINES);
+          for (let j = 0; j < maxComments; j++) {
             virtualRows.push({ kind: "comment", prIndex: i, commentIndex: j });
+            const formatted = formatCommentBody(expandedComments[j].body);
+            const bodyLines = wrapAnsiText(formatted, columns, bodyIndent);
+            for (const line of bodyLines) {
+              virtualRows.push({ kind: "comment-body", prIndex: i, commentIndex: j, line });
+            }
+            if (j < maxComments - 1) {
+              virtualRows.push({ kind: "info", prIndex: i, text: "" });
+            }
           }
-          if (expandedComments.length > maxVisible) {
+          if (expandedComments.length > maxComments) {
             virtualRows.push({ kind: "info", prIndex: i,
-              text: `    ${ANSI.dim}${expandedComments.length - maxVisible} more — press [o] to view on GitHub${ANSI.reset}` });
+              text: `    ${ANSI.dim}${expandedComments.length - maxComments} more — press [o] to view on GitHub${ANSI.reset}` });
           }
         }
       }
@@ -417,21 +325,9 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   function formatCommentRow(comment: PRReviewComment): string {
-    const columns = process.stdout.columns || 80;
     const loc = String(comment.line ?? comment.original_line ?? "?");
     const pathLoc = `${comment.path}:${loc}`;
-    const pathLocMax = Math.max(12, Math.floor(columns * 0.36));
-    const pathLocTrunc = truncatePlain(pathLoc, pathLocMax);
-    const bodyRaw = comment.body
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .replace(/<[^>]+>/g, "")
-      .replace(/\n/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    const prefix = `    ${comment.user.login} · ${pathLocTrunc} · `;
-    const maxBodyLen = Math.max(10, columns - visibleLength(prefix) - 1);
-    const truncBody = truncatePlain(bodyRaw, maxBodyLen);
-    return `${prefix}${ANSI.dim}${truncBody}${ANSI.reset}`;
+    return `    ${ANSI.bold}${comment.user.login}${ANSI.reset} ${ANSI.dim}·${ANSI.reset} ${pathLoc}`;
   }
 
   function highlightRow(row: string): string {
@@ -449,6 +345,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       row = formatPRRow(currentPRs[vr.prIndex], singleRepo);
     } else if (vr.kind === "comment") {
       row = formatCommentRow(expandedComments[vr.commentIndex]);
+    } else if (vr.kind === "comment-body") {
+      row = vr.line;
     } else {
       row = vr.text;
     }
@@ -588,12 +486,25 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     })();
   }
 
+  const templateLabels = Array.from(templatesMap.keys());
+
   function drawCommentInput(): void {
     const termRows = process.stdout.rows || 24;
     const termCols = process.stdout.columns || 80;
     const footerLine = termRows - 1;
     const target = commentTarget;
     if (!target) return;
+    if (templatePickerMode && templateLabels.length > 0) {
+      process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
+      process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
+      const templateList = templateLabels.map((l, i) => `[${i + 1}]${l}`).join(" ");
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Select template: ${templateList} [c]ustom${ANSI.reset}`);
+      process.stdout.write(`\x1b[${footerLine};1H`);
+      process.stdout.write(`${ANSI.dim}Press 1-${templateLabels.length} to insert · c for custom${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      return;
+    }
     const isReply = target.kind === "comment";
     const targetExcerpt = isReply
       ? target.comment.body.replace(/\s+/g, " ").trim()
@@ -625,7 +536,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     if (!pr) return;
 
     commentInputMode = true;
-    if (vr.kind === "comment") {
+    templatePickerMode = templateLabels.length > 0;
+    if (vr.kind === "comment" || vr.kind === "comment-body") {
       const comment = expandedComments[vr.commentIndex];
       if (!comment) return;
       commentTarget = { kind: "comment", pr, comment };
@@ -639,6 +551,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function handleCommentKey(key: string): void {
     if (key === "\x1b" || key === "\x03") {
       commentInputMode = false;
+      templatePickerMode = false;
       commentTarget = null;
       commentBuffer = "";
       process.stdout.write("\x1b[?25l");
@@ -647,6 +560,24 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     }
 
     if (key.startsWith("\x1b")) return;
+
+    if (templatePickerMode && templateLabels.length > 0) {
+      const k = key.toLowerCase();
+      if (k === "c") {
+        templatePickerMode = false;
+        drawCommentInput();
+        return;
+      }
+      const num = parseInt(k, 10);
+      if (num >= 1 && num <= templateLabels.length) {
+        const body = templatesMap.get(templateLabels[num - 1]) ?? "";
+        commentBuffer = (commentBuffer + body).trimStart();
+        templatePickerMode = false;
+        drawCommentInput();
+        return;
+      }
+      return;
+    }
 
     if (key === "\r") {
       const body = commentBuffer.trim();
@@ -664,22 +595,43 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
       if (body.length === 0) {
         statusMsg = `${ANSI.dim}Empty comment, cancelled${ANSI.reset}`;
+        commentInputMode = false;
+        templatePickerMode = false;
+        commentTarget = null;
+        commentBuffer = "";
+        process.stdout.write("\x1b[?25l");
         drawFooter();
         return;
       }
 
+      commentInputMode = false;
+      templatePickerMode = false;
+      commentTarget = null;
+      commentBuffer = "";
+
       statusMsg = target.kind === "comment"
         ? `${ANSI.amber}Posting reply on #${target.pr.number}…${ANSI.reset}`
         : `${ANSI.amber}Posting comment on #${target.pr.number}…${ANSI.reset}`;
+      process.stdout.write("\x1b[?25l");
       drawFooter();
 
       (async () => {
         try {
           if (target.kind === "comment") {
-            await replyToPRCommentAsync(target.pr.repo, target.pr.number, target.comment.id, body);
-            statusMsg = `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
+            const result = await postPullRequestReply({
+              repo: target.pr.repo,
+              prNumber: target.pr.number,
+              inReplyToId: target.comment.id,
+              body,
+              cursorApiKey,
+            });
+            statusMsg = result.mode === "cursor-followup"
+              ? `${ANSI.green}Reply sent via Cursor API on #${target.pr.number}${ANSI.reset}`
+              : result.mode === "cursor-launch"
+                ? `${ANSI.green}No linked agent; launched Cursor agent for #${target.pr.number}${ANSI.reset}`
+                : `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
           } else {
-            await addPRCommentAsync(target.pr.repo, target.pr.number, body);
+            await postPullRequestComment(target.pr.repo, target.pr.number, body);
             statusMsg = `${ANSI.green}Comment posted on #${target.pr.number}${ANSI.reset}`;
           }
         } catch {
@@ -749,6 +701,210 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     drawSearchInput();
   }
 
+  function drawIssueCreateInput(): void {
+    const termRows = process.stdout.rows || 24;
+    const termCols = process.stdout.columns || 80;
+    const footerLine = termRows - 1;
+
+    process.stdout.write(`\x1b[${footerLine - 2};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
+    process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+
+    if (issueCreateStep === "title") {
+      const repo = issueTargetRepo || "?";
+      process.stdout.write(`\x1b[${footerLine - 2};1H`);
+      process.stdout.write(`${ANSI.bold}Create issue in ${repo}${ANSI.reset}`);
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Title: ${ANSI.reset}${issueTitleBuffer}`);
+      process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+      process.stdout.write(`${ANSI.dim}Enter to continue · Esc to cancel${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      process.stdout.write(`\x1b[${footerLine - 1};${8 + issueTitleBuffer.length}H`);
+    } else if (issueCreateStep === "body") {
+      process.stdout.write(`\x1b[${footerLine - 2};1H`);
+      process.stdout.write(`${ANSI.dim}Title: ${issueTitleBuffer}${ANSI.reset}`);
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Body: ${ANSI.reset}${issueBodyBuffer}`);
+      process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+      process.stdout.write(`${ANSI.dim}Enter to continue (or skip) · Esc to cancel${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      process.stdout.write(`\x1b[${footerLine - 1};${7 + issueBodyBuffer.length}H`);
+    } else if (issueCreateStep === "template") {
+      process.stdout.write(`\x1b[${footerLine - 2};1H`);
+      process.stdout.write(`${ANSI.bold}Select agent comment:${ANSI.reset} [0] None  [1] Research  [2] Plan  [3] Fix`);
+      process.stdout.write(`\x1b[${footerLine - 1};1H`);
+      process.stdout.write(`${ANSI.bold}Choice (0-3): ${ANSI.reset}${issueTemplateChoice >= 0 ? String(issueTemplateChoice) : ""}`);
+      process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
+      process.stdout.write(`${ANSI.dim}Enter to create · Esc to cancel${ANSI.reset}`);
+      process.stdout.write("\x1b[?25h");
+      process.stdout.write(`\x1b[${footerLine - 1};${15 + (issueTemplateChoice >= 0 ? 1 : 0)}H`);
+    }
+  }
+
+  function startIssueCreate(): void {
+    if (busy) return;
+
+    let targetRepo: string;
+    
+    if (singleRepo) {
+      targetRepo = repos[0];
+    } else {
+      const pr = selectedPR();
+      if (!pr) {
+        statusMsg = `${ANSI.red}No PR selected (select a PR to use its repo for the issue)${ANSI.reset}`;
+        drawFooter();
+        return;
+      }
+      targetRepo = pr.repo;
+    }
+
+    issueCreateMode = true;
+    issueCreateStep = "title";
+    issueTitleBuffer = "";
+    issueBodyBuffer = "";
+    issueTemplateChoice = -1;
+    issueTargetRepo = targetRepo;
+    drawIssueCreateInput();
+  }
+
+  function handleIssueCreateKey(key: string): void {
+    if (key === "\x1b" || key === "\x03") {
+      issueCreateMode = false;
+      issueCreateStep = "title";
+      issueTitleBuffer = "";
+      issueBodyBuffer = "";
+      issueTemplateChoice = -1;
+      issueTargetRepo = null;
+      process.stdout.write("\x1b[?25l");
+      drawFooter();
+      return;
+    }
+
+    if (key.startsWith("\x1b")) return;
+
+    if (issueCreateStep === "title") {
+      if (key === "\r") {
+        const title = issueTitleBuffer.trim();
+        if (title.length === 0) {
+          statusMsg = `${ANSI.red}Title cannot be empty${ANSI.reset}`;
+          issueCreateMode = false;
+          issueCreateStep = "title";
+          issueTitleBuffer = "";
+          issueBodyBuffer = "";
+          issueTargetRepo = null;
+          process.stdout.write("\x1b[?25l");
+          drawFooter();
+          return;
+        }
+        issueCreateStep = "body";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x7f" || key === "\b") {
+        if (issueTitleBuffer.length > 0) {
+          issueTitleBuffer = issueTitleBuffer.slice(0, -1);
+        }
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x15") {
+        issueTitleBuffer = "";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key.length === 1 && key.charCodeAt(0) >= 32) {
+        issueTitleBuffer += key;
+        drawIssueCreateInput();
+      }
+    } else if (issueCreateStep === "body") {
+      if (key === "\r") {
+        issueCreateStep = "template";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x7f" || key === "\b") {
+        if (issueBodyBuffer.length > 0) {
+          issueBodyBuffer = issueBodyBuffer.slice(0, -1);
+        }
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key === "\x15") {
+        issueBodyBuffer = "";
+        drawIssueCreateInput();
+        return;
+      }
+
+      if (key.length === 1 && key.charCodeAt(0) >= 32) {
+        issueBodyBuffer += key;
+        drawIssueCreateInput();
+      }
+    } else if (issueCreateStep === "template") {
+      if (key === "\r") {
+        const choice = issueTemplateChoice;
+        const title = issueTitleBuffer.trim();
+        const body = issueBodyBuffer.trim();
+        const repo = issueTargetRepo;
+
+        issueCreateMode = false;
+        issueCreateStep = "title";
+        issueTitleBuffer = "";
+        issueBodyBuffer = "";
+        issueTemplateChoice = -1;
+        issueTargetRepo = null;
+        process.stdout.write("\x1b[?25l");
+
+        if (!repo || !title) {
+          statusMsg = `${ANSI.red}Missing repo or title${ANSI.reset}`;
+          drawFooter();
+          return;
+        }
+
+        if (choice < 0 || choice > 3) {
+          statusMsg = `${ANSI.red}Invalid template choice${ANSI.reset}`;
+          drawFooter();
+          return;
+        }
+
+        statusMsg = `${ANSI.amber}Creating issue in ${repo}…${ANSI.reset}`;
+        drawFooter();
+
+        (async () => {
+          try {
+            const pr = selectedPR();
+            const agent = pr?.agent || "cursor";
+            const result = await createIssueWithAgentComment({
+              repo,
+              title,
+              body,
+              agent,
+              templateChoice: choice as 0 | 1 | 2 | 3,
+            });
+            statusMsg = result.commentAdded
+              ? `${ANSI.green}Created issue #${result.issueNumber} with comment${ANSI.reset}`
+              : `${ANSI.green}Created issue #${result.issueNumber}${ANSI.reset}`;
+          } catch (e: unknown) {
+            const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
+            statusMsg = `${ANSI.red}Failed to create issue: ${msg.slice(0, 50)}${ANSI.reset}`;
+          }
+          drawFooter();
+        })();
+        return;
+      }
+
+      if (key >= "0" && key <= "3") {
+        issueTemplateChoice = parseInt(key, 10);
+        drawIssueCreateInput();
+      }
+    }
+  }
+
   function handleSearchKey(key: string): void {
     if (key === "\x1b" || key === "\x03") {
       searchMode = false;
@@ -795,10 +951,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
   function drawTitle(): void {
     process.stdout.write("\x1b[1;1H\x1b[2K");
-    let title = TITLE;
-    if (searchQuery) {
-      title += `  ${ANSI.dim}filter: ${searchQuery}${ANSI.reset}`;
-    }
+    let title = `${TITLE}  ${ANSI.dim}[${mineOnlyFilter ? "mine" : "all authors"}] [f] mine/all [/] filter:` +
+      `${searchQuery ? ` ${searchQuery}` : ""}${ANSI.reset}`;
     const vh = getViewportHeight();
     if (virtualRows.length > vh) {
       title += `  ${ANSI.dim}[${scrollOffset + 1}\u2013${Math.min(scrollOffset + vh, virtualRows.length)} of ${virtualRows.length}]${ANSI.reset}`;
@@ -812,7 +966,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment/reply  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment/reply  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -836,47 +990,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     (async () => {
       try {
-        const prs: PRWithStatus[] = [];
-        const now = Date.now();
-        const oldByKey = new Map(currentPRs.map(p => [`${p.repo}#${p.number}`, p]));
-        for (const repo of repos) {
-          validateRepo(repo);
-          const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS);
-          if (gen !== ciGeneration || isInterrupted()) return;
-          const matching = filterPRs(rawPRs, { repo, agent: null, mineOnly });
-
-          for (const pr of matching) {
-            const mergeStateStatus = (pr as { mergeStateStatus?: string }).mergeStateStatus ?? "";
-            const reviewDecision = (pr as { reviewDecision?: string }).reviewDecision ?? "REVIEW_REQUIRED";
-            const updatedAt = (pr as { updatedAt?: string }).updatedAt ?? "";
-            const ageDays = updatedAt
-              ? Math.floor((now - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000))
-              : 0;
-
-            const prev = oldByKey.get(`${repo}#${pr.number}`);
-            prs.push({
-              repo,
-              number: pr.number,
-              headRefName: pr.headRefName,
-              title: pr.title ?? "",
-              author: pr.author,
-              mergeStateStatus,
-              mergeable: (pr as { mergeable?: string }).mergeable ?? "UNKNOWN",
-              reviewDecision,
-              updatedAt,
-              agent: getAgentForPR(pr),
-              autoMerge: (pr as { autoMergeRequest?: unknown }).autoMergeRequest != null,
-              ciStatus: prev?.ciStatus ?? "pending",
-              conflicts: mergeStateStatus === "HAS_CONFLICTS",
-              ageDays,
-              stale: ageDays >= STALE_DAYS,
-              readyToMerge: prev?.readyToMerge ?? false,
-              commentCount: prev?.commentCount ?? 0,
-            });
-          }
-        }
-
-        const sortedPrs = sortPRs(prs);
+        const sortedPrs = await fetchPRsWithStatus({ repos, scope: mineOnlyFilter ? "my-stacks" : "all" });
+        if (gen !== ciGeneration || isInterrupted()) return;
         const oldVirtualLen = virtualRows.length;
         currentPRs = sortedPrs;
 
@@ -901,55 +1016,6 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           process.stdout.write("No agent PRs found.");
         }
         drawFooter();
-
-        if (sortedPrs.length === 0) return;
-
-        // Comment counts phase
-        if (gen !== ciGeneration || isInterrupted()) return;
-        const byRepo = new Map<string, PRWithStatus[]>();
-        for (const pr of currentPRs) {
-          if (!matchesSearch(pr, searchQuery)) continue;
-          const list = byRepo.get(pr.repo) ?? [];
-          list.push(pr);
-          byRepo.set(pr.repo, list);
-        }
-        for (const [repo, repoPrs] of byRepo) {
-          if (gen !== ciGeneration || isInterrupted()) return;
-          try {
-            const counts = await getUnresolvedCommentCountsAsync(repo, repoPrs.map(p => p.number));
-            for (const pr of repoPrs) {
-              pr.commentCount = counts.get(pr.number) ?? 0;
-            }
-          } catch { /* leave as 0 */ }
-        }
-        if (gen !== ciGeneration || isInterrupted()) return;
-        drawAllRows();
-        drawFooter();
-
-        // CI status phase — one fetch per unique branch
-        const branchMap = new Map<string, { repo: string; branch: string; prIndices: number[] }>();
-        for (let i = 0; i < currentPRs.length; i++) {
-          const pr = currentPRs[i];
-          if (!matchesSearch(pr, searchQuery)) continue;
-          const key = `${pr.repo}\0${pr.headRefName}`;
-          if (!branchMap.has(key)) {
-            branchMap.set(key, { repo: pr.repo, branch: pr.headRefName, prIndices: [] });
-          }
-          branchMap.get(key)!.prIndices.push(i);
-        }
-
-        for (const { repo, branch, prIndices } of branchMap.values()) {
-          if (gen !== ciGeneration || isInterrupted()) break;
-          try {
-            const runs = await listWorkflowRunsAsync(repo, branch);
-            for (const i of prIndices) {
-              applyCIStatus(currentPRs[i], runs);
-              if (gen !== ciGeneration || isInterrupted()) break;
-              const vi = virtualRows.findIndex(vr => vr.kind === "pr" && vr.prIndex === i);
-              if (vi !== -1) drawRow(vi);
-            }
-          } catch { /* leave as pending */ }
-        }
       } catch (e: unknown) {
         if (isInterrupted()) return;
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").trim();
@@ -982,6 +1048,17 @@ function runWatch(repos: string[], mineOnly: boolean): void {
     }
   }
 
+  function toggleAuthorFilter(): void {
+    if (busy) return;
+    mineOnlyFilter = !mineOnlyFilter;
+    statusMsg = mineOnlyFilter
+      ? `${ANSI.dim}Showing only your PRs${ANSI.reset}`
+      : `${ANSI.dim}Showing PRs from all authors${ANSI.reset}`;
+    drawTitle();
+    drawFooter();
+    refresh();
+  }
+
   function selectedPR(): PRWithStatus | null {
     const vr = virtualRows[selectedIndex];
     if (!vr) return null;
@@ -991,7 +1068,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   function handleOpenSelected(): void {
     const vr = virtualRows[selectedIndex];
     if (!vr) return;
-    if (vr.kind === "comment") {
+    if (vr.kind === "comment" || vr.kind === "comment-body") {
       const comment = expandedComments[vr.commentIndex];
       if (!comment?.html_url) return;
       (async () => {
@@ -1042,23 +1119,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     (async () => {
       try {
-        const runsJson = await ghQuietAsync(
-          "run", "list",
-          "--repo", pr.repo,
-          "--branch", pr.headRefName,
-          "--limit", "100",
-          "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
-        );
-        const runs = JSON.parse(runsJson || "[]") as WorkflowRun[];
-        const failed = runs.filter(r => r.conclusion === "failure");
-        let total = 0;
-        for (const run of failed) {
-          if (isInterrupted()) break;
-          try {
-            await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
-            total++;
-          } catch { /* skip */ }
-        }
+        const { total } = await rerunFailedWorkflowRuns(pr.repo, pr.headRefName);
         statusMsg = total > 0
           ? `${ANSI.green}Reran ${total} workflow(s) for #${pr.number}${ANSI.reset}`
           : `${ANSI.dim}No failed workflows on #${pr.number}${ANSI.reset}`;
@@ -1081,15 +1142,14 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     (async () => {
       try {
-        await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
-        statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
-      } catch (e: unknown) {
-        const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
-        if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
+        const result = await mergeBaseIntoBranch(pr.repo, pr.headRefName, "main");
+        if (result.alreadyUpToDate) {
           statusMsg = `${ANSI.dim}#${pr.number} already up to date with main${ANSI.reset}`;
         } else {
-          statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
+          statusMsg = `${ANSI.green}Merged main into #${pr.number}${ANSI.reset}`;
         }
+      } catch {
+        statusMsg = `${ANSI.red}Failed to merge main into #${pr.number}${ANSI.reset}`;
       } finally {
         if (isInterrupted()) { cleanup(); return; }
       }
@@ -1107,7 +1167,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     (async () => {
       try {
-        await ghQuietAsync("pr", "review", "--repo", pr.repo, String(pr.number), "--approve");
+        await approvePullRequest(pr.repo, pr.number);
         statusMsg = `${ANSI.green}Approved #${pr.number}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
@@ -1135,7 +1195,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
 
     (async () => {
       try {
-        await ghQuietAsync("pr", "merge", "--repo", pr.repo, String(pr.number), "--auto");
+        await enableMergeWhenReady(pr.repo, pr.number);
         statusMsg = `${ANSI.green}Merge when ready enabled for #${pr.number}${ANSI.reset}`;
       } catch (e: unknown) {
         const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
@@ -1187,22 +1247,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         for (const pr of toRerun) {
           if (isInterrupted()) break;
           try {
-            const runsJson = await ghQuietAsync(
-              "run", "list",
-              "--repo", pr.repo,
-              "--branch", pr.headRefName,
-              "--limit", "100",
-              "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
-            );
-            const runs = JSON.parse(runsJson || "[]") as WorkflowRun[];
-            const failed = runs.filter(r => r.conclusion === "failure");
-            for (const run of failed) {
-              if (isInterrupted()) break;
-              try {
-                await ghQuietAsync("run", "rerun", String(run.databaseId), "--repo", pr.repo, "--failed");
-                total++;
-              } catch { /* skip */ }
-            }
+            const result = await rerunFailedWorkflowRuns(pr.repo, pr.headRefName);
+            total += result.total;
           } catch { /* skip PR */ }
         }
 
@@ -1236,13 +1282,14 @@ function runWatch(repos: string[], mineOnly: boolean): void {
           if (!matchesSearch(pr, searchQuery)) continue;
           if (isInterrupted()) break;
           try {
-            await ghQuietAsync("api", `repos/${pr.repo}/merges`, "-f", `base=${pr.headRefName}`, "-f", "head=main");
-            updated++;
-          } catch (e: unknown) {
-            const msg = ((e as { stderr?: string }).stderr || (e as Error).message || "").toLowerCase();
-            if (msg.includes("nothing to merge") || msg.includes("already up to date")) {
+            const result = await mergeBaseIntoBranch(pr.repo, pr.headRefName, "main");
+            if (result.alreadyUpToDate) {
               upToDate++;
+            } else {
+              updated++;
             }
+          } catch {
+            // Skip failures in bulk mode.
           }
         }
         statusMsg = `${ANSI.green}Updated ${updated}, ${upToDate} already up to date${ANSI.reset}`;
@@ -1257,7 +1304,8 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   }
 
   process.stdout.write("\x1b[?25l\x1b[2J\x1b[H");
-  console.log(TITLE + "\n");
+  drawTitle();
+  process.stdout.write("\n\n");
   console.log(buildTableHeader(singleRepo));
   console.log(tableSeparator());
   process.stdout.write(`\x1b[${ROW_START};1H${ANSI.dim}Loading…${ANSI.reset}`);
@@ -1279,6 +1327,11 @@ function runWatch(repos: string[], mineOnly: boolean): void {
         return;
       }
 
+      if (issueCreateMode) {
+        handleIssueCreateKey(key);
+        return;
+      }
+
       if (key === "q" || key === "\x03") cleanup();
 
       if (key === "\x1b[A" || key === "k") { moveSelection(-1); return; }
@@ -1292,12 +1345,14 @@ function runWatch(repos: string[], mineOnly: boolean): void {
       if (key === "o") { handleOpenSelected(); return; }
       if (key === "c") { handleCheckout(); return; }
       if (key === "C") { startCommentInput(); return; }
+      if (key === "i") { startIssueCreate(); return; }
       if (key === "r") { handleRerunSelected(); return; }
       if (key === "u") { handleUpdateSelected(); return; }
       if (key === "a") { handleApproveSelected(); return; }
       if (key === "m") { handleMergeWhenReady(); return; }
 
       if (key === "/") { startSearchMode(); return; }
+      if (key === "f") { toggleAuthorFilter(); return; }
 
       if (key === "R") handleRerunAllFailed();
       if (key === "U") handleUpdateAllMain();
@@ -1314,7 +1369,7 @@ function runWatch(repos: string[], mineOnly: boolean): void {
   setTimeout(loop, WATCH_INTERVAL_MS);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
   const { mineOnly } = flags;
   const noWatch = filtered.includes("--no-watch");
@@ -1326,18 +1381,19 @@ function main(): void {
   Unified dashboard across all configured repos. Shows every open agent PR with
   CI status, review state, conflicts, age, comments, and merge-readiness.
 
-  Uses origin remote when run inside a git repo (including submodules).
-  Falls back to .copserc in cwd or parent: { "repos": ["owner/name", ...] }
+  Uses ~/.copserc or .copserc when present: { "repos": ["owner/name", ...] }
+  Falls back to the origin remote when run inside a git repo (including submodules).
 
   Defaults to live TUI mode when connected to a terminal.
 
 Options:
-  --no-watch  One-shot table output (no TUI)
-  --mine      Only your PRs (default)
-  --all       Include PRs from all authors
+  --no-watch   One-shot table output (no TUI)
+  --templates PATH  Comment template directory (default: ~/.copse/comment-templates)
+  --mine       Only your PRs (default)
+  --all        Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [/]filter  [o]pen  [c]heckout  [C]omment/reply
+  ↑↓/jk navigate  ⏎ expand  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
   [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;
@@ -1347,16 +1403,16 @@ TUI keys:
   if (filteredArgs.length >= 1 && REPO_PATTERN.test(filteredArgs[0])) {
     repos = [filteredArgs[0]];
   } else {
-    const origin = getOriginRepo();
-    if (origin) {
-      repos = [origin];
+    const configured = getConfiguredRepos();
+    if (configured && configured.length > 0) {
+      repos = configured;
     } else {
-      const configured = getConfiguredRepos();
-      if (configured && configured.length > 0) {
-        repos = configured;
+      const origin = getOriginRepo();
+      if (origin) {
+        repos = [origin];
       } else {
         console.error(help);
-        console.error("\nNo repos configured. Add a .copserc with { \"repos\": [\"owner/name\"] } or run inside a git repo.");
+        console.error("\nNo repos configured. Run 'copse init' to set up ~/.copserc or run inside a git repo.");
         process.exit(1);
       }
     }
@@ -1368,10 +1424,41 @@ TUI keys:
   console.error(`Scanning ${repos.length} repo(s)...\n`);
 
   if (watch) {
-    runWatch(repos, mineOnly);
+    let templatesMap = new Map<string, string>();
+    let cursorApiKey: string | null = null;
+    try {
+      const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
+      const config = loadConfig();
+      cursorApiKey = config?.cursorApiKey?.trim() || null;
+      const templatesPath = resolveTemplatesPath(
+        templatesFromFlag ?? null,
+        config?.commentTemplates ?? null
+      );
+      templatesMap = loadTemplates(templatesPath);
+      if (templatesMap.size === 0 && needsScaffold(templatesPath) && stdout.isTTY) {
+        const rl = readline.createInterface({ input: stdin, output: stdout });
+        const answer = await rl.question(
+          `\nNo templates found. Create with starter templates? [y/n]: `
+        );
+        rl.close();
+        if (answer.trim().toLowerCase() === "y") {
+          scaffoldTemplates(templatesPath);
+          templatesMap = loadTemplates(templatesPath);
+        }
+      }
+    } catch (e: unknown) {
+      if ((e as Error).message?.includes("--templates")) {
+        console.error((e as Error).message);
+        process.exit(1);
+      }
+    }
+    runWatch(repos, mineOnly, templatesMap, cursorApiKey);
   } else {
     runOnce(repos, mineOnly);
   }
 }
 
-main();
+main().catch((e: unknown) => {
+  console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
+  process.exit(1);
+});
