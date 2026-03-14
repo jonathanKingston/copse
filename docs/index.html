@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Copse - Manage Your Agent PRs</title>
-    <meta name="description" content="Eight commands for managing agent-created pull requests with GitHub CLI">
+    <meta name="description" content="Nine commands for managing agent-created pull requests with GitHub CLI">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
         <header>
             <div class="logo">
                 <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="24" cy="24" r="20" fill="#A8D8EA" stroke="#7FB3D5" stroke-width="2"/>
+                    <circle cx="24" cy="24" r="20" style="fill: var(--color-accent); stroke: var(--color-primary);" stroke-width="2"/>
                     <path d="M18 24L22 28L30 20" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
                 <h1>Copse</h1>
@@ -28,7 +28,7 @@
 
             <section class="features">
                 <div class="feature">
-                    <div class="feature-icon" style="background: #FFE5E5;">
+                    <div class="feature-icon" style="background: var(--color-secondary);">
                         <span>✓</span>
                     </div>
                     <h3>approval</h3>
@@ -36,7 +36,7 @@
                 </div>
 
                 <div class="feature">
-                    <div class="feature-icon" style="background: #E5F3FF;">
+                    <div class="feature-icon" style="background: var(--color-accent);">
                         <span>+</span>
                     </div>
                     <h3>create-prs</h3>
@@ -44,7 +44,7 @@
                 </div>
 
                 <div class="feature">
-                    <div class="feature-icon" style="background: #F0E5FF;">
+                    <div class="feature-icon" style="background: var(--color-purple);">
                         <span>◉</span>
                     </div>
                     <h3>pr-status</h3>
@@ -52,7 +52,7 @@
                 </div>
 
                 <div class="feature">
-                    <div class="feature-icon" style="background: #E5FFE5;">
+                    <div class="feature-icon" style="background: var(--color-success);">
                         <span>↻</span>
                     </div>
                     <h3>rerun-failed</h3>
@@ -60,7 +60,7 @@
                 </div>
 
                 <div class="feature">
-                    <div class="feature-icon" style="background: #FFF5E5;">
+                    <div class="feature-icon" style="background: var(--color-warning);">
                         <span>⇄</span>
                     </div>
                     <h3>update-main</h3>
@@ -68,7 +68,7 @@
                 </div>
 
                 <div class="feature">
-                    <div class="feature-icon" style="background: #E5EEFF;">
+                    <div class="feature-icon" style="background: var(--color-accent);">
                         <span>💬</span>
                     </div>
                     <h3>pr-comments</h3>
@@ -76,19 +76,27 @@
                 </div>
 
                 <div class="feature">
-                    <div class="feature-icon" style="background: #FFE5F0;">
+                    <div class="feature-icon" style="background: var(--color-secondary);">
                         <span>🎫</span>
                     </div>
-                    <h3>spin-up-issue</h3>
+                    <h3>create-issue</h3>
                     <p>Create issues and instruct agents to build them</p>
                 </div>
 
                 <div class="feature">
-                    <div class="feature-icon" style="background: #E5FFF0;">
+                    <div class="feature-icon" style="background: var(--color-success);">
                         <span>📊</span>
                     </div>
                     <h3>status</h3>
                     <p>Unified dashboard of agent PRs across all repos</p>
+                </div>
+
+                <div class="feature">
+                    <div class="feature-icon" style="background: var(--color-accent);">
+                        <span>🌐</span>
+                    </div>
+                    <h3>web</h3>
+                    <p>Local browser dashboard for status actions and issue workflows</p>
                 </div>
             </section>
 
@@ -108,8 +116,8 @@
                         <div class="step-content">
                             <h4>Install Copse</h4>
                             <div class="code-block">
-                                <code>npm install -g copse</code>
-                                <button class="copy-btn" onclick="copyToClipboard('npm install -g copse')">Copy</button>
+                                <code>npm install -g @copse/cli</code>
+                                <button class="copy-btn" onclick="copyToClipboard('npm install -g @copse/cli')">Copy</button>
                             </div>
                             <p class="alt-text">Or clone and use directly:</p>
                             <div class="code-block">
@@ -212,7 +220,7 @@
                     <div class="example">
                         <h4>Create an issue for an agent</h4>
                         <div class="code-block">
-                            <code>copse spin-up-issue acme/project "Add dark mode"</code>
+                            <code>copse create-issue acme/project "Add dark mode"</code>
                         </div>
                     </div>
 
@@ -220,6 +228,13 @@
                         <h4>Live dashboard of all agent PRs</h4>
                         <div class="code-block">
                             <code>copse status --watch</code>
+                        </div>
+                    </div>
+
+                    <div class="example">
+                        <h4>Launch local web app</h4>
+                        <div class="code-block">
+                            <code>copse web --open</code>
                         </div>
                     </div>
                 </div>
@@ -234,7 +249,7 @@
                     </div>
                     <div class="why-item">
                         <h4>Simple & focused</h4>
-                        <p>Eight commands that do exactly what you need, nothing more</p>
+                        <p>Nine commands that do exactly what you need, nothing more</p>
                     </div>
                     <div class="why-item">
                         <h4>Tab completion</h4>

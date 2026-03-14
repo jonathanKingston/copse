@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copse Web</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Copse Web</h1>
+    <p>Status dashboard for agent PR workflows.</p>
+  </header>
+
+  <main>
+    <section class="controls">
+      <label>
+        Repos (comma separated)
+        <input id="reposInput" placeholder="owner/repo, owner/repo2">
+      </label>
+      <label class="checkbox">
+        <input id="mineOnlyInput" type="checkbox" checked>
+        Only my PRs
+      </label>
+      <button id="refreshBtn">Refresh</button>
+      <span id="statusText"></span>
+    </section>
+
+    <section class="layout">
+      <div class="panel">
+        <table id="statusTable">
+          <thead>
+            <tr>
+              <th>Repo</th>
+              <th>PR</th>
+              <th>Agent</th>
+              <th>CI</th>
+              <th>Review</th>
+              <th>Conflicts</th>
+              <th>Auto</th>
+              <th>Age</th>
+              <th>Comments</th>
+              <th>Title</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="statusRows"></tbody>
+        </table>
+      </div>
+
+      <aside class="panel">
+        <h2>Comments</h2>
+        <p id="selectedPrText">Select a PR row action to load comments.</p>
+        <div id="commentsList"></div>
+      </aside>
+    </section>
+
+    <section class="panel issue">
+      <h2>Create Issue</h2>
+      <form id="issueForm">
+        <label class="field-repo">Repo <input id="issueRepo" required placeholder="owner/repo"></label>
+        <label class="field-title">Title <input id="issueTitle" required></label>
+        <label class="field-body">Body <textarea id="issueBody"></textarea></label>
+        <label class="field-agent">Agent
+          <select id="issueAgent">
+            <option value="cursor">cursor</option>
+            <option value="claude">claude</option>
+            <option value="copilot">copilot</option>
+          </select>
+        </label>
+        <label class="field-template">Comment Template
+          <select id="issueTemplate">
+            <option value="0">No comment</option>
+            <option value="1">Research</option>
+            <option value="2">Plan</option>
+            <option value="3">Fix</option>
+          </select>
+        </label>
+        <button class="field-submit" type="submit">Create issue</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

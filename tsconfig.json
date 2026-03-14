@@ -12,6 +12,6 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["copse.ts", "lib/**/*.ts", "commands/**/*.ts"],
+  "include": ["copse.ts", "lib/**/*.ts", "commands/**/*.ts", "web/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist", "docs"]
 }

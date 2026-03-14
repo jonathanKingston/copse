@@ -4,12 +4,22 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import type { CommandDef } from "./lib/types.js";
+import { ensureGh, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // File references use .js extensions — these point to the tsc-compiled output in dist/
 const COMMANDS: Record<string, CommandDef> = {
+  init: {
+    file: "init.js",
+    description: "Scaffolds ~/.copserc config and templates interactively",
+    usage: "copse init [--skip-templates] [--force]",
+    args: [
+      { name: "--skip-templates", description: "Skip template creation prompts" },
+      { name: "--force", description: "Overwrite existing ~/.copserc file" },
+    ],
+  },
   approval: {
     file: "approval.js",
     description: "Triggers merge when ready on matching PRs",
@@ -55,6 +65,7 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "repo", description: "GitHub repo in owner/name format (default: origin)" },
       { name: "pr-number|agent", description: "Specific PR number or filter: cursor/claude" },
       { name: "--no-interactive", description: "Only list comments, do not enter reply loop" },
+      { name: "--templates PATH", description: "Comment template directory (default: ~/.copse/comment-templates)" },
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
@@ -64,6 +75,7 @@ const COMMANDS: Record<string, CommandDef> = {
     usage: "copse status [--no-watch] [--all]",
     args: [
       { name: "--no-watch", description: "One-shot table output (default: live TUI)" },
+      { name: "--templates PATH", description: "Comment template directory (default: ~/.copse/comment-templates)" },
       { name: "--all", description: "Include PRs from all authors" },
     ],
   },
@@ -79,6 +91,22 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--all", description: "Include branches from all authors" },
     ],
   },
+  "create-issue": {
+    file: "create-issue.js",
+    description: "Creates an issue and comments to instruct the specified agent to build it",
+    usage: "copse create-issue [repo] [title] [body] [agent] [options]",
+    args: [
+      { name: "repo", description: "GitHub repo in owner/name format (or omit to use origin)" },
+      { name: "title", description: "Issue title (omit to be prompted)" },
+      { name: "body", description: "Optional issue body (omit to open editor)" },
+      { name: "agent", description: '"cursor", "claude", or "copilot" (default: cursor)' },
+      { name: "--body-file PATH", description: "Read issue body from file" },
+      { name: "--template PATH", description: "Path to issue template" },
+      { name: "--no-template", description: "Skip template, use only body" },
+      { name: "--no-comment", description: "Do not add the agent instruction comment" },
+      { name: "--dry-run", description: "Show what would be created without creating" },
+    ],
+  },
   "update-main": {
     file: "update-main.js",
     description: "Merges main into open PR branches to keep them up to date",
@@ -89,6 +117,16 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--base BRANCH", description: "Branch to merge into PRs (default: main)" },
       { name: "--dry-run", description: "Show PRs without merging" },
       { name: "--all", description: "Include PRs from all authors" },
+    ],
+  },
+  web: {
+    file: "web.js",
+    description: "Runs local web app for status workflows",
+    usage: "copse web [--host HOST] [--port PORT] [--open]",
+    args: [
+      { name: "--host HOST", description: "Host to bind (default: 127.0.0.1)" },
+      { name: "--port PORT", description: "Port to bind (default: 4317)" },
+      { name: "--open", description: "Open browser after starting server" },
     ],
   },
 };
@@ -138,11 +176,14 @@ function generateCompletion(shell: "bash" | "zsh"): void {
   const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
   
   const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
-  const statusOpts: Record<string, string> = { "--no-watch": "One-shot output (default: live TUI)", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
-  const prCommentsOpts: Record<string, string> = { "--no-interactive": "List only, no reply loop", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const initOpts: Record<string, string> = { "--skip-templates": "Skip template creation", "--force": "Overwrite existing config", "--help": "Show help" };
+  const statusOpts: Record<string, string> = { "--no-watch": "One-shot output (default: live TUI)", "--templates": "Comment template directory", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
+  const prCommentsOpts: Record<string, string> = { "--no-interactive": "List only, no reply loop", "--templates": "Comment template directory", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
   const baseOpts: Record<string, string> = { "--base": "Base branch", ...commonOpts };
   const createPrsOpts: Record<string, string> = { "--base": "Base branch", "--template": "PR template path", "--no-template": "Skip template", "--hours": "Time window in hours", ...commonOpts };
   const rerunFailedOpts: Record<string, string> = { "--hours": "Time window in hours", ...commonOpts };
+  const createIssueOpts: Record<string, string> = { "--body-file": "Read body from file", "--template": "Issue template path", "--no-template": "Skip template", "--no-comment": "Skip agent comment", "--dry-run": "Preview without acting", "--help": "Show help" };
+  const webOpts: Record<string, string> = { "--host": "Host to bind", "--port": "Port to bind", "--open": "Open browser", "--help": "Show help" };
 
   if (shell === "zsh") {
     const subcmds = [
@@ -173,6 +214,9 @@ _copse() {
       ;;
     args)
       case \$line[1] in
+        init)
+          _arguments ${formatOptArgs(initOpts)}
+          ;;
         approval|pr-status)
           _arguments ${formatOptArgs(commonOpts)}
           ;;
@@ -190,6 +234,12 @@ _copse() {
           ;;
         rerun-failed)
           _arguments ${formatOptArgs(rerunFailedOpts)}
+          ;;
+        create-issue)
+          _arguments ${formatOptArgs(createIssueOpts)}
+          ;;
+        web)
+          _arguments ${formatOptArgs(webOpts)}
           ;;
       esac
       ;;
@@ -221,6 +271,9 @@ _copse_completion() {
     fi
 
     case "\${COMP_WORDS[1]}" in
+        init)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(initOpts)}" -- "$cur") )
+            ;;
         approval|pr-status)
             COMPREPLY=( $(compgen -W "${formatBashOpts(commonOpts)}" -- "$cur") )
             ;;
@@ -239,6 +292,12 @@ _copse_completion() {
         rerun-failed)
             COMPREPLY=( $(compgen -W "${formatBashOpts(rerunFailedOpts)}" -- "$cur") )
             ;;
+        create-issue)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(createIssueOpts)}" -- "$cur") )
+            ;;
+        web)
+            COMPREPLY=( $(compgen -W "${formatBashOpts(webOpts)}" -- "$cur") )
+            ;;
     esac
 }
 
@@ -256,6 +315,18 @@ function runCommand(command: string, args: string[]): void {
     console.error(`Unknown command: ${command}`);
     console.error(`Run 'copse' to see available commands.`);
     process.exit(1);
+  }
+
+  if (command !== "init") {
+    try {
+      ensureGh();
+    } catch (e: unknown) {
+      if (e instanceof GhNotFoundError || e instanceof GhNotAuthenticatedError) {
+        console.error(e.message);
+        process.exit(1);
+      }
+      throw e;
+    }
   }
 
   const commandPath = join(__dirname, "commands", cmd.file);

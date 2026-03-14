@@ -18,9 +18,62 @@ export function validateAgent(agent: string): string {
 }
 
 const GH_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 1_000;
+const GRAPHQL_CHUNK_SIZE = 20;
+// Scan a generous commit window so agent co-author matches survive follow-up human commits.
+const COAUTHOR_SCAN_COMMIT_COUNT = 100;
 
 let _interrupted = false;
 let _pipeStdio = false;
+
+function isGhNotFound(e: unknown): boolean {
+  return (e as { code?: string }).code === "ENOENT";
+}
+
+function isRetryableError(e: unknown): boolean {
+  const stderr = ((e as { stderr?: string }).stderr || "").toString();
+  const message = ((e as Error).message || "").toString();
+  return /\b(502|503)\b/.test(stderr + message);
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+export class GhNotFoundError extends Error {
+  constructor() {
+    super(
+      "GitHub CLI (gh) is not installed or not in your PATH.\n" +
+      "Install it from https://cli.github.com/"
+    );
+    this.name = "GhNotFoundError";
+  }
+}
+
+export class GhNotAuthenticatedError extends Error {
+  constructor() {
+    super(
+      "GitHub CLI (gh) is not authenticated.\n" +
+      "Run: gh auth login"
+    );
+    this.name = "GhNotAuthenticatedError";
+  }
+}
+
+/** Check that `gh` is installed and authenticated. */
+export function ensureGh(): void {
+  try {
+    execFileSync("gh", ["--version"], { stdio: "ignore" });
+  } catch (e: unknown) {
+    if (isGhNotFound(e)) throw new GhNotFoundError();
+  }
+  try {
+    execFileSync("gh", ["auth", "token"], { stdio: "ignore" });
+  } catch {
+    throw new GhNotAuthenticatedError();
+  }
+}
 
 /** True after a gh child process was killed by SIGINT/SIGTERM (set synchronously). */
 export function isInterrupted(): boolean { return _interrupted; }
@@ -30,38 +83,62 @@ export function setPipeStdio(on: boolean): void { _pipeStdio = on; }
 
 export function gh(...args: string[]): string {
   const stdio = _pipeStdio ? "pipe" as const : undefined;
-  try {
-    return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
-  } catch (e: unknown) {
-    const sig = (e as { signal?: string }).signal;
-    if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
-    throw e;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
+    } catch (e: unknown) {
+      if (isGhNotFound(e)) throw new GhNotFoundError();
+      const sig = (e as { signal?: string }).signal;
+      if (sig === "SIGINT" || sig === "SIGTERM") { _interrupted = true; throw e; }
+      if (attempt < MAX_RETRIES && isRetryableError(e)) {
+        sleepSync(RETRY_BASE_MS * 2 ** attempt);
+        continue;
+      }
+      throw e;
+    }
   }
 }
 
 /** Like gh() but suppresses stderr output (for use in TUI watch modes). */
 export function ghQuiet(...args: string[]): string {
-  try {
-    return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio: "pipe" });
-  } catch (e: unknown) {
-    const sig = (e as { signal?: string }).signal;
-    if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
-    throw e;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio: "pipe" });
+    } catch (e: unknown) {
+      if (isGhNotFound(e)) throw new GhNotFoundError();
+      const sig = (e as { signal?: string }).signal;
+      if (sig === "SIGINT" || sig === "SIGTERM") { _interrupted = true; throw e; }
+      if (attempt < MAX_RETRIES && isRetryableError(e)) {
+        sleepSync(RETRY_BASE_MS * 2 ** attempt);
+        continue;
+      }
+      throw e;
+    }
   }
 }
 
 /** Non-blocking variant of ghQuiet — keeps the event loop responsive for TUI key handling. */
 export function ghQuietAsync(...args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS }, (error, stdout) => {
-      if (error) {
-        const sig = (error as { signal?: string }).signal;
-        if (sig === "SIGINT" || sig === "SIGTERM") _interrupted = true;
-        reject(error);
-        return;
-      }
-      resolve(stdout);
-    });
+    let attempt = 0;
+    function tryExec(): void {
+      execFile("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS }, (error, stdout) => {
+        if (error) {
+          if (isGhNotFound(error)) { reject(new GhNotFoundError()); return; }
+          const sig = (error as { signal?: string }).signal;
+          if (sig === "SIGINT" || sig === "SIGTERM") { _interrupted = true; reject(error); return; }
+          if (attempt < MAX_RETRIES && isRetryableError(error)) {
+            attempt++;
+            setTimeout(tryExec, RETRY_BASE_MS * 2 ** (attempt - 1));
+            return;
+          }
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      });
+    }
+    tryExec();
   });
 }
 
@@ -78,6 +155,18 @@ export function formatGhError(e: ExecError, context: string = ""): string {
   const msg = (stderr || e.message || "").trim();
   const prefix = context ? `${context}: ` : "";
   return prefix + (msg || "Unknown error");
+}
+
+export const BOT_AUTHORS: Record<string, string> = {
+  "app/dependabot": "depbot",
+};
+
+export function isBotPR(pr: PR): boolean {
+  return (pr.author?.login ?? "") in BOT_AUTHORS;
+}
+
+export function getBotAgent(pr: PR): string | null {
+  return BOT_AUTHORS[pr.author?.login ?? ""] ?? null;
 }
 
 export const AGENT_PATTERNS_WITH_LABELS: Record<string, AgentPatternWithLabels> = {
@@ -118,13 +207,13 @@ export function getAgentForPR(pr: PR): string | null {
   for (const agent of Object.keys(AGENT_PATTERNS_WITH_LABELS)) {
     if (matchesAgent(pr, agent)) return agent;
   }
-  return null;
+  return getBotAgent(pr);
 }
 
 /**
  * Batched check: for a set of PRs that didn't match by branch/label,
- * fetch only the last commit's authors via a single GraphQL query
- * and test against agent patterns. Returns PR numbers that matched.
+ * fetch recent commit authors via a single GraphQL query and test
+ * against agent patterns. Returns PR numbers that matched.
  */
 export function checkPRsForAgentCoAuthors(
   repo: string,
@@ -134,57 +223,59 @@ export function checkPRsForAgentCoAuthors(
   if (prs.length === 0) return new Set();
 
   const [owner, name] = repo.split("/");
+  const patterns = agent
+    ? [AGENT_PATTERNS_WITH_LABELS[agent]].filter(Boolean)
+    : Object.values(AGENT_PATTERNS_WITH_LABELS);
 
-  const prFragments = prs.map(
-    (pr) =>
-      `pr_${pr.number}: pullRequest(number: ${pr.number}) {
-        commits(last: 1) {
-          nodes { commit { authors(first: 10) { nodes { name user { login } } } } }
-        }
-      }`
-  );
+  const matched = new Set<number>();
 
-  const query = `query($owner: String!, $name: String!) {
-    repository(owner: $owner, name: $name) {
-      ${prFragments.join("\n      ")}
-    }
-  }`;
-
-  try {
-    const out = gh(
-      "api", "graphql",
-      "-f", `query=${query}`,
-      "-f", `owner=${owner}`,
-      "-f", `name=${name}`
+  for (let i = 0; i < prs.length; i += GRAPHQL_CHUNK_SIZE) {
+    const chunk = prs.slice(i, i + GRAPHQL_CHUNK_SIZE);
+    const prFragments = chunk.map(
+      (pr) =>
+        `pr_${pr.number}: pullRequest(number: ${pr.number}) {
+          commits(last: ${COAUTHOR_SCAN_COMMIT_COUNT}) {
+            nodes { commit { authors(first: 10) { nodes { name user { login } } } } }
+          }
+        }`
     );
 
-    const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
-      .data?.repository ?? {};
+    const query = `query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        ${prFragments.join("\n        ")}
+      }
+    }`;
 
-    const patterns = agent
-      ? [AGENT_PATTERNS_WITH_LABELS[agent]].filter(Boolean)
-      : Object.values(AGENT_PATTERNS_WITH_LABELS);
+    try {
+      const out = gh(
+        "api", "graphql",
+        "-f", `query=${query}`,
+        "-f", `owner=${owner}`,
+        "-f", `name=${name}`
+      );
 
-    const matched = new Set<number>();
-    for (const pr of prs) {
-      const prData = repoData[`pr_${pr.number}`] as {
-        commits?: { nodes: Array<{ commit: { authors: { nodes: Array<{ name: string; user: { login: string } | null }> } } }> };
-      } | undefined;
-      const commits = prData?.commits?.nodes ?? [];
-      for (const node of commits) {
-        for (const author of node.commit?.authors?.nodes ?? []) {
-          const login = author.user?.login ?? "";
-          const authorName = author.name ?? "";
-          if (patterns.some((p) => p.branch.test(login) || p.branch.test(authorName))) {
-            matched.add(pr.number);
+      const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+        .data?.repository ?? {};
+
+      for (const pr of chunk) {
+        const prData = repoData[`pr_${pr.number}`] as {
+          commits?: { nodes: Array<{ commit: { authors: { nodes: Array<{ name: string; user: { login: string } | null }> } } }> };
+        } | undefined;
+        const commits = prData?.commits?.nodes ?? [];
+        for (const node of commits) {
+          for (const author of node.commit?.authors?.nodes ?? []) {
+            const login = author.user?.login ?? "";
+            const authorName = author.name ?? "";
+            if (patterns.some((p) => p.branch.test(login) || p.branch.test(authorName))) {
+              matched.add(pr.number);
+            }
           }
         }
       }
-    }
-    return matched;
-  } catch {
-    return new Set();
+    } catch { /* skip chunk */ }
   }
+
+  return matched;
 }
 
 export function listOpenPRs(repo: string, fields: string[]): PR[] {
@@ -301,6 +392,7 @@ export function listPRReviewComments(repo: string, prNumber: number): PRReviewCo
       "api",
       `repos/${repo}/pulls/${prNumber}/comments`,
       "--method", "GET",
+      "-H", "Accept: application/vnd.github.v3.html+json",
       "-f", "per_page=100"
     );
     const arr = JSON.parse(out) as unknown;
@@ -319,6 +411,20 @@ export function replyToPRComment(
   body: string
 ): void {
   gh(
+    "api",
+    `repos/${repo}/pulls/${prNumber}/comments/${inReplyToId}/replies`,
+    "-X", "POST",
+    "-f", `body=${body}`
+  );
+}
+
+export async function replyToPRCommentAsync(
+  repo: string,
+  prNumber: number,
+  inReplyToId: number,
+  body: string
+): Promise<void> {
+  await ghQuietAsync(
     "api",
     `repos/${repo}/pulls/${prNumber}/comments/${inReplyToId}/replies`,
     "-X", "POST",
@@ -376,88 +482,94 @@ export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): M
   if (prNumbers.length === 0) return new Map();
 
   const [owner, name] = repo.split("/");
-  const prFragments = prNumbers.map(
-    (num) =>
-      `pr_${num}: pullRequest(number: ${num}) {
-        reviewThreads(first: 100) {
-          nodes { isResolved }
-        }
-      }`
-  );
+  const counts = new Map<number, number>();
 
-  const query = `query($owner: String!, $name: String!) {
-    repository(owner: $owner, name: $name) {
-      ${prFragments.join("\n      ")}
-    }
-  }`;
-
-  try {
-    const out = gh(
-      "api", "graphql",
-      "-f", `query=${query}`,
-      "-f", `owner=${owner}`,
-      "-f", `name=${name}`
+  for (let i = 0; i < prNumbers.length; i += GRAPHQL_CHUNK_SIZE) {
+    const chunk = prNumbers.slice(i, i + GRAPHQL_CHUNK_SIZE);
+    const prFragments = chunk.map(
+      (num) =>
+        `pr_${num}: pullRequest(number: ${num}) {
+          reviewThreads(first: 100) {
+            nodes { isResolved }
+          }
+        }`
     );
 
-    const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
-      .data?.repository ?? {};
+    const query = `query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        ${prFragments.join("\n        ")}
+      }
+    }`;
 
-    const counts = new Map<number, number>();
-    for (const num of prNumbers) {
-      const prData = repoData[`pr_${num}`] as {
-        reviewThreads?: { nodes: Array<{ isResolved: boolean }> };
-      } | undefined;
-      const threads = prData?.reviewThreads?.nodes ?? [];
-      counts.set(num, threads.filter(t => !t.isResolved).length);
-    }
-    return counts;
-  } catch {
-    return new Map();
+    try {
+      const out = gh(
+        "api", "graphql",
+        "-f", `query=${query}`,
+        "-f", `owner=${owner}`,
+        "-f", `name=${name}`
+      );
+
+      const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+        .data?.repository ?? {};
+
+      for (const num of chunk) {
+        const prData = repoData[`pr_${num}`] as {
+          reviewThreads?: { nodes: Array<{ isResolved: boolean }> };
+        } | undefined;
+        const threads = prData?.reviewThreads?.nodes ?? [];
+        counts.set(num, threads.filter(t => !t.isResolved).length);
+      }
+    } catch { /* skip chunk */ }
   }
+
+  return counts;
 }
 
 export async function getUnresolvedCommentCountsAsync(repo: string, prNumbers: number[]): Promise<Map<number, number>> {
   if (prNumbers.length === 0) return new Map();
 
   const [owner, name] = repo.split("/");
-  const prFragments = prNumbers.map(
-    (num) =>
-      `pr_${num}: pullRequest(number: ${num}) {
-        reviewThreads(first: 100) {
-          nodes { isResolved }
-        }
-      }`
-  );
+  const counts = new Map<number, number>();
 
-  const query = `query($owner: String!, $name: String!) {
-    repository(owner: $owner, name: $name) {
-      ${prFragments.join("\n      ")}
-    }
-  }`;
-
-  try {
-    const out = await ghQuietAsync(
-      "api", "graphql",
-      "-f", `query=${query}`,
-      "-f", `owner=${owner}`,
-      "-f", `name=${name}`
+  for (let i = 0; i < prNumbers.length; i += GRAPHQL_CHUNK_SIZE) {
+    const chunk = prNumbers.slice(i, i + GRAPHQL_CHUNK_SIZE);
+    const prFragments = chunk.map(
+      (num) =>
+        `pr_${num}: pullRequest(number: ${num}) {
+          reviewThreads(first: 100) {
+            nodes { isResolved }
+          }
+        }`
     );
 
-    const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
-      .data?.repository ?? {};
+    const query = `query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        ${prFragments.join("\n        ")}
+      }
+    }`;
 
-    const counts = new Map<number, number>();
-    for (const num of prNumbers) {
-      const prData = repoData[`pr_${num}`] as {
-        reviewThreads?: { nodes: Array<{ isResolved: boolean }> };
-      } | undefined;
-      const threads = prData?.reviewThreads?.nodes ?? [];
-      counts.set(num, threads.filter(t => !t.isResolved).length);
-    }
-    return counts;
-  } catch {
-    return new Map();
+    try {
+      const out = await ghQuietAsync(
+        "api", "graphql",
+        "-f", `query=${query}`,
+        "-f", `owner=${owner}`,
+        "-f", `name=${name}`
+      );
+
+      const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+        .data?.repository ?? {};
+
+      for (const num of chunk) {
+        const prData = repoData[`pr_${num}`] as {
+          reviewThreads?: { nodes: Array<{ isResolved: boolean }> };
+        } | undefined;
+        const threads = prData?.reviewThreads?.nodes ?? [];
+        counts.set(num, threads.filter(t => !t.isResolved).length);
+      }
+    } catch { /* skip chunk */ }
   }
+
+  return counts;
 }
 
 export async function getResolvedCommentNodeIdsAsync(repo: string, prNumber: number): Promise<Set<string>> {
@@ -507,6 +619,7 @@ export async function listPRReviewCommentsAsync(repo: string, prNumber: number):
       "api",
       `repos/${repo}/pulls/${prNumber}/comments`,
       "--method", "GET",
+      "-H", "Accept: application/vnd.github.v3.html+json",
       "-f", "per_page=100"
     );
     const arr = JSON.parse(out) as unknown;

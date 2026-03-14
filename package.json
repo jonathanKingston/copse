@@ -1,17 +1,40 @@
 {
-  "name": "copse",
-  "version": "1.0.0",
+  "name": "@copse/cli",
+  "version": "2.0.1",
   "description": "Tools for managing agent-created PRs",
   "type": "module",
+  "license": "MIT",
+  "author": "Jonathan Kingston",
+  "keywords": [
+    "github",
+    "pull-requests",
+    "agent",
+    "cursor",
+    "claude",
+    "ci",
+    "automation",
+    "pr"
+  ],
   "bin": {
     "copse": "./dist/copse.js"
   },
+  "files": [
+    "dist/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && rm -rf dist/web/public && cp -R web/public dist/web/public",
     "pretest": "npm run build",
     "start": "node dist/copse.js",
-    "test": "node dist/copse.js pr-status",
-    "prepublishOnly": "npm run build"
+    "web": "node dist/copse.js web",
+    "web:dev": "npm run build && node dist/copse.js web --open",
+    "web:build": "npm run build",
+    "test": "node --test \"dist/tests/**/*.test.js\"",
+    "test:pr-status": "node dist/copse.js pr-status",
+    "prepublishOnly": "npm run build",
+    "bump": "bash scripts/bump-version.sh"
   },
   "homepage": "https://copse.dev",
   "repository": {
