@@ -33,7 +33,7 @@ const chainMergePrimaryBtnEl = document.getElementById("chainMergePrimaryBtn");
 const chainMergeSecondaryBtnEl = document.getElementById("chainMergeSecondaryBtn");
 
 const REVIEW_REQUIRED = "REVIEW_REQUIRED";
-const STATUS_TABLE_COLUMN_COUNT = 11;
+const STATUS_TABLE_COLUMN_COUNT = 9;
 const REVIEW_DECISION_LABELS = {
   APPROVED: "approved",
   CHANGES_REQUESTED: "changes requested",
@@ -200,13 +200,11 @@ function applyRowFilters(rows) {
 }
 
 function updateLoadedStatus() {
-  const total = allRows.length;
-  const visible = currentRows.length;
-  if (visible === total) {
-    setStatus(`Loaded ${visible} PR(s)`);
-    return;
-  }
-  setStatus(`Showing ${visible} of ${total} PR(s)`);
+  setStatus("");
+}
+
+function formatPRCount(count) {
+  return count === 1 ? "1 PR" : `${count} PRs`;
 }
 
 function syncVisibleRows(updateStatus = false) {
@@ -375,6 +373,33 @@ function createBadge(text, className = "") {
   return badge;
 }
 
+function ciStatusTone(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized.includes("pass") || normalized.includes("success")) return "success";
+  if (normalized.includes("fail") || normalized.includes("error")) return "error";
+  if (normalized.includes("pending") || normalized.includes("progress") || normalized.includes("queued")) return "pending";
+  return "unknown";
+}
+
+function createCIIndicator(status) {
+  const indicator = document.createElement("span");
+  const normalizedStatus = String(status || "unknown");
+  const tone = ciStatusTone(normalizedStatus);
+  indicator.className = `ci-indicator is-${tone}`;
+  indicator.title = `CI: ${normalizedStatus}`;
+  indicator.setAttribute("aria-label", `CI: ${normalizedStatus}`);
+  return indicator;
+}
+
+function createDraftIndicator() {
+  const indicator = document.createElement("span");
+  indicator.className = "draft-indicator";
+  indicator.textContent = "D";
+  indicator.title = "Draft";
+  indicator.setAttribute("aria-label", "Draft");
+  return indicator;
+}
+
 function prCell(row) {
   const td = document.createElement("td");
   td.className = "pr-cell";
@@ -387,13 +412,21 @@ function prCell(row) {
     main.classList.add("is-stacked");
   }
 
+  const head = document.createElement("div");
+  head.className = "pr-head";
+
   const number = document.createElement("a");
   number.className = "pr-number";
   number.href = `https://github.com/${row.repo}/pull/${row.number}`;
   number.target = "_blank";
   number.rel = "noreferrer";
   number.textContent = `#${row.number}`;
-  main.append(number);
+  head.append(number);
+  if (row.isDraft) {
+    head.append(createDraftIndicator());
+  }
+  head.append(createCIIndicator(row.ciStatus));
+  main.append(head);
 
   if (row.stackParentNumber != null || row.stackChildCount > 0) {
     const stackMeta = document.createElement("div");
@@ -429,7 +462,7 @@ function prCell(row) {
   return td;
 }
 
-function createRepoSectionRow(repo, rows) {
+function createRepoSectionRow(repo, rows, totalCount = rows.length) {
   const tr = document.createElement("tr");
   tr.className = "repo-group-row";
 
@@ -452,7 +485,9 @@ function createRepoSectionRow(repo, rows) {
   const meta = document.createElement("span");
   meta.className = "repo-group-meta";
   const selectedInRepo = rows.filter((row) => selectedPRs.has(selectionKey(row))).length;
-  const prLabel = rows.length === 1 ? "1 PR" : `${rows.length} PRs`;
+  const visibleLabel = formatPRCount(rows.length);
+  const totalLabel = formatPRCount(totalCount);
+  const prLabel = rows.length === totalCount ? totalLabel : `${visibleLabel} of ${totalLabel}`;
   meta.textContent = selectedInRepo > 0 ? `${prLabel} · ${selectedInRepo} selected` : prLabel;
 
   button.append(marker, name, meta);
@@ -474,7 +509,8 @@ function createPRRow(row) {
   const rowKey = selectionKey(row);
   const reviewLabel = reviewDecisionLabel(row.reviewDecision);
   const tr = document.createElement("tr");
-  if (selectedPRs.has(selectionKey(row))) tr.className = "selected";
+  tr.classList.add("is-expandable");
+  if (selectedPRs.has(selectionKey(row))) tr.classList.add("selected");
   if (expandedDetailKey === rowKey) tr.classList.add("is-expanded");
   const checkTd = document.createElement("td");
   checkTd.className = "select-cell";
@@ -490,8 +526,6 @@ function createPRRow(row) {
     checkTd,
     prCell(row),
     rowCell(row.agent || "?"),
-    rowCell(row.isDraft ? "yes" : "no"),
-    rowCell(row.ciStatus),
     rowCell(reviewLabel, "review-cell", row.reviewDecision),
     rowCell(row.conflicts ? "yes" : "no", "", mergeStatusTitle(row)),
     rowCell(row.autoMerge ? "yes" : "no"),
@@ -1333,6 +1367,10 @@ function renderRows() {
   statusRowsEl.innerHTML = "";
   const displayRows = buildDisplayRows(currentRows);
   const rowsByRepo = new Map();
+  const totalRowsByRepo = new Map();
+  for (const row of allRows) {
+    totalRowsByRepo.set(row.repo, (totalRowsByRepo.get(row.repo) ?? 0) + 1);
+  }
   for (const row of displayRows) {
     const repoRows = rowsByRepo.get(row.repo) ?? [];
     repoRows.push(row);
@@ -1340,7 +1378,7 @@ function renderRows() {
   }
 
   for (const [repo, repoRows] of rowsByRepo) {
-    statusRowsEl.append(createRepoSectionRow(repo, repoRows));
+    statusRowsEl.append(createRepoSectionRow(repo, repoRows, totalRowsByRepo.get(repo) ?? repoRows.length));
     if (collapsedRepos.has(repo)) continue;
     for (const row of repoRows) {
       statusRowsEl.append(createPRRow(row));
@@ -1379,7 +1417,7 @@ function schedulePoll() {
   }
   pollTimer = setTimeout(async () => {
     try {
-      await fetchStatus();
+      await fetchStatus({ silentStatus: true });
     } catch (error) {
       setStatus(error.message);
       schedulePoll();
