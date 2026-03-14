@@ -79,7 +79,11 @@ function isValidCacheEntry(value: unknown): value is SerializedCacheEntry {
   );
 }
 
-async function readDiskStatusCache(key: string): Promise<CacheEntry | null> {
+function isCacheFresh(entry: CacheEntry, now: number = Date.now()): boolean {
+  return entry.expiresAt > now;
+}
+
+async function readDiskStatusCache(key: string, allowStale: boolean = false): Promise<CacheEntry | null> {
   const dir = await getDiskCacheDir();
   if (!dir) return null;
 
@@ -89,7 +93,7 @@ async function readDiskStatusCache(key: string): Promise<CacheEntry | null> {
     if (!isValidCacheEntry(parsed) || parsed.key !== key) {
       return null;
     }
-    if (parsed.expiresAt <= Date.now()) {
+    if (!allowStale && !isCacheFresh(parsed)) {
       return null;
     }
     return {
@@ -320,25 +324,7 @@ async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<
   return sortPRs(result);
 }
 
-export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<PRWithStatus[]> {
-  const key = cacheKey(options);
-
-  const cached = statusCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.result;
-  }
-
-  const inflight = inflightRequests.get(key);
-  if (inflight) {
-    return inflight;
-  }
-
-  const diskCached = await readDiskStatusCache(key);
-  if (diskCached) {
-    statusCache.set(key, diskCached);
-    return diskCached.result;
-  }
-
+function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<PRWithStatus[]> {
   const promise = fetchPRsWithStatusUncached(options).then(
     (result) => {
       const entry = { result, expiresAt: Date.now() + WATCH_INTERVAL_MS };
@@ -355,4 +341,37 @@ export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<P
 
   inflightRequests.set(key, promise);
   return promise;
+}
+
+export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<PRWithStatus[]> {
+  const key = cacheKey(options);
+  let cached = statusCache.get(key) ?? null;
+
+  if (cached && isCacheFresh(cached)) {
+    return cached.result;
+  }
+
+  let inflight = inflightRequests.get(key);
+  if (inflight) {
+    return cached ? cached.result : inflight;
+  }
+
+  if (!cached) {
+    const diskCached = await readDiskStatusCache(key, true);
+    if (diskCached) {
+      statusCache.set(key, diskCached);
+      cached = diskCached;
+      if (isCacheFresh(diskCached)) {
+        return diskCached.result;
+      }
+    }
+  }
+
+  inflight = inflightRequests.get(key);
+  if (inflight) {
+    return cached ? cached.result : inflight;
+  }
+
+  const refresh = startStatusRefresh(key, options);
+  return cached ? cached.result : refresh;
 }
