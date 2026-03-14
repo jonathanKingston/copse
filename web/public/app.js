@@ -8,8 +8,6 @@ const conflictFilterInputEl = document.getElementById("conflictFilterInput");
 const reviewFilterInputEl = document.getElementById("reviewFilterInput");
 const commentFilterInputEl = document.getElementById("commentFilterInput");
 const refreshBtnEl = document.getElementById("refreshBtn");
-const commentsListEl = document.getElementById("commentsList");
-const selectedPrTextEl = document.getElementById("selectedPrText");
 const issueFormEl = document.getElementById("issueForm");
 const issueRepoEl = document.getElementById("issueRepo");
 const issueTitleEl = document.getElementById("issueTitle");
@@ -49,6 +47,22 @@ let pollIntervalMs = 30000;
 let collapsedRepos = new Set();
 /** @type {Set<string>} PRs currently selected for bulk actions */
 let selectedPRs = new Set();
+let expandedDetailKey = null;
+let detailStateByKey = new Map();
+
+function createDetailState() {
+  return {
+    comments: null,
+    commentsLoading: false,
+    commentsError: "",
+    files: null,
+    filesLoading: false,
+    filesError: "",
+    newCommentDraft: "",
+    replyDrafts: {},
+    openPatches: new Set(),
+  };
+}
 
 function selectionKey(row) {
   return `${row.repo}#${row.number}`;
@@ -198,10 +212,21 @@ function updateLoadedStatus() {
 function syncVisibleRows(updateStatus = false) {
   currentRows = applyRowFilters(allRows);
   pruneSelectionToCurrentRows();
+  pruneDetailState();
   renderRows();
   updateSelectionUI();
   if (updateStatus) {
     updateLoadedStatus();
+  }
+}
+
+function pruneDetailState() {
+  const visibleKeys = new Set(currentRows.map((row) => selectionKey(row)));
+  detailStateByKey = new Map(
+    [...detailStateByKey.entries()].filter(([key]) => visibleKeys.has(key))
+  );
+  if (expandedDetailKey && !visibleKeys.has(expandedDetailKey)) {
+    expandedDetailKey = null;
   }
 }
 
@@ -237,13 +262,48 @@ async function api(path, options = {}) {
 function rowCell(text, className = "", title = "") {
   const td = document.createElement("td");
   td.textContent = text;
-  if (className) {
-    td.className = className;
-  }
+  td.className = className ? `status-cell ${className}` : "status-cell";
   if (title) {
     td.title = title;
   }
   return td;
+}
+
+function mergeStatusTitle(row) {
+  return [
+    `mergeable: ${row.mergeable || "UNKNOWN"}`,
+    `mergeStateStatus: ${row.mergeStateStatus || "UNKNOWN"}`,
+  ].join("\n");
+}
+
+function createDetailMetaSection(row) {
+  const section = document.createElement("section");
+  section.className = "detail-section detail-section-meta";
+
+  const title = document.createElement("h3");
+  title.className = "detail-section-title";
+  title.textContent = "GitHub Status";
+
+  const list = document.createElement("dl");
+  list.className = "detail-meta-list";
+
+  const fields = [
+    ["Mergeable", row.mergeable || "UNKNOWN"],
+    ["Merge state", row.mergeStateStatus || "UNKNOWN"],
+    ["Head", row.headRefName],
+    ["Base", row.baseRefName || "(default branch)"],
+  ];
+
+  for (const [label, value] of fields) {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    list.append(term, description);
+  }
+
+  section.append(title, list);
+  return section;
 }
 
 function buildDisplayRows(rows) {
@@ -327,8 +387,11 @@ function prCell(row) {
     main.classList.add("is-stacked");
   }
 
-  const number = document.createElement("div");
+  const number = document.createElement("a");
   number.className = "pr-number";
+  number.href = `https://github.com/${row.repo}/pull/${row.number}`;
+  number.target = "_blank";
+  number.rel = "noreferrer";
   number.textContent = `#${row.number}`;
   main.append(number);
 
@@ -408,10 +471,13 @@ function createRepoSectionRow(repo, rows) {
 }
 
 function createPRRow(row) {
+  const rowKey = selectionKey(row);
   const reviewLabel = reviewDecisionLabel(row.reviewDecision);
   const tr = document.createElement("tr");
   if (selectedPRs.has(selectionKey(row))) tr.className = "selected";
+  if (expandedDetailKey === rowKey) tr.classList.add("is-expanded");
   const checkTd = document.createElement("td");
+  checkTd.className = "select-cell";
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = selectedPRs.has(selectionKey(row));
@@ -427,24 +493,17 @@ function createPRRow(row) {
     rowCell(row.isDraft ? "yes" : "no"),
     rowCell(row.ciStatus),
     rowCell(reviewLabel, "review-cell", row.reviewDecision),
-    rowCell(row.conflicts ? "yes" : "no"),
+    rowCell(row.conflicts ? "yes" : "no", "", mergeStatusTitle(row)),
     rowCell(row.autoMerge ? "yes" : "no"),
     rowCell(`${row.ageDays}d`),
     rowCell(String(row.commentCount))
   );
 
   const actionTd = document.createElement("td");
+  actionTd.className = "actions-cell";
   const actions = document.createElement("div");
   actions.className = "actions";
   actions.append(
-    makeActionButton("Open", () => window.open(`https://github.com/${row.repo}/pull/${row.number}`, "_blank"), true),
-    makeActionButton("Cmts", async () => {
-      try {
-        await loadComments(row);
-      } catch (error) {
-        setStatus(error.message);
-      }
-    }, true),
     makeActionButton("Ready", async () => {
       try {
         const result = await performAction(row, "ready");
@@ -489,6 +548,12 @@ function createPRRow(row) {
   );
   actionTd.append(actions);
   tr.append(actionTd);
+  tr.addEventListener("click", (event) => {
+    const interactive = event.target instanceof Element
+      && event.target.closest("button, input, a, textarea, select, label");
+    if (interactive) return;
+    void toggleDetail(row);
+  });
   return tr;
 }
 
@@ -722,10 +787,97 @@ async function performAction(row, action, payload = {}) {
   });
 }
 
-async function loadComments(row) {
-  selectedPrTextEl.textContent = `${row.repo} #${row.number}`;
-  commentsListEl.innerHTML = "";
-  const data = await api(`/api/pr/${repoSegment(row.repo)}/${row.number}/comments`);
+function getDetailState(row) {
+  const key = selectionKey(row);
+  let state = detailStateByKey.get(key);
+  if (!state) {
+    state = createDetailState();
+    detailStateByKey.set(key, state);
+  }
+  return state;
+}
+
+async function toggleDetail(row) {
+  const key = selectionKey(row);
+  if (expandedDetailKey === key) {
+    expandedDetailKey = null;
+    renderRows();
+    return;
+  }
+
+  expandedDetailKey = key;
+  renderRows();
+  await Promise.allSettled([
+    ensureCommentsLoaded(row),
+    ensureDiffLoaded(row),
+  ]);
+}
+
+async function ensureCommentsLoaded(row, force = false) {
+  const state = getDetailState(row);
+  if (state.commentsLoading) return;
+  if (!force && state.comments !== null) return;
+
+  state.commentsLoading = true;
+  state.commentsError = "";
+  renderRows();
+
+  try {
+    const data = await api(`/api/pr/${repoSegment(row.repo)}/${row.number}/comments`);
+    state.comments = Array.isArray(data.comments) ? data.comments : [];
+  } catch (error) {
+    state.commentsError = error.message;
+    if (state.comments === null) {
+      state.comments = [];
+    }
+  } finally {
+    state.commentsLoading = false;
+    renderRows();
+  }
+}
+
+async function ensureDiffLoaded(row, force = false) {
+  const state = getDetailState(row);
+  if (state.filesLoading) return;
+  if (!force && state.files !== null) return;
+
+  state.filesLoading = true;
+  state.filesError = "";
+  renderRows();
+
+  try {
+    const data = await api(`/api/pr/${repoSegment(row.repo)}/${row.number}/files`);
+    state.files = Array.isArray(data.files) ? data.files : [];
+  } catch (error) {
+    state.filesError = error.message;
+    if (state.files === null) {
+      state.files = [];
+    }
+  } finally {
+    state.filesLoading = false;
+    renderRows();
+  }
+}
+
+function createInlineMessage(text, className = "detail-empty") {
+  const el = document.createElement("p");
+  el.className = className;
+  el.textContent = text;
+  return el;
+}
+
+function createCommentsPanel(row, state) {
+  const panel = document.createElement("div");
+  panel.className = "detail-tab-panel";
+
+  if (state.comments === null) {
+    panel.append(createInlineMessage("Loading comments...", "detail-loading"));
+    return panel;
+  }
+
+  if (state.commentsError) {
+    panel.append(createInlineMessage(state.commentsError, "detail-error"));
+  }
 
   const addCommentContainer = document.createElement("div");
   addCommentContainer.className = "comment";
@@ -733,16 +885,34 @@ async function loadComments(row) {
   addCommentTitle.textContent = "Add comment";
   const addCommentText = document.createElement("textarea");
   addCommentText.placeholder = "Write a PR comment";
+  addCommentText.value = state.newCommentDraft;
+  addCommentText.addEventListener("input", () => {
+    state.newCommentDraft = addCommentText.value;
+  });
   const addCommentButton = makeActionButton("Post", async () => {
-    const body = addCommentText.value.trim();
+    const body = state.newCommentDraft.trim();
     if (!body) return;
     await performAction(row, "comment", { body });
-    await loadComments(row);
+    state.newCommentDraft = "";
+    await ensureCommentsLoaded(row, true);
   });
-  addCommentContainer.append(addCommentTitle, addCommentText, addCommentButton);
-  commentsListEl.append(addCommentContainer);
+  const addCommentActions = document.createElement("div");
+  addCommentActions.className = "comment-actions";
+  addCommentActions.append(addCommentButton);
+  addCommentContainer.append(addCommentTitle, addCommentText, addCommentActions);
+  panel.append(addCommentContainer);
 
-  for (const comment of data.comments) {
+  const comments = state.comments ?? [];
+  if (comments.length === 0) {
+    panel.append(createInlineMessage(state.commentsLoading ? "Refreshing comments..." : "No open review comments yet."));
+    return panel;
+  }
+
+  if (state.commentsLoading) {
+    panel.append(createInlineMessage("Refreshing comments...", "detail-loading"));
+  }
+
+  for (const comment of comments) {
     const container = document.createElement("div");
     container.className = "comment";
 
@@ -760,16 +930,181 @@ async function loadComments(row) {
 
     const replyText = document.createElement("textarea");
     replyText.placeholder = "Reply to this comment";
+    replyText.value = state.replyDrafts[comment.id] || "";
+    replyText.addEventListener("input", () => {
+      state.replyDrafts[comment.id] = replyText.value;
+    });
     const replyBtn = makeActionButton("Reply", async () => {
-      const value = replyText.value.trim();
+      const value = (state.replyDrafts[comment.id] || "").trim();
       if (!value) return;
       await performAction(row, "reply", { body: value, inReplyToId: comment.id });
-      await loadComments(row);
+      delete state.replyDrafts[comment.id];
+      await ensureCommentsLoaded(row, true);
     });
-
-    container.append(head, body, replyText, replyBtn);
-    commentsListEl.append(container);
+    const replyActions = document.createElement("div");
+    replyActions.className = "comment-actions";
+    replyActions.append(replyBtn);
+    container.append(head, body, replyText, replyActions);
+    panel.append(container);
   }
+
+  return panel;
+}
+
+function statusIcon(status) {
+  if (status === "added") return "+";
+  if (status === "removed") return "-";
+  if (status === "renamed") return "R";
+  return "M";
+}
+
+function statusClass(status) {
+  if (status === "added") return "diff-added";
+  if (status === "removed") return "diff-removed";
+  return "diff-modified";
+}
+
+function createDiffPanel(row, state) {
+  const panel = document.createElement("div");
+  panel.className = "detail-tab-panel";
+
+  if (state.files === null) {
+    panel.append(createInlineMessage("Loading changed files...", "detail-loading"));
+    return panel;
+  }
+
+  if (state.filesError) {
+    panel.append(createInlineMessage(state.filesError, "detail-error"));
+  }
+
+  const files = state.files ?? [];
+  if (files.length === 0) {
+    panel.append(createInlineMessage(state.filesLoading ? "Refreshing changed files..." : "No changed files."));
+    return panel;
+  }
+
+  if (state.filesLoading) {
+    panel.append(createInlineMessage("Refreshing changed files...", "detail-loading"));
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "diff-summary";
+  const totalAdd = files.reduce((sum, file) => sum + file.additions, 0);
+  const totalDel = files.reduce((sum, file) => sum + file.deletions, 0);
+  summary.textContent = `${files.length} file(s) changed, +${totalAdd} -${totalDel}`;
+  panel.append(summary);
+
+  for (const file of files) {
+    const fileKey = `${file.previous_filename || ""}\0${file.filename}`;
+    const container = document.createElement("div");
+    container.className = "diff-file";
+
+    const header = document.createElement("div");
+    header.className = "diff-file-header";
+    const badge = document.createElement("span");
+    badge.className = `diff-status ${statusClass(file.status)}`;
+    badge.textContent = statusIcon(file.status);
+    const name = document.createElement("span");
+    name.className = "diff-filename";
+    name.textContent = file.status === "renamed" && file.previous_filename
+      ? `${file.previous_filename} → ${file.filename}`
+      : file.filename;
+    const stats = document.createElement("span");
+    stats.className = "diff-stats";
+    stats.innerHTML = `<span class="diff-added">+${file.additions}</span> <span class="diff-removed">-${file.deletions}</span>`;
+    header.append(badge, name, stats);
+
+    const isOpen = state.openPatches.has(fileKey);
+    if (file.patch) {
+      header.classList.add("is-toggleable");
+      header.addEventListener("click", () => {
+        if (state.openPatches.has(fileKey)) {
+          state.openPatches.delete(fileKey);
+        } else {
+          state.openPatches.add(fileKey);
+        }
+        renderRows();
+      });
+    }
+
+    container.append(header);
+
+    if (file.patch) {
+      const patchEl = document.createElement("pre");
+      patchEl.className = "diff-patch";
+      patchEl.style.display = isOpen ? "block" : "none";
+      const lines = file.patch.split("\n");
+      for (const line of lines) {
+        const lineEl = document.createElement("span");
+        if (line.startsWith("+")) {
+          lineEl.className = "diff-line-add";
+        } else if (line.startsWith("-")) {
+          lineEl.className = "diff-line-del";
+        } else if (line.startsWith("@@")) {
+          lineEl.className = "diff-line-hunk";
+        }
+        lineEl.textContent = line + "\n";
+        patchEl.append(lineEl);
+      }
+      container.append(patchEl);
+    }
+
+    panel.append(container);
+  }
+
+  return panel;
+}
+
+function createDetailRow(row) {
+  const tr = document.createElement("tr");
+  tr.className = "detail-row";
+
+  const td = document.createElement("td");
+  td.colSpan = STATUS_TABLE_COLUMN_COUNT;
+
+  const panel = document.createElement("div");
+  panel.className = "detail-panel";
+
+  const header = document.createElement("div");
+  header.className = "detail-header";
+
+  const title = document.createElement("div");
+  title.className = "detail-title";
+  title.textContent = `${row.repo} #${row.number}`;
+
+  const controls = document.createElement("div");
+  controls.className = "detail-controls";
+  const closeBtn = makeActionButton("Close", () => {
+    expandedDetailKey = null;
+    renderRows();
+  }, true);
+  controls.append(closeBtn);
+  header.append(title, controls);
+
+  const detailGrid = document.createElement("div");
+  detailGrid.className = "detail-grid";
+
+  const commentsSection = document.createElement("section");
+  commentsSection.className = "detail-section";
+  const commentsTitle = document.createElement("h3");
+  commentsTitle.className = "detail-section-title";
+  commentsTitle.textContent = "Comments";
+  commentsSection.append(commentsTitle, createCommentsPanel(row, getDetailState(row)));
+
+  const diffSection = document.createElement("section");
+  diffSection.className = "detail-section";
+  const diffTitle = document.createElement("h3");
+  diffTitle.className = "detail-section-title";
+  diffTitle.textContent = "Code Changes";
+  diffSection.append(diffTitle, createDiffPanel(row, getDetailState(row)));
+
+  detailGrid.append(commentsSection, diffSection);
+  panel.append(header);
+  panel.append(detailGrid);
+  panel.append(createDetailMetaSection(row));
+  td.append(panel);
+  tr.append(td);
+  return tr;
 }
 
 function updateSelectionUI() {
@@ -1009,6 +1344,9 @@ function renderRows() {
     if (collapsedRepos.has(repo)) continue;
     for (const row of repoRows) {
       statusRowsEl.append(createPRRow(row));
+      if (expandedDetailKey === selectionKey(row)) {
+        statusRowsEl.append(createDetailRow(row));
+      }
     }
   }
 }

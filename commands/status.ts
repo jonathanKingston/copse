@@ -11,10 +11,11 @@ import {
   REPO_PATTERN,
   ghQuietAsync,
   listPRReviewCommentsAsync,
+  listPRFilesAsync,
   isInterrupted,
   setPipeStdio,
 } from "../lib/gh.js";
-import type { PRReviewComment } from "../lib/types.js";
+import type { PRReviewComment, PRChangedFile } from "../lib/types.js";
 import { getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { formatCommentBody, wrapAnsiText } from "../lib/format.js";
 import { getConfiguredRepos, loadConfig } from "../lib/config.js";
@@ -219,13 +220,17 @@ function runWatch(
     | { kind: "pr"; prIndex: number }
     | { kind: "comment"; prIndex: number; commentIndex: number }
     | { kind: "comment-body"; prIndex: number; commentIndex: number; line: string }
+    | { kind: "diff-file"; prIndex: number; fileIndex: number }
+    | { kind: "diff-patch-line"; prIndex: number; fileIndex: number; line: string }
     | { kind: "info"; prIndex: number; text: string };
 
   let virtualRows: VirtualRow[] = [];
   let expandedPRIndex: number | null = null;
   let expandedPRNumber: number | null = null;
   let expandedComments: PRReviewComment[] = [];
+  let expandedFiles: PRChangedFile[] = [];
   let expandedLoading = false;
+  let expandedMode: "comments" | "diff" = "comments";
   const DETAIL_MAX_LINES = 10;
 
   let commentInputMode = false;
@@ -295,29 +300,45 @@ function runWatch(
       virtualRows.push({ kind: "pr", prIndex: i });
       if (expandedPRIndex === i) {
         if (expandedLoading) {
+          const loadLabel = expandedMode === "diff" ? "files" : "comments";
           virtualRows.push({ kind: "info", prIndex: i,
-            text: `  ${ANSI.dim}Loading comments for #${currentPRs[i].number}…${ANSI.reset}` });
-        } else if (expandedComments.length === 0) {
-          virtualRows.push({ kind: "info", prIndex: i,
-            text: `  ${ANSI.dim}No unresolved comments on #${currentPRs[i].number}${ANSI.reset}` });
-        } else {
-          const columns = process.stdout.columns || 80;
-          const bodyIndent = "      ";
-          const maxComments = Math.min(expandedComments.length, DETAIL_MAX_LINES);
-          for (let j = 0; j < maxComments; j++) {
-            virtualRows.push({ kind: "comment", prIndex: i, commentIndex: j });
-            const formatted = formatCommentBody(expandedComments[j].body);
-            const bodyLines = wrapAnsiText(formatted, columns, bodyIndent);
-            for (const line of bodyLines) {
-              virtualRows.push({ kind: "comment-body", prIndex: i, commentIndex: j, line });
-            }
-            if (j < maxComments - 1) {
-              virtualRows.push({ kind: "info", prIndex: i, text: "" });
+            text: `  ${ANSI.dim}Loading ${loadLabel} for #${currentPRs[i].number}…${ANSI.reset}` });
+        } else if (expandedMode === "diff") {
+          if (expandedFiles.length === 0) {
+            virtualRows.push({ kind: "info", prIndex: i,
+              text: `  ${ANSI.dim}No changed files on #${currentPRs[i].number}${ANSI.reset}` });
+          } else {
+            const totalAdd = expandedFiles.reduce((s, f) => s + f.additions, 0);
+            const totalDel = expandedFiles.reduce((s, f) => s + f.deletions, 0);
+            virtualRows.push({ kind: "info", prIndex: i,
+              text: `  ${ANSI.dim}${expandedFiles.length} file(s) changed, ${ANSI.green}+${totalAdd}${ANSI.reset} ${ANSI.red}-${totalDel}${ANSI.reset}` });
+            for (let j = 0; j < expandedFiles.length; j++) {
+              virtualRows.push({ kind: "diff-file", prIndex: i, fileIndex: j });
             }
           }
-          if (expandedComments.length > maxComments) {
+        } else {
+          if (expandedComments.length === 0) {
             virtualRows.push({ kind: "info", prIndex: i,
-              text: `    ${ANSI.dim}${expandedComments.length - maxComments} more — press [o] to view on GitHub${ANSI.reset}` });
+              text: `  ${ANSI.dim}No unresolved comments on #${currentPRs[i].number}${ANSI.reset}` });
+          } else {
+            const columns = process.stdout.columns || 80;
+            const bodyIndent = "      ";
+            const maxComments = Math.min(expandedComments.length, DETAIL_MAX_LINES);
+            for (let j = 0; j < maxComments; j++) {
+              virtualRows.push({ kind: "comment", prIndex: i, commentIndex: j });
+              const formatted = formatCommentBody(expandedComments[j].body);
+              const bodyLines = wrapAnsiText(formatted, columns, bodyIndent);
+              for (const line of bodyLines) {
+                virtualRows.push({ kind: "comment-body", prIndex: i, commentIndex: j, line });
+              }
+              if (j < maxComments - 1) {
+                virtualRows.push({ kind: "info", prIndex: i, text: "" });
+              }
+            }
+            if (expandedComments.length > maxComments) {
+              virtualRows.push({ kind: "info", prIndex: i,
+                text: `    ${ANSI.dim}${expandedComments.length - maxComments} more — press [o] to view on GitHub${ANSI.reset}` });
+            }
           }
         }
       }
@@ -328,6 +349,15 @@ function runWatch(
     const loc = String(comment.line ?? comment.original_line ?? "?");
     const pathLoc = `${comment.path}:${loc}`;
     return `    ${ANSI.bold}${comment.user.login}${ANSI.reset} ${ANSI.dim}·${ANSI.reset} ${pathLoc}`;
+  }
+
+  function formatDiffFileRow(file: PRChangedFile): string {
+    const statusChar = file.status === "added" ? "A" : file.status === "removed" ? "D" : file.status === "renamed" ? "R" : "M";
+    const statusColor = file.status === "added" ? ANSI.green : file.status === "removed" ? ANSI.red : ANSI.amber;
+    const filename = file.status === "renamed" && file.previous_filename
+      ? `${file.previous_filename} → ${file.filename}`
+      : file.filename;
+    return `    ${statusColor}${statusChar}${ANSI.reset} ${filename} ${ANSI.green}+${file.additions}${ANSI.reset} ${ANSI.red}-${file.deletions}${ANSI.reset}`;
   }
 
   function highlightRow(row: string): string {
@@ -346,6 +376,10 @@ function runWatch(
     } else if (vr.kind === "comment") {
       row = formatCommentRow(expandedComments[vr.commentIndex]);
     } else if (vr.kind === "comment-body") {
+      row = vr.line;
+    } else if (vr.kind === "diff-file") {
+      row = formatDiffFileRow(expandedFiles[vr.fileIndex]);
+    } else if (vr.kind === "diff-patch-line") {
       row = vr.line;
     } else {
       row = vr.text;
@@ -378,7 +412,9 @@ function runWatch(
     expandedPRIndex = null;
     expandedPRNumber = null;
     expandedComments = [];
+    expandedFiles = [];
     expandedLoading = false;
+    expandedMode = "comments";
     rebuildVirtualRows();
     clampSelection();
     drawAllRows();
@@ -403,7 +439,9 @@ function runWatch(
     expandedPRIndex = prIndex;
     expandedPRNumber = currentPRs[prIndex]?.number ?? null;
     expandedComments = [];
+    expandedFiles = [];
     expandedLoading = true;
+    expandedMode = "comments";
     rebuildVirtualRows();
     drawAllRows();
     clearStaleRows(oldLen);
@@ -419,6 +457,56 @@ function runWatch(
         expandedComments = comments;
       } catch {
         expandedComments = [];
+      } finally {
+        expandedLoading = false;
+      }
+      if (expandedPRNumber === pr.number) {
+        const oldLen2 = virtualRows.length;
+        rebuildVirtualRows();
+        drawAllRows();
+        clearStaleRows(oldLen2);
+        drawFooter();
+      }
+    })();
+  }
+
+  function handleToggleDiff(): void {
+    if (virtualRows.length === 0) return;
+    const vr = virtualRows[selectedIndex];
+    if (!vr) return;
+    const prIndex = vr.prIndex;
+
+    // If already expanded in diff mode for this PR, collapse
+    if (expandedPRIndex === prIndex && expandedMode === "diff") {
+      const prVi = virtualRows.findIndex(v => v.kind === "pr" && v.prIndex === prIndex);
+      if (prVi !== -1) selectedIndex = prVi;
+      collapseDetail();
+      return;
+    }
+
+    // If already expanded in comments mode, switch to diff mode
+    const oldLen = virtualRows.length;
+    expandedPRIndex = prIndex;
+    expandedPRNumber = currentPRs[prIndex]?.number ?? null;
+    expandedFiles = [];
+    expandedComments = [];
+    expandedLoading = true;
+    expandedMode = "diff";
+    rebuildVirtualRows();
+    drawAllRows();
+    clearStaleRows(oldLen);
+    drawFooter();
+
+    const pr = currentPRs[prIndex];
+    if (!pr) return;
+
+    (async () => {
+      try {
+        const files = await listPRFilesAsync(pr.repo, pr.number);
+        if (expandedPRNumber !== pr.number) return;
+        expandedFiles = files;
+      } catch {
+        expandedFiles = [];
       } finally {
         expandedLoading = false;
       }
@@ -668,7 +756,9 @@ function runWatch(
     expandedPRIndex = null;
     expandedPRNumber = null;
     expandedComments = [];
+    expandedFiles = [];
     expandedLoading = false;
+    expandedMode = "comments";
     const oldLen = virtualRows.length;
     rebuildVirtualRows();
     clampSelection();
@@ -966,7 +1056,7 @@ function runWatch(
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [o]pen  [c]heckout  [C]omment/reply  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [d]iff  [o]pen  [c]heckout  [C]omment/reply  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1001,6 +1091,8 @@ function runWatch(
             expandedPRIndex = null;
             expandedPRNumber = null;
             expandedComments = [];
+            expandedFiles = [];
+            expandedMode = "comments";
           } else {
             expandedPRIndex = newIdx;
           }
@@ -1342,6 +1434,7 @@ function runWatch(
       if (busy) return;
 
       if (key === "\r") { handleToggleExpand(); return; }
+      if (key === "d") { handleToggleDiff(); return; }
       if (key === "o") { handleOpenSelected(); return; }
       if (key === "c") { handleCheckout(); return; }
       if (key === "C") { startCommentInput(); return; }
@@ -1393,7 +1486,7 @@ Options:
   --all        Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
+  ↑↓/jk navigate  ⏎ expand  [d]iff  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
   [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;

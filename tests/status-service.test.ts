@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyCIStatus, filterPRsByStatusScope } from "../lib/services/status-service.js";
+import { applyCIStatus, filterPRsByStatusScope, hasPRConflicts } from "../lib/services/status-service.js";
 import type { PRWithStatus, StatusBasePR } from "../lib/services/status-types.js";
 
 function makeRow(): PRWithStatus {
@@ -66,6 +66,18 @@ test("applyCIStatus keeps PR not ready when conflicts exist", () => {
   ]);
   assert.equal(row.ciStatus, "pass");
   assert.equal(row.readyToMerge, false);
+});
+
+test("hasPRConflicts prefers mergeable when GitHub reports a conflict", () => {
+  assert.equal(hasPRConflicts({ mergeable: "CONFLICTING", mergeStateStatus: "CLEAN" }), true);
+});
+
+test("hasPRConflicts prefers mergeable when GitHub reports a clean merge", () => {
+  assert.equal(hasPRConflicts({ mergeable: "MERGEABLE", mergeStateStatus: "HAS_CONFLICTS" }), false);
+});
+
+test("hasPRConflicts falls back to mergeStateStatus when mergeability is unknown", () => {
+  assert.equal(hasPRConflicts({ mergeable: "UNKNOWN", mergeStateStatus: "HAS_CONFLICTS" }), true);
 });
 
 test("filterPRsByStatusScope includes my PRs and recursive stacked children", () => {
