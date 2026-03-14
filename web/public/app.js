@@ -261,6 +261,13 @@ function formatAgentOption(agent) {
   return `${createdShort || "?"}${status ? ` · ${status}` : ""} · ${id}`;
 }
 
+function getAgentRunUrl(agent) {
+  const url = String(agent?.target?.url || "").trim();
+  if (url) return url;
+  const id = String(agent?.id || "").trim();
+  return id ? `https://cursor.com/agents?id=${encodeURIComponent(id)}` : "";
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "content-type": "application/json" },
@@ -1116,6 +1123,14 @@ function createArtifactsPanel(row, state) {
 
   label.append(agentSelect);
 
+  const openRunBtn = makeActionButton("Open Run", () => {
+    const selectedAgent = agents.find((agent) => String(agent.id || "") === state.selectedAgentId);
+    const runUrl = getAgentRunUrl(selectedAgent);
+    if (!runUrl) return;
+    window.open(runUrl, "_blank", "noopener");
+  }, true);
+  openRunBtn.disabled = agents.length === 0 || !state.selectedAgentId;
+
   const reloadBtn = makeActionButton("Reload", async () => {
     state.agents = null;
     state.artifacts = null;
@@ -1123,7 +1138,7 @@ function createArtifactsPanel(row, state) {
     await ensureArtifactsLoaded(row, true);
   }, true);
 
-  controls.append(label, reloadBtn);
+  controls.append(label, openRunBtn, reloadBtn);
   panel.append(controls);
 
   if (state.agentsLoading && state.agents === null) {
@@ -1175,6 +1190,13 @@ function createArtifactsPanel(row, state) {
 
   panel.append(list);
   return panel;
+}
+
+function shouldShowArtifactsSection(state) {
+  if (!cursorApiConfigured) return false;
+  if (state.agentsLoading || state.artifactsLoading) return true;
+  if (state.agentsError || state.artifactsError) return true;
+  return Array.isArray(state.agents) && state.agents.length > 0;
 }
 
 function statusIcon(status) {
@@ -1315,23 +1337,26 @@ function createDetailRow(row) {
   const commentsTitle = document.createElement("h3");
   commentsTitle.className = "detail-section-title";
   commentsTitle.textContent = "Comments";
-  commentsSection.append(commentsTitle, createCommentsPanel(row, getDetailState(row)));
+  const detailState = getDetailState(row);
+  commentsSection.append(commentsTitle, createCommentsPanel(row, detailState));
 
   const diffSection = document.createElement("section");
   diffSection.className = "detail-section";
   const diffTitle = document.createElement("h3");
   diffTitle.className = "detail-section-title";
   diffTitle.textContent = "Code Changes";
-  diffSection.append(diffTitle, createDiffPanel(row, getDetailState(row)));
+  diffSection.append(diffTitle, createDiffPanel(row, detailState));
 
-  const artifactsSection = document.createElement("section");
-  artifactsSection.className = "detail-section";
-  const artifactsTitle = document.createElement("h3");
-  artifactsTitle.className = "detail-section-title";
-  artifactsTitle.textContent = "Cursor Artifacts";
-  artifactsSection.append(artifactsTitle, createArtifactsPanel(row, getDetailState(row)));
-
-  detailGrid.append(commentsSection, diffSection, artifactsSection);
+  detailGrid.append(commentsSection, diffSection);
+  if (shouldShowArtifactsSection(detailState)) {
+    const artifactsSection = document.createElement("section");
+    artifactsSection.className = "detail-section";
+    const artifactsTitle = document.createElement("h3");
+    artifactsTitle.className = "detail-section-title";
+    artifactsTitle.textContent = "Cursor Artifacts";
+    artifactsSection.append(artifactsTitle, createArtifactsPanel(row, detailState));
+    detailGrid.append(artifactsSection);
+  }
   panel.append(header);
   panel.append(detailGrid);
   panel.append(createDetailMetaSection(row));

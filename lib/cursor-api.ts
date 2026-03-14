@@ -6,6 +6,7 @@ export interface CursorAgent {
   status?: string;
   createdAt?: string;
   target?: {
+    url?: string;
     prUrl?: string;
   };
 }
