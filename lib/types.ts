@@ -1,6 +1,7 @@
 export interface PR {
   number: number;
   headRefName: string;
+  baseRefName?: string;
   labels: { name: string }[];
   title: string;
   body?: string;

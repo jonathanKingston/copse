@@ -1,15 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyCIStatus } from "../lib/services/status-service.js";
-import type { PRWithStatus } from "../lib/services/status-types.js";
+import { applyCIStatus, filterPRsByStatusScope } from "../lib/services/status-service.js";
+import type { PRWithStatus, StatusBasePR } from "../lib/services/status-types.js";
 
 function makeRow(): PRWithStatus {
   return {
     repo: "acme/repo",
     number: 1,
     headRefName: "cursor/feature",
+    baseRefName: "main",
+    labels: [],
     title: "Title",
     author: { login: "alice" },
+    isDraft: false,
     mergeStateStatus: "CLEAN",
     mergeable: "MERGEABLE",
     reviewDecision: "APPROVED",
@@ -22,6 +25,18 @@ function makeRow(): PRWithStatus {
     stale: false,
     readyToMerge: false,
     commentCount: 0,
+  };
+}
+
+function makeBasePR(overrides: Partial<StatusBasePR>): StatusBasePR {
+  return {
+    number: 1,
+    headRefName: "feature/default",
+    baseRefName: "main",
+    labels: [],
+    title: "Title",
+    author: { login: "someone" },
+    ...overrides,
   };
 }
 
@@ -51,4 +66,35 @@ test("applyCIStatus keeps PR not ready when conflicts exist", () => {
   ]);
   assert.equal(row.ciStatus, "pass");
   assert.equal(row.readyToMerge, false);
+});
+
+test("filterPRsByStatusScope includes my PRs and recursive stacked children", () => {
+  const prs: StatusBasePR[] = [
+    makeBasePR({ number: 10, headRefName: "stack/a", author: { login: "alice" } }),
+    makeBasePR({ number: 11, headRefName: "stack/b", baseRefName: "stack/a", author: { login: "bob" } }),
+    makeBasePR({ number: 12, headRefName: "stack/c", baseRefName: "stack/b", author: { login: "carol" } }),
+    makeBasePR({ number: 13, headRefName: "stack/root", author: { login: "dave" } }),
+  ];
+
+  const filtered = filterPRsByStatusScope(prs, "my-stacks", "alice");
+
+  assert.deepEqual(
+    filtered.map((pr) => pr.number),
+    [10, 11, 12]
+  );
+});
+
+test("filterPRsByStatusScope excludes ancestor PRs above mine", () => {
+  const prs: StatusBasePR[] = [
+    makeBasePR({ number: 20, headRefName: "stack/a", author: { login: "dave" } }),
+    makeBasePR({ number: 21, headRefName: "stack/b", baseRefName: "stack/a", author: { login: "alice" } }),
+    makeBasePR({ number: 22, headRefName: "stack/c", baseRefName: "stack/b", author: { login: "carol" } }),
+  ];
+
+  const filtered = filterPRsByStatusScope(prs, "my-stacks", "alice");
+
+  assert.deepEqual(
+    filtered.map((pr) => pr.number),
+    [21, 22]
+  );
 });
