@@ -2,15 +2,17 @@
 
 Tools for managing agent-created PRs. Available at [copse.dev](https://copse.dev).
 
-Seven commands for managing agent-created PRs:
+Nine commands for managing agent-created PRs:
 
 - **approval** – Triggers **merge when ready** on matching PRs (enables auto-merge / adds to merge queue)
 - **create-prs** – Finds recent agent branches and creates PRs from them
 - **pr-comments** – Lists PR review comments on agent PRs; interactive reply for Cursor/Claude
 - **pr-status** – Outlines open agent PRs with test failures and rerun info (also available as `npm test`)
 - **rerun-failed** – Reruns failed workflow runs on recent agent branches
-- **spin-up-issue** – Creates an issue and comments to instruct the specified agent (cursor or claude) to build it
+- **create-issue** – Creates an issue and instructs the specified agent to build it
 - **update-main** – Merges main (or specified base) into open PR branches to keep them up to date
+- **status** – Unified dashboard of agent PRs across all repos (TUI)
+- **web** – Local web app for status workflows (comments, issue creation, reruns, update-main, approve, merge)
 
 ## Requirements
 
@@ -20,7 +22,7 @@ Seven commands for managing agent-created PRs:
 ## Installation
 
 ```bash
-npm install -g copse
+npm install -g @copse/cli
 ```
 
 ## Usage
@@ -36,6 +38,7 @@ Run `copse <command>` to see arguments for a specific command:
 ```bash
 copse approval
 copse create-prs
+copse web --open
 ```
 
 ### Tab Completion
@@ -73,6 +76,22 @@ source ~/.bashrc  # for bash
 | After a subcommand | `--dry-run`, `--all`, `--mine`, `--help` |
 
 ## Commands
+
+### Configuration (`.copserc`)
+
+You can configure repos and comment behavior with a `.copserc` JSON file in your repo (or any parent directory):
+
+```json
+{
+  "repos": ["acme/cool-project"],
+  "commentTemplates": "~/.copse/comment-templates",
+  "cursorApiKey": "cur_xxx"
+}
+```
+
+- `repos`: default repo list used by commands like `status` when no origin remote is available
+- `commentTemplates`: default path for `pr-comments`/`status` reply templates
+- `cursorApiKey`: when set, reply actions in `pr-comments` and `status` use Cursor Cloud Agents API directly. `create-issue` also uses Cursor API for `cursor` instructions; if absent, it uses GitHub comments.
 
 ### copse approval
 
@@ -205,8 +224,13 @@ copse pr-comments [repo] [pr-number|agent] [options]
 | `pr-number` | Specific PR to list comments for. |
 | `agent` | Filter PRs by `cursor` or `claude`. Omit to match both. |
 | `--no-interactive` | Only list comments; do not enter the reply loop. |
+| `--templates PATH` | Comment template directory (default: `~/.copse/comment-templates`) |
 | `--mine` | Only your PRs (default) |
 | `--all` | Include PRs from all authors |
+
+#### Comment templates
+
+When replying, you can choose from canned responses stored in a directory of `.md` files. By default uses `~/.copse/comment-templates`. Override with `--templates` or set `commentTemplates` in `.copserc`. If the directory is missing or empty, you'll be prompted to create starter templates (e.g. `please-fix.md`, `add-tests.md`, `review-again.md`). Comments from bots are marked with `[bot]` so you can quickly spot automated review feedback to reply to.
 
 #### Examples
 
@@ -254,18 +278,18 @@ copse rerun-failed acme/cool-project cursor
 copse rerun-failed acme/cool-project claude --hours 48 --dry-run
 ```
 
-### copse spin-up-issue
+### copse create-issue
 
-Creates a GitHub issue and adds a comment instructing the specified agent (cursor or claude) to go and build it.
+Creates a GitHub issue and instructs the specified agent to go and build it.
 
 ```
-copse spin-up-issue <repo> <title> [body] [agent] [options]
+copse create-issue [repo] [title] [body] [agent] [options]
 ```
 
 | Argument | Description |
 |----------|-------------|
 | `repo` | GitHub repo in `owner/name` format. Omit when run inside a git repo to use origin remote. |
-| `title` | Issue title |
+| `title` | Issue title (omit to be prompted) |
 | `body` | Optional issue body (omit to open editor with template for interactive fill-in) |
 | `agent` | `cursor` or `claude` (default: cursor) – the agent to instruct |
 | `--body-file PATH` | Read issue body from file |
@@ -274,7 +298,9 @@ copse spin-up-issue <repo> <title> [body] [agent] [options]
 | `--no-comment` | Do not add the agent instruction comment |
 | `--dry-run` | Show what would be created without creating |
 
-On success, prints the issue URL to stdout (e.g. for piping: `copse spin-up-issue ... | xargs open`).
+On success, prints the issue URL to stdout (e.g. for piping: `copse create-issue ... | xargs open`).
+
+When `agent=cursor` and `cursorApiKey` is configured in `.copserc`, the instruction is sent via Cursor Cloud Agents API (instead of posting a GitHub issue comment). Without the key, or for other agents, it uses GitHub issue comments.
 
 #### Issue template lookup
 
@@ -294,20 +320,20 @@ When no body is provided in an interactive terminal, the template (or an empty b
 
 ```bash
 # Create issue (default: cursor)
-copse spin-up-issue acme/cool-project "Add dark mode"
+copse create-issue acme/cool-project "Add dark mode"
 
 # Specify agent
-copse spin-up-issue acme/cool-project "Add dark mode" cursor
-copse spin-up-issue acme/cool-project "Fix login bug" "User cannot log in" claude
+copse create-issue acme/cool-project "Add dark mode" cursor
+copse create-issue acme/cool-project "Fix login bug" "User cannot log in" claude
 
 # Body from file
-copse spin-up-issue acme/cool-project "Implement feature X" --body-file spec.md
+copse create-issue acme/cool-project "Implement feature X" --body-file spec.md
 
 # Use specific template
-copse spin-up-issue acme/cool-project "Bug in login" --template .github/ISSUE_TEMPLATE/bug_report.md
+copse create-issue acme/cool-project "Bug in login" --template .github/ISSUE_TEMPLATE/bug_report.md
 
 # Skip template, body only
-copse spin-up-issue acme/cool-project "Add tests" --no-template --dry-run
+copse create-issue acme/cool-project "Add tests" --no-template --dry-run
 ```
 
 ### copse update-main
@@ -341,4 +367,31 @@ copse update-main acme/cool-project cursor --dry-run
 
 # Update all authors' PRs
 copse update-main acme/cool-project cursor --all
+```
+
+### copse web
+
+Runs a local-only web app for `status` workflows. Uses your local `gh` authentication and binds to localhost by default.
+
+```
+copse web [--host HOST] [--port PORT] [--open]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `--host HOST` | Host to bind (default: `127.0.0.1`) |
+| `--port PORT` | Port to bind (default: `4317`) |
+| `--open` | Open the default browser after startup |
+
+#### Examples
+
+```bash
+# Start the local web app
+copse web
+
+# Start and open browser
+copse web --open
+
+# Custom host/port
+copse web --host 127.0.0.1 --port 8080
 ```

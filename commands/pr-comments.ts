@@ -8,7 +8,8 @@
 
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { getOriginRepo } from "../lib/utils.js";
+import { getOriginRepo, isBotComment } from "../lib/utils.js";
+import { formatCommentBody } from "../lib/format.js";
 import type { PR, PRReviewComment } from "../lib/types.js";
 import {
   REPO_PATTERN,
@@ -21,8 +22,16 @@ import {
   getAgentForPR,
   formatGhError,
 } from "../lib/gh.js";
-import { parseStandardFlags } from "../lib/args.js";
+import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
+import { loadConfig } from "../lib/config.js";
+import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
+import {
+  loadTemplates,
+  scaffoldTemplates,
+  needsScaffold,
+  resolveTemplatesPath,
+} from "../lib/templates.js";
 import type { ExecError } from "../lib/types.js";
 
 const ANSI = {
@@ -37,73 +46,6 @@ const ANSI = {
 
 function hyperlink(url: string, text: string): string {
   return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
-}
-
-/** Format comment body for terminal: strip HTML, style markdown, extract actionable links. */
-function formatCommentBody(body: string): string {
-  let s = body;
-
-  // Strip HTML comments (e.g. <!-- DESCRIPTION START -->, <!-- BUGBOT_BUG_ID: ... -->)
-  s = s.replace(/<!--[\s\S]*?-->/g, "");
-
-  // Extract Fix in Cursor / Fix in Web URLs (match href anywhere; anchor body may contain img etc.)
-  const cursorUrl = s.match(/href="(https:\/\/cursor\.com\/open\?[^"]+)"/)?.[1];
-  const webUrl = s.match(/href="(https:\/\/cursor\.com\/agents\?[^"]+)"/)?.[1];
-
-  // Remove the full <a>...</a> blocks for Fix in Cursor/Web (we'll add them cleanly at the end)
-  s = s.replace(/<a[^>]*href="https:\/\/cursor\.com\/open\?[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "");
-  s = s.replace(/<a[^>]*href="https:\/\/cursor\.com\/agents\?[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "");
-
-  // Flatten <details> - show summary + content, remove tags
-  s = s.replace(/<details>\s*<summary>([^<]*)<\/summary>\s*/gi, "\n$1\n");
-  s = s.replace(/<\/details>/gi, "");
-
-  // Convert markdown links BEFORE inserting ANSI codes — the `[` in `\x1b[0m` etc. would cause
-  // the link regex to match huge false-positive spans
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    const plainText = text.trim().replace(/\*+/g, "").replace(/`/g, "").trim();
-    if (/^(High|Medium|Low)\s+Severity$/i.test(plainText)) {
-      const sev = plainText.split(/\s+/)[0];
-      const color = /high/i.test(sev) ? ANSI.red : /medium/i.test(sev) ? ANSI.yellow : ANSI.dim;
-      return `${color}${plainText}${ANSI.reset}`;
-    }
-    return hyperlink(url, plainText);
-  });
-
-  // Convert markdown headings (### Title) to bold
-  s = s.replace(/^###\s+(.+)$/gm, (_, t) => `${ANSI.bold}${t.trim()}${ANSI.reset}`);
-
-  // Style severity markers
-  s = s.replace(/\*\*(High|Medium|Low)\s+Severity\*\*/gi, (_, sev) => {
-    const color = /high/i.test(sev) ? ANSI.red : /medium/i.test(sev) ? ANSI.yellow : ANSI.dim;
-    return `${color}${sev} Severity${ANSI.reset}`;
-  });
-
-  // Convert **bold** to ANSI bold
-  s = s.replace(/\*\*([^*]+)\*\*/g, `${ANSI.bold}$1${ANSI.reset}`);
-
-  // Convert inline `code` to dim
-  s = s.replace(/`([^`]+)`/g, `${ANSI.dim}$1${ANSI.reset}`);
-
-  // Strip remaining HTML tags
-  s = s.replace(/<[^>]+>/g, "");
-  // Decode common entities
-  s = s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
-  // Collapse excess newlines
-  s = s.replace(/\n{3,}/g, "\n\n").trim();
-
-  const linkLines: string[] = [];
-  if (cursorUrl) {
-    linkLines.push(`${ANSI.cyan}${hyperlink(cursorUrl, "Fix in Cursor")}${ANSI.reset}`);
-  }
-  if (webUrl) {
-    linkLines.push(`${ANSI.cyan}${hyperlink(webUrl, "Fix in Web")}${ANSI.reset}`);
-  }
-  if (linkLines.length > 0) {
-    s += `\n\n${ANSI.bold}Actions:${ANSI.reset}\n${linkLines.join("\n")}`;
-  }
-
-  return s;
 }
 
 interface CommentWithContext {
@@ -126,12 +68,13 @@ function gatherComments(repo: string, prs: PR[]): CommentWithContext[] {
 }
 
 function formatCommentLine(ctx: CommentWithContext, index: number): string {
-  const { prNumber, prTitle, agent, comment } = ctx;
+  const { prNumber, agent, comment } = ctx;
   const line = comment.line ?? comment.original_line ?? 0;
   const bodyPreview = (comment.body || "").replace(/\n/g, " ").slice(0, 60);
   const ellipsis = (comment.body || "").length > 60 ? "…" : "";
   const agentPart = agent ? ` ${ANSI.dim}[${agent}]${ANSI.reset}` : "";
-  return `${ANSI.cyan}[${index + 1}]${ANSI.reset} #${prNumber} ${comment.path}:${line} – ${bodyPreview}${ellipsis}${agentPart}`;
+  const botPart = isBotComment(comment) ? ` ${ANSI.dim}[bot]${ANSI.reset}` : "";
+  return `${ANSI.cyan}[${index + 1}]${ANSI.reset} #${prNumber} ${comment.path}:${line} – ${bodyPreview}${ellipsis}${agentPart}${botPart}`;
 }
 
 function main(): void {
@@ -151,8 +94,9 @@ function main(): void {
 
 Options:
   --no-interactive   Only list comments, do not enter reply loop
-  --mine             Only your PRs (default)
-  --all              Include PRs from all authors
+  --templates PATH  Comment template directory (default: ~/.copse/comment-templates)
+  --mine            Only your PRs (default)
+  --all             Include PRs from all authors
 
 Examples:
   pr-comments                         # Uses origin, both agents, interactive
@@ -232,14 +176,44 @@ Examples:
     process.exit(0);
   }
 
-  runInteractiveLoop(repo, comments).catch((e: unknown) => {
+  let templatesPath: string;
+  let cursorApiKey: string | null = null;
+  try {
+    const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
+    const config = loadConfig();
+    cursorApiKey = config?.cursorApiKey?.trim() || null;
+    templatesPath = resolveTemplatesPath(templatesFromFlag ?? null, config?.commentTemplates ?? null);
+  } catch (e: unknown) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+
+  runInteractiveLoop(repo, comments, templatesPath, cursorApiKey).catch((e: unknown) => {
     console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
     process.exit(1);
   });
 }
 
-async function runInteractiveLoop(repo: string, comments: CommentWithContext[]): Promise<void> {
+async function runInteractiveLoop(
+  repo: string,
+  comments: CommentWithContext[],
+  templatesPath: string,
+  cursorApiKey: string | null
+): Promise<void> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
+
+  let templates = loadTemplates(templatesPath);
+  if (templates.size === 0 && needsScaffold(templatesPath) && stdout.isTTY) {
+    const answer = await rl.question(
+      `\n${ANSI.bold}No templates found. Create with starter templates? [y/n]:${ANSI.reset} `
+    );
+    if (answer.trim().toLowerCase() === "y") {
+      scaffoldTemplates(templatesPath);
+      templates = loadTemplates(templatesPath);
+    }
+  }
+
+  const templateLabels = Array.from(templates.keys());
 
   for (;;) {
     const raw = await rl.question(
@@ -277,18 +251,54 @@ async function runInteractiveLoop(repo: string, comments: CommentWithContext[]):
         console.error(`\x1b[31mFailed to resolve thread:\x1b[0m ${formatGhError(err)}`);
       }
     } else if (actionKey === "r" || actionKey === "reply") {
-      const reply = await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `);
-      const replyTrimmed = reply.trim();
+      let replyTrimmed: string;
+      if (templateLabels.length > 0) {
+        console.error(`\n${ANSI.bold}Templates:${ANSI.reset}`);
+        for (let i = 0; i < templateLabels.length; i++) {
+          console.error(`  ${ANSI.cyan}[${i + 1}]${ANSI.reset} ${templateLabels[i]}`);
+        }
+        console.error(`  ${ANSI.cyan}[c]${ANSI.reset}ustom – type your own`);
+        const choice = await rl.question(
+          `\n${ANSI.bold}Reply: type number (1-${templateLabels.length}), c for custom:${ANSI.reset} `
+        );
+        const c = choice.trim().toLowerCase();
+        if (c === "c" || c === "custom") {
+          replyTrimmed = (await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `)).trim();
+        } else {
+          const num = parseInt(c, 10);
+          if (num >= 1 && num <= templateLabels.length) {
+            replyTrimmed = templates.get(templateLabels[num - 1]) ?? "";
+          } else {
+            replyTrimmed = c;
+          }
+        }
+      } else {
+        replyTrimmed = (await rl.question(`${ANSI.bold}Reply (for agent to act on):${ANSI.reset} `)).trim();
+      }
       if (replyTrimmed.length === 0) {
         console.error("Empty reply, skipping.");
         continue;
       }
 
       try {
-        const mention = ctx.agent || null;
-        const body = mention ? `@${mention} ${replyTrimmed}` : replyTrimmed;
-        replyToPRComment(repo, ctx.prNumber, ctx.comment.id, body);
-        console.log(`\x1b[32mReply posted${mention ? ` (cc @${mention})` : ""}.\x1b[0m`);
+        if (cursorApiKey) {
+          const result = await sendReplyViaCursorApi({
+            repo,
+            prNumber: ctx.prNumber,
+            replyText: replyTrimmed,
+            cursorApiKey,
+          });
+          if (result.mode === "followup") {
+            console.log(`\x1b[32mReply sent to Cursor agent (${result.agentId}) via follow-up.\x1b[0m`);
+          } else {
+            console.log(`\x1b[32mNo linked agent found; launched new Cursor agent (${result.agentId}).\x1b[0m`);
+          }
+        } else {
+          const mention = ctx.agent || null;
+          const body = mention ? `@${mention} ${replyTrimmed}` : replyTrimmed;
+          replyToPRComment(repo, ctx.prNumber, ctx.comment.id, body);
+          console.log(`\x1b[32mReply posted${mention ? ` (cc @${mention})` : ""}.\x1b[0m`);
+        }
       } catch (e: unknown) {
         const err = e as ExecError;
         console.error(`\x1b[31mFailed to post reply:\x1b[0m ${formatGhError(err)}`);

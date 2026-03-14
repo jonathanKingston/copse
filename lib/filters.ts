@@ -1,5 +1,5 @@
 import type { PR } from "./types.js";
-import { getCurrentUser, matchesAgent, checkPRsForAgentCoAuthors } from "./gh.js";
+import { getCurrentUser, matchesAgent, checkPRsForAgentCoAuthors, isBotPR } from "./gh.js";
 
 export interface FilterOptions {
   repo: string;
@@ -33,7 +33,7 @@ export function filterPRsByAgent(prs: PR[], agent: string | null, repo: string):
 export function filterPRsByAuthor(prs: PR[], currentUser: string): PR[] {
   return prs.filter((pr) => {
     const authorLogin = pr.author?.login ?? "";
-    return authorLogin === currentUser;
+    return authorLogin === currentUser || isBotPR(pr);
   });
 }
 
@@ -55,7 +55,10 @@ export function filterPRs(prs: PR[], options: FilterOptions): PR[] {
     });
   }
 
-  filtered = filterPRsByAgent(filtered, options.agent, options.repo);
+  // Bot PRs bypass the agent filter; agent PRs go through the normal check
+  const botPRs = filtered.filter(isBotPR);
+  const nonBotPRs = filtered.filter((pr) => !isBotPR(pr));
+  filtered = [...filterPRsByAgent(nonBotPRs, options.agent, options.repo), ...botPRs];
 
   return filtered;
 }
