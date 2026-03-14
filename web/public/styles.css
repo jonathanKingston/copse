@@ -16,6 +16,7 @@
   --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.12);
   --radius: 16px;
   --radius-sm: 10px;
+  --stack-indent: 18px;
 }
 
 body {
@@ -61,8 +62,14 @@ header p {
   min-width: 180px;
 }
 
+.controls label {
+  flex: 0 1 150px;
+  min-width: 130px;
+}
+
 .controls input[type="text"],
-.controls input:not([type]) {
+.controls input:not([type]),
+.controls select {
   width: 100%;
   display: block;
   margin-top: 0.25rem;
@@ -74,7 +81,8 @@ header p {
 }
 
 .controls input[type="text"]:focus,
-.controls input:not([type]):focus {
+.controls input:not([type]):focus,
+.controls select:focus {
   outline: none;
   border-color: var(--border-strong);
   box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
@@ -119,19 +127,47 @@ tbody tr:hover td {
   background: rgba(47, 111, 78, 0.06);
 }
 
-td.repo-cell,
-td.title-cell,
 td.pr-cell {
   white-space: normal;
   word-break: break-word;
 }
 
 td.pr-cell {
-  min-width: 120px;
+  min-width: 260px;
+}
+
+.pr-main {
+  position: relative;
+  padding-left: calc(var(--stack-depth, 0) * var(--stack-indent));
+}
+
+.pr-main.is-stacked::before {
+  content: "";
+  position: absolute;
+  left: calc((var(--stack-depth, 0) * var(--stack-indent)) - 10px);
+  top: 0.1rem;
+  width: 0.55rem;
+  height: 0.8rem;
+  border-left: 1px solid rgba(30, 42, 34, 0.26);
+  border-bottom: 1px solid rgba(30, 42, 34, 0.26);
+  border-bottom-left-radius: 8px;
 }
 
 .pr-number {
   font-weight: 600;
+}
+
+.pr-stack-meta {
+  margin-top: 0.12rem;
+  color: var(--text-muted);
+  font-size: 0.73rem;
+}
+
+.pr-title {
+  margin-top: 0.25rem;
+  max-width: 340px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .badges {
@@ -154,23 +190,12 @@ td.pr-cell {
   line-height: 1.2;
 }
 
-td.title-cell {
-  max-width: 180px;
-  overflow: hidden;
-}
-
-td.title-cell .clamp {
+.clamp {
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-td.repo-cell {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 button {
@@ -367,11 +392,16 @@ aside.panel {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 #selectedCount {
   font-size: 0.82rem;
   color: var(--text-muted);
+}
+
+#statusText {
+  margin-left: auto;
 }
 
 th input[type="checkbox"],
@@ -382,6 +412,43 @@ td input[type="checkbox"] {
 
 tr.selected td {
   background: rgba(47, 111, 78, 0.1);
+}
+
+.repo-group-row td {
+  padding: 0;
+  border-bottom: 0;
+  background: rgba(47, 111, 78, 0.05);
+}
+
+.repo-group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.repo-group-marker {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+
+.repo-group-marker.is-open {
+  transform: rotate(90deg);
+}
+
+.repo-group-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.repo-group-meta {
+  color: var(--text-muted);
+  font-size: 0.78rem;
 }
 
 .modal {
@@ -534,6 +601,16 @@ tr.selected td {
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  .controls label,
+  .controls label:first-child {
+    flex: 1 1 180px;
+  }
+
+  #statusText {
+    width: 100%;
+    margin-left: 0;
   }
 
   .actions {
