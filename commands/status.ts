@@ -51,6 +51,23 @@ import {
   resolveTemplatesPath,
 } from "../lib/templates.js";
 import { formatBytes } from "../lib/format.js";
+import {
+  getUrgency,
+  matchesSearch,
+  ANSI,
+  visibleLength,
+  pad,
+  truncatePlain,
+  formatCI,
+  formatReview,
+  formatAutoMerge,
+  formatComments,
+  formatDiffFileRow,
+  highlightRow,
+  FIXED_COLS_WIDTH,
+  REPO_COL_WIDTH,
+} from "../lib/status-helpers.js";
+export type { Urgency } from "../lib/status-helpers.js";
 
 initializeRuntime();
 
@@ -65,88 +82,10 @@ function execAsync(command: string, args: string[]): Promise<string> {
 
 const BULK_COOLDOWN_MS = 2_000;
 
-export type Urgency = "red" | "amber" | "green";
-
-function getUrgency(pr: PRWithStatus): Urgency {
-  if (pr.ciStatus === "fail" || pr.conflicts) return "red";
-  if (pr.stale || pr.reviewDecision === "CHANGES_REQUESTED" || pr.ciStatus === "pending") return "amber";
-  return "green";
-}
-
-function matchesSearch(pr: PRWithStatus, query: string): boolean {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  const searchable = [
-    pr.repo,
-    String(pr.number),
-    pr.agent ?? "",
-    pr.ciStatus,
-    pr.reviewDecision.toLowerCase().replace(/_/g, " "),
-    pr.conflicts ? "conflicts" : "",
-    pr.autoMerge ? "merge when ready" : "",
-    `${pr.ageDays}d`,
-    pr.title,
-    pr.author.login,
-    pr.headRefName,
-  ];
-  return searchable.some(f => f.toLowerCase().includes(q));
-}
-
-
-const ANSI = {
-  reset: "\x1b[0m",
-  red: "\x1b[31m",
-  amber: "\x1b[33m",
-  green: "\x1b[32m",
-  dim: "\x1b[2m",
-  bold: "\x1b[1m",
-};
-
 function hyperlink(url: string, text: string): string {
   if (!process.stdout.isTTY) return text;
   return `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`;
 }
-
-function visibleLength(text: string): number {
-  return text.replace(/\x1b\[[0-9;]*m|\x1b\]8;;[^\x07]*\x07/g, "").length;
-}
-
-function pad(text: string, width: number): string {
-  return text + " ".repeat(Math.max(0, width - visibleLength(text)));
-}
-
-function truncatePlain(text: string, maxLen: number): string {
-  if (maxLen <= 0) return "";
-  if (text.length <= maxLen) return text;
-  if (maxLen === 1) return "…";
-  return text.slice(0, maxLen - 1) + "…";
-}
-
-function formatCI(pr: PRWithStatus): string {
-  if (pr.ciStatus === "pass") return `${ANSI.green}✓${ANSI.reset}`;
-  if (pr.ciStatus === "fail") return `${ANSI.red}✗${ANSI.reset}`;
-  if (pr.ciStatus === "pending") return `${ANSI.amber}…${ANSI.reset}`;
-  return `${ANSI.dim}—${ANSI.reset}`;
-}
-
-function formatReview(pr: PRWithStatus): string {
-  const r = pr.reviewDecision;
-  if (r === "APPROVED") return `${ANSI.green}✓${ANSI.reset}`;
-  if (r === "CHANGES_REQUESTED") return `${ANSI.amber}!${ANSI.reset}`;
-  return `${ANSI.dim}○${ANSI.reset}`;
-}
-
-function formatAutoMerge(pr: PRWithStatus): string {
-  return pr.autoMerge ? `${ANSI.green}✓${ANSI.reset}` : `${ANSI.dim}—${ANSI.reset}`;
-}
-
-function formatComments(pr: PRWithStatus): string {
-  if (pr.commentCount === 0) return `${ANSI.dim}—${ANSI.reset}`;
-  return `${ANSI.amber}${pr.commentCount}${ANSI.reset}`;
-}
-
-const FIXED_COLS_WIDTH = 39;
-const REPO_COL_WIDTH = 19;
 
 function formatPRRow(pr: PRWithStatus, singleRepo: boolean): string {
   const columns = process.stdout.columns || 80;
@@ -422,15 +361,6 @@ function runWatch(
     return `  ${marker}${ANSI.bold}${comment.user.login}${ANSI.reset} ${ANSI.dim}·${ANSI.reset} ${pathLoc}`;
   }
 
-  function formatDiffFileRow(file: PRChangedFile): string {
-    const statusChar = file.status === "added" ? "A" : file.status === "removed" ? "D" : file.status === "renamed" ? "R" : "M";
-    const statusColor = file.status === "added" ? ANSI.green : file.status === "removed" ? ANSI.red : ANSI.amber;
-    const filename = file.status === "renamed" && file.previous_filename
-      ? `${file.previous_filename} → ${file.filename}`
-      : file.filename;
-    return `    ${statusColor}${statusChar}${ANSI.reset} ${filename} ${ANSI.green}+${file.additions}${ANSI.reset} ${ANSI.red}-${file.deletions}${ANSI.reset}`;
-  }
-
   function formatArtifactRow(artifact: CursorArtifact, index: number): string {
     const columns = process.stdout.columns || 80;
     const size = formatBytes(artifact.sizeBytes ?? null).padStart(8);
@@ -438,10 +368,6 @@ function runWatch(
     const prefix = `    ${String(index + 1).padStart(2)} ${size}${date ? ` ${date}` : ""} `;
     const maxPath = Math.max(10, columns - visibleLength(prefix));
     return prefix + truncatePlain(artifact.absolutePath || "", maxPath);
-  }
-
-  function highlightRow(row: string): string {
-    return `\x1b[7m${row.replace(/\x1b\[0m/g, "\x1b[0m\x1b[7m")}\x1b[0m`;
   }
 
   function drawRow(vIndex: number): void {
