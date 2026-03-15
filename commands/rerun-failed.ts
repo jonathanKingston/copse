@@ -9,7 +9,7 @@
 import { getOriginRepo } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
 import {
-  REPO_PATTERN, validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
+  REPO_PATTERN, validateRepo, validateAgent, gh, getCommitInfoBatch, AGENT_BRANCH_PATTERNS, listBranches,
 } from "../lib/gh.js";
 import { parseStandardFlags, parseHoursOption, calculateSinceDate } from "../lib/args.js";
 import { getUserForDisplay } from "../lib/filters.js";
@@ -21,7 +21,7 @@ function listFailedRuns(repo: string, branch: string): WorkflowRun[] {
       "--repo", repo,
       "--branch", branch,
       "--status", "failure",
-      "--limit", "50",
+      "--limit", "20",
       "--json", "databaseId,name,conclusion"
     );
     const runs = JSON.parse(out || "[]");
@@ -123,21 +123,22 @@ Examples:
     process.exit(0);
   }
 
+  // Batch-fetch commit info for all agent branches in a single GraphQL query.
+  const commitInfoMap = getCommitInfoBatch(repo, agentBranches, false);
+
   const recentBranches: string[] = [];
   for (const branch of agentBranches) {
-    try {
-      const { date, authorLogin } = getCommitInfo(repo, branch);
-      if (!date || date < since) continue;
-      if (mineOnly) {
-        if (authorLogin !== currentUser) {
-          console.error(`  Skipping ${branch} (latest commit by @${authorLogin || "unknown"}, not you)`);
-          continue;
-        }
+    const info = commitInfoMap.get(branch);
+    if (!info) continue;
+    const { date, authorLogin } = info;
+    if (!date || date < since) continue;
+    if (mineOnly) {
+      if (authorLogin !== currentUser) {
+        console.error(`  Skipping ${branch} (latest commit by @${authorLogin || "unknown"}, not you)`);
+        continue;
       }
-      recentBranches.push(branch);
-    } catch (e: unknown) {
-      console.error(`  Skipping ${branch}: ${(e as Error).message}`);
     }
+    recentBranches.push(branch);
   }
 
   if (recentBranches.length === 0) {

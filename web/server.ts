@@ -21,9 +21,9 @@ import {
 } from "../lib/services/status-actions.js";
 import {
   STATUS_FILTER_SCOPES,
-  WATCH_INTERVAL_MS,
   type StatusFilterScope,
 } from "../lib/services/status-types.js";
+import { getWatchIntervalMs } from "../lib/config.js";
 import { findLatestAgentByPrUrl, getArtifactDownloadUrl, listAgentArtifacts, listAgentsByPrUrl } from "../lib/cursor-api.js";
 import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
 import { loadTemplates, resolveTemplatesPath } from "../lib/templates.js";
@@ -226,7 +226,7 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
     sendJson(res, 200, {
       repos,
       scope,
-      pollIntervalMs: WATCH_INTERVAL_MS,
+      pollIntervalMs: getWatchIntervalMs(),
       rows,
       cursorApiConfigured: Boolean(loadConfig()?.cursorApiKey?.trim()),
     });

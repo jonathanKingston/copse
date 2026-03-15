@@ -22,8 +22,8 @@ const GH_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1_000;
 const GRAPHQL_CHUNK_SIZE = 20;
-// Scan a generous commit window so agent co-author matches survive follow-up human commits.
-const COAUTHOR_SCAN_COMMIT_COUNT = 100;
+// Scan recent commits for agent co-author matches.
+const COAUTHOR_SCAN_COMMIT_COUNT = 30;
 
 let _interrupted = false;
 let _pipeStdio = false;
@@ -433,7 +433,7 @@ export function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
       "run", "list",
       "--repo", repo,
       "--branch", branch,
-      "--limit", "100",
+      "--limit", "25",
       "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
     );
     const runs = JSON.parse(out || "[]");
@@ -449,7 +449,7 @@ export async function listWorkflowRunsAsync(repo: string, branch: string): Promi
       "run", "list",
       "--repo", repo,
       "--branch", branch,
-      "--limit", "100",
+      "--limit", "25",
       "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
     );
     const runs = JSON.parse(out || "[]");
@@ -459,14 +459,44 @@ export async function listWorkflowRunsAsync(repo: string, branch: string): Promi
   }
 }
 
+const AGENT_BRANCH_PREFIXES = ["cursor/", "claude/", "copilot/"];
+
+function extractBranchNames(out: string): string[] {
+  if (!out.trim()) return [];
+  return out.trim().split("\n").filter(Boolean);
+}
+
 export function listBranches(repo: string): string[] {
-  const out = gh("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
-  return out.trim() ? out.trim().split("\n") : [];
+  const results: string[] = [];
+  for (const prefix of AGENT_BRANCH_PREFIXES) {
+    try {
+      const out = gh(
+        "api", `repos/${repo}/git/matching-refs/heads/${prefix}`,
+        "--paginate",
+        "-q", '.[].ref | sub("^refs/heads/"; "")',
+      );
+      results.push(...extractBranchNames(out));
+    } catch { /* skip prefix */ }
+  }
+  return results;
 }
 
 export async function listBranchesAsync(repo: string): Promise<string[]> {
-  const out = await ghQuietAsync("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
-  return out.trim() ? out.trim().split("\n") : [];
+  const results = await Promise.all(
+    AGENT_BRANCH_PREFIXES.map(async (prefix) => {
+      try {
+        const out = await ghQuietAsync(
+          "api", `repos/${repo}/git/matching-refs/heads/${prefix}`,
+          "--paginate",
+          "-q", '.[].ref | sub("^refs/heads/"; "")',
+        );
+        return extractBranchNames(out);
+      } catch {
+        return [];
+      }
+    })
+  );
+  return results.flat();
 }
 
 export async function getDefaultBranchAsync(repo: string): Promise<string> {
@@ -484,6 +514,110 @@ export interface CommitInfo {
   message?: string;
   date: Date | null;
   authorLogin: string;
+}
+
+/** Fetch commit info for multiple branches in a single GraphQL query (batched). */
+export function getCommitInfoBatch(
+  repo: string,
+  branches: string[],
+  includeMessage: boolean = false
+): Map<string, CommitInfo> {
+  if (branches.length === 0) return new Map();
+  const [owner, name] = repo.split("/");
+  const result = new Map<string, CommitInfo>();
+
+  for (let i = 0; i < branches.length; i += GRAPHQL_CHUNK_SIZE) {
+    const chunk = branches.slice(i, i + GRAPHQL_CHUNK_SIZE);
+    const fragments = chunk.map((branch, idx) => {
+      const qualifiedName = `refs/heads/${branch}`;
+      return `b${i + idx}: ref(qualifiedName: ${JSON.stringify(qualifiedName)}) {
+        target { ... on Commit { message committedDate author { user { login } } } }
+      }`;
+    });
+
+    const query = `query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        ${fragments.join("\n        ")}
+      }
+    }`;
+
+    try {
+      const out = gh(
+        "api", "graphql",
+        "-f", `query=${query}`,
+        "-f", `owner=${owner}`,
+        "-f", `name=${name}`,
+      );
+      const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+        .data?.repository ?? {};
+
+      for (let j = 0; j < chunk.length; j++) {
+        const refData = repoData[`b${i + j}`] as {
+          target?: { message?: string; committedDate?: string; author?: { user?: { login?: string } } };
+        } | null;
+        if (!refData?.target) continue;
+        const t = refData.target;
+        result.set(chunk[j], {
+          message: includeMessage ? (t.message || "").trim() : undefined,
+          date: t.committedDate ? new Date(t.committedDate) : null,
+          authorLogin: t.author?.user?.login || "",
+        });
+      }
+    } catch { /* skip chunk */ }
+  }
+  return result;
+}
+
+/** Async variant of getCommitInfoBatch. */
+export async function getCommitInfoBatchAsync(
+  repo: string,
+  branches: string[],
+  includeMessage: boolean = false
+): Promise<Map<string, CommitInfo>> {
+  if (branches.length === 0) return new Map();
+  const [owner, name] = repo.split("/");
+  const result = new Map<string, CommitInfo>();
+
+  for (let i = 0; i < branches.length; i += GRAPHQL_CHUNK_SIZE) {
+    const chunk = branches.slice(i, i + GRAPHQL_CHUNK_SIZE);
+    const fragments = chunk.map((branch, idx) => {
+      const qualifiedName = `refs/heads/${branch}`;
+      return `b${i + idx}: ref(qualifiedName: ${JSON.stringify(qualifiedName)}) {
+        target { ... on Commit { message committedDate author { user { login } } } }
+      }`;
+    });
+
+    const query = `query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        ${fragments.join("\n        ")}
+      }
+    }`;
+
+    try {
+      const out = await ghQuietAsync(
+        "api", "graphql",
+        "-f", `query=${query}`,
+        "-f", `owner=${owner}`,
+        "-f", `name=${name}`,
+      );
+      const repoData = (JSON.parse(out) as { data: { repository: Record<string, unknown> } })
+        .data?.repository ?? {};
+
+      for (let j = 0; j < chunk.length; j++) {
+        const refData = repoData[`b${i + j}`] as {
+          target?: { message?: string; committedDate?: string; author?: { user?: { login?: string } } };
+        } | null;
+        if (!refData?.target) continue;
+        const t = refData.target;
+        result.set(chunk[j], {
+          message: includeMessage ? (t.message || "").trim() : undefined,
+          date: t.committedDate ? new Date(t.committedDate) : null,
+          authorLogin: t.author?.user?.login || "",
+        });
+      }
+    } catch { /* skip chunk */ }
+  }
+  return result;
 }
 
 export function getResolvedCommentNodeIds(repo: string, prNumber: number): Set<string> {

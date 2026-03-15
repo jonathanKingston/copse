@@ -16,6 +16,9 @@ export interface Copserc {
   repos?: string[];
   commentTemplates?: string;
   cursorApiKey?: string;
+  /** Poll interval in milliseconds for the TUI/web dashboard refresh cycle.
+   *  Higher values reduce GitHub API usage. Default: 60000 (60s). */
+  pollIntervalMs?: number;
 }
 
 function findConfigDir(startDir: string): string | null {
@@ -45,8 +48,10 @@ function loadConfigFromPath(configPath: string): Copserc | null {
       !("commentTemplates" in config) || typeof config.commentTemplates === "string";
     const hasCursorApiKey =
       !("cursorApiKey" in config) || typeof config.cursorApiKey === "string";
+    const hasPollInterval =
+      !("pollIntervalMs" in config) || typeof config.pollIntervalMs === "number";
 
-    if (hasRepos && hasCommentTemplates && hasCursorApiKey) {
+    if (hasRepos && hasCommentTemplates && hasCursorApiKey && hasPollInterval) {
       return config;
     }
   } catch {
@@ -64,6 +69,24 @@ export function loadConfig(cwd: string = process.cwd()): Copserc | null {
   if (!configDir) return null;
 
   return loadConfigFromPath(join(configDir, CONFIG_FILENAME));
+}
+
+const DEFAULT_POLL_INTERVAL_MS = 60_000;
+const MIN_POLL_INTERVAL_MS = 10_000;
+
+let _cachedPollInterval: number | null = null;
+
+/** Returns the poll interval in ms from .copserc `pollIntervalMs`, or 60s default.
+ *  Minimum is 10s to avoid hammering the API. */
+export function getWatchIntervalMs(): number {
+  if (_cachedPollInterval !== null) return _cachedPollInterval;
+  const config = loadConfig();
+  if (config?.pollIntervalMs && config.pollIntervalMs >= MIN_POLL_INTERVAL_MS) {
+    _cachedPollInterval = config.pollIntervalMs;
+  } else {
+    _cachedPollInterval = DEFAULT_POLL_INTERVAL_MS;
+  }
+  return _cachedPollInterval;
 }
 
 export function getConfiguredRepos(cwd: string = process.cwd()): string[] | null {

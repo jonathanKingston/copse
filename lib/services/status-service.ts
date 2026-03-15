@@ -2,8 +2,8 @@ import {
   AGENT_BRANCH_PATTERNS,
   getAgentForPR,
   getCurrentUser,
-  getCommitInfo,
-  getCommitInfoAsync,
+  getCommitInfoBatch,
+  getCommitInfoBatchAsync,
   getUnresolvedCommentCounts,
   getUnresolvedCommentCountsAsync,
   listBranches,
@@ -304,15 +304,15 @@ function buildStandaloneBranchRowsSync(
   now: number
 ): BranchWithStatus[] {
   const candidateBranches = filterStandaloneBranches(listBranches(repo), prs);
+  if (candidateBranches.length === 0) return [];
+
+  const commitInfoMap = getCommitInfoBatch(repo, candidateBranches, true);
   const rows: BranchWithStatus[] = [];
 
   for (const branch of candidateBranches) {
-    try {
-      const info = getCommitInfo(repo, branch, true);
-      rows.push(toBranchWithStatus(repo, branch, now, info));
-    } catch {
-      // Keep the dashboard responsive when individual branch metadata cannot be loaded.
-    }
+    const info = commitInfoMap.get(branch);
+    if (!info) continue;
+    rows.push(toBranchWithStatus(repo, branch, now, info));
   }
 
   return rows;
@@ -324,16 +324,18 @@ async function buildStandaloneBranchRows(
   now: number
 ): Promise<BranchWithStatus[]> {
   const candidateBranches = filterStandaloneBranches(await listBranchesAsync(repo), prs);
-  const rows = await Promise.all(candidateBranches.map(async (branch) => {
-    try {
-      const info = await getCommitInfoAsync(repo, branch, true);
-      return toBranchWithStatus(repo, branch, now, info);
-    } catch {
-      return null;
-    }
-  }));
+  if (candidateBranches.length === 0) return [];
 
-  return rows.filter((row): row is BranchWithStatus => row !== null);
+  const commitInfoMap = await getCommitInfoBatchAsync(repo, candidateBranches, true);
+  const rows: BranchWithStatus[] = [];
+
+  for (const branch of candidateBranches) {
+    const info = commitInfoMap.get(branch);
+    if (!info) continue;
+    rows.push(toBranchWithStatus(repo, branch, now, info));
+  }
+
+  return rows;
 }
 
 export function fetchPRsWithStatusSync(options: StatusQueryOptions): StatusRow[] {
