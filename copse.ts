@@ -141,6 +141,16 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--out FILE", description: "Output file path (default: ./<basename>)" },
     ],
   },
+  config: {
+    file: "config.js",
+    description: "View and edit .copserc configuration",
+    usage: "copse config [path|get <key>|set <key> <value>]",
+    args: [
+      { name: "path", description: "Show config file location" },
+      { name: "get <key>", description: "Get a specific config value" },
+      { name: "set <key> <value>", description: "Set a config value (writes back to file)" },
+    ],
+  },
 };
 
 function showHelp(): void {
@@ -336,7 +346,7 @@ function runCommand(command: string, args: string[]): void {
     process.exit(1);
   }
 
-  if (command !== "init") {
+  if (command !== "init" && command !== "config") {
     try {
       ensureGh();
     } catch (e: unknown) {
