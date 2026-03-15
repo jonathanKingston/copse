@@ -1,9 +1,15 @@
 import {
   AGENT_BRANCH_PATTERNS,
+  branchHasUniqueCommits,
+  branchHasUniqueCommitsAsync,
+  hasNewerMergeCommitForBranch,
+  hasNewerMergeCommitForBranchAsync,
   getAgentForPR,
   getCurrentUser,
   getCommitInfo,
   getCommitInfoAsync,
+  getDefaultBranch,
+  getDefaultBranchAsync,
   getUnresolvedCommentCounts,
   getUnresolvedCommentCountsAsync,
   listBranches,
@@ -191,12 +197,71 @@ function commitTitle(message: string | undefined, fallback: string): string {
 }
 
 export function filterStandaloneBranches(branches: string[], prs: Pick<StatusBasePR, "headRefName" | "baseRefName">[]): string[] {
+  return filterStandaloneBranchesWithoutMerged(branches, prs, []);
+}
+
+export function filterStandaloneBranchesWithoutMerged(
+  branches: string[],
+  prs: Pick<StatusBasePR, "headRefName" | "baseRefName">[],
+  mergedBranches: Iterable<string>
+): string[] {
   const prHeadBranches = new Set<string>();
   for (const pr of prs) {
     prHeadBranches.add(pr.headRefName);
   }
+  const mergedBranchSet = new Set(mergedBranches);
 
-  return branches.filter((branch) => getAgentForBranch(branch) && !prHeadBranches.has(branch));
+  return branches.filter(
+    (branch) => getAgentForBranch(branch) && !prHeadBranches.has(branch) && !mergedBranchSet.has(branch)
+  );
+}
+
+function getMergedStandaloneBranches(
+  repo: string,
+  branches: string[],
+  defaultBranch: string
+): Set<string> {
+  const mergedBranches = new Set<string>();
+  for (const branch of branches) {
+    try {
+      if (!branchHasUniqueCommits(repo, defaultBranch, branch)) {
+        mergedBranches.add(branch);
+        continue;
+      }
+      const branchTip = getCommitInfo(repo, branch);
+      if (branchTip.date && hasNewerMergeCommitForBranch(repo, defaultBranch, branch, branchTip.date)) {
+        mergedBranches.add(branch);
+      }
+    } catch {
+      // Keep uncertain branches visible rather than hiding actionable work.
+    }
+  }
+  return mergedBranches;
+}
+
+async function getMergedStandaloneBranchesAsync(
+  repo: string,
+  branches: string[],
+  defaultBranch: string
+): Promise<Set<string>> {
+  const merged = await Promise.all(
+    branches.map(async (branch) => {
+      try {
+        if (!await branchHasUniqueCommitsAsync(repo, defaultBranch, branch)) {
+          return branch;
+        }
+        const branchTip = await getCommitInfoAsync(repo, branch);
+        if (branchTip.date && await hasNewerMergeCommitForBranchAsync(repo, defaultBranch, branch, branchTip.date)) {
+          return branch;
+        }
+        return null;
+      } catch {
+        // Keep uncertain branches visible rather than hiding actionable work.
+        return null;
+      }
+    })
+  );
+  return new Set(merged.filter((branch): branch is string => branch !== null));
 }
 
 function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithStatus {
@@ -303,7 +368,11 @@ function buildStandaloneBranchRowsSync(
   prs: StatusBasePR[],
   now: number
 ): BranchWithStatus[] {
-  const candidateBranches = filterStandaloneBranches(listBranches(repo), prs);
+  const allBranches = listBranches(repo);
+  const allCandidateBranches = filterStandaloneBranches(allBranches, prs);
+  const defaultBranch = getDefaultBranch(repo);
+  const mergedBranches = getMergedStandaloneBranches(repo, allCandidateBranches, defaultBranch);
+  const candidateBranches = filterStandaloneBranchesWithoutMerged(allBranches, prs, mergedBranches);
   const rows: BranchWithStatus[] = [];
 
   for (const branch of candidateBranches) {
@@ -323,7 +392,11 @@ async function buildStandaloneBranchRows(
   prs: StatusBasePR[],
   now: number
 ): Promise<BranchWithStatus[]> {
-  const candidateBranches = filterStandaloneBranches(await listBranchesAsync(repo), prs);
+  const allBranches = await listBranchesAsync(repo);
+  const allCandidateBranches = filterStandaloneBranches(allBranches, prs);
+  const defaultBranch = await getDefaultBranchAsync(repo);
+  const mergedBranches = await getMergedStandaloneBranchesAsync(repo, allCandidateBranches, defaultBranch);
+  const candidateBranches = filterStandaloneBranchesWithoutMerged(allBranches, prs, mergedBranches);
   const rows = await Promise.all(candidateBranches.map(async (branch) => {
     try {
       const info = await getCommitInfoAsync(repo, branch, true);
