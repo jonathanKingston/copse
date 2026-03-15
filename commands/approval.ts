@@ -19,6 +19,7 @@
 import { initializeRuntime } from "../lib/runtime-init.js";
 import { getOriginRepo } from "../lib/utils.js";
 import type { ExecError } from "../lib/types.js";
+import type { Command } from "../lib/command.js";
 import {
   REPO_PATTERN, validateRepo, gh, formatGhError, listOpenPRs,
 } from "../lib/gh.js";
@@ -88,8 +89,16 @@ function enableMergeWhenReady(repo: string, prNumber: number): boolean {
   }
 }
 
-function main(): void {
-  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
+interface ApprovalParsed {
+  repo: string;
+  agent: string | null;
+  query: string | null;
+  dryRun: boolean;
+  mineOnly: boolean;
+}
+
+function parseArgs(argv: string[]): ApprovalParsed {
+  const { flags, filtered } = parseStandardFlags(argv);
   const { dryRun, mineOnly } = flags;
 
   let repo: string | undefined;
@@ -107,7 +116,7 @@ function main(): void {
   } else {
     repo = getOriginRepo() ?? undefined;
     if (!repo) {
-      console.error(`Usage: approval [repo] [agent] [query] [--dry-run] [--all]
+      throw new Error(`Usage: approval [repo] [agent] [query] [--dry-run] [--all]
 
   repo      GitHub repo in owner/name format (e.g. acme/cool-project).
             Omit when run inside a git repo to use origin remote.
@@ -124,7 +133,6 @@ Examples:
   approval acme/cool-project cursor --dry-run
   approval acme/cool-project cursor --all
 `);
-      process.exit(1);
     }
     if (filtered.length >= 1 && ["cursor", "claude"].includes(filtered[0].toLowerCase())) {
       agent = filtered[0].toLowerCase();
@@ -134,46 +142,69 @@ Examples:
     }
   }
 
-  validateRepo(repo);
-
-  const currentUser = getUserForDisplay(mineOnly);
-  console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
-  
-  const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "body", "author"]);
-  const matching = filterPRs(prs, { repo, agent, mineOnly, query });
-
-  if (matching.length === 0) {
-    console.error("No matching PRs found.");
-    process.exit(0);
-  }
-
-  console.error(`Found ${matching.length} matching PR(s):`);
-  for (const pr of matching) {
-    console.error(`  #${pr.number} ${pr.title}`);
-  }
-
-  if (dryRun) {
-    console.error("(dry run - no changes made)");
-    for (const pr of matching) {
-      console.log(`#${pr.number} would enable merge when ready`);
-    }
-  } else {
-    for (const pr of matching) {
-      const enabled = enableMergeWhenReady(repo, pr.number);
-      console.log(`#${pr.number} ${enabled ? "merge when ready enabled" : "already enabled"}`);
-    }
-  }
-
-  console.error(
-    dryRun
-      ? "Done."
-      : `Done. Processed ${matching.length} PR(s).`
-  );
+  return { repo, agent, query, dryRun, mineOnly };
 }
 
-try {
-  main();
-} catch (e: unknown) {
-  console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
-  process.exit(1);
+export const approvalCommand: Command = {
+  name: "approval",
+  description: "Triggers merge when ready on matching PRs",
+
+  validate(args: string[]): void {
+    const parsed = parseArgs(args);
+    validateRepo(parsed.repo);
+  },
+
+  run(args: string[]): void {
+    const { repo, agent, query, dryRun, mineOnly } = parseArgs(args);
+
+    const currentUser = getUserForDisplay(mineOnly);
+    console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
+
+    const prs = listOpenPRs(repo, ["number", "headRefName", "labels", "title", "body", "author"]);
+    const matching = filterPRs(prs, { repo, agent, mineOnly, query });
+
+    if (matching.length === 0) {
+      console.error("No matching PRs found.");
+      process.exit(0);
+    }
+
+    console.error(`Found ${matching.length} matching PR(s):`);
+    for (const pr of matching) {
+      console.error(`  #${pr.number} ${pr.title}`);
+    }
+
+    if (dryRun) {
+      console.error("(dry run - no changes made)");
+      for (const pr of matching) {
+        console.log(`#${pr.number} would enable merge when ready`);
+      }
+    } else {
+      for (const pr of matching) {
+        const enabled = enableMergeWhenReady(repo, pr.number);
+        console.log(`#${pr.number} ${enabled ? "merge when ready enabled" : "already enabled"}`);
+      }
+    }
+
+    console.error(
+      dryRun
+        ? "Done."
+        : `Done. Processed ${matching.length} PR(s).`
+    );
+  },
+};
+
+// Direct execution: support running as a standalone script (backward compat)
+const isDirectExecution =
+  process.argv[1] &&
+  (process.argv[1].endsWith("/approval.js") || process.argv[1].endsWith("/approval.ts"));
+
+if (isDirectExecution) {
+  try {
+    const args = process.argv.slice(2);
+    if (approvalCommand.validate) approvalCommand.validate(args);
+    approvalCommand.run(args);
+  } catch (e: unknown) {
+    console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
+    process.exit(1);
+  }
 }

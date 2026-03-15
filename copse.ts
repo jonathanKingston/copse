@@ -4,11 +4,26 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import type { CommandDef } from "./lib/types.js";
+import type { Command } from "./lib/command.js";
+import { runCommandLifecycle } from "./lib/command.js";
 import { ensureGh, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
 import { initializeRuntime } from "./lib/runtime-init.js";
+import { approvalCommand } from "./commands/approval.js";
+import { prStatusCommand } from "./commands/pr-status.js";
+import { rerunFailedCommand } from "./commands/rerun-failed.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+// Registry of commands that implement the Command interface with lifecycle hooks.
+// Commands listed here run in-process via runCommandLifecycle() instead of being
+// spawned as child processes. Commands not in this map fall back to the legacy
+// spawn-based execution.
+const LIFECYCLE_COMMANDS: Record<string, Command> = {
+  approval: approvalCommand,
+  "pr-status": prStatusCommand,
+  "rerun-failed": rerunFailedCommand,
+};
+
 
 // File references use .js extensions — these point to the tsc-compiled output in dist/
 const COMMANDS: Record<string, CommandDef> = {
@@ -348,6 +363,17 @@ function runCommand(command: string, args: string[]): void {
     }
   }
 
+  // Use the lifecycle runner for commands that implement the Command interface
+  const lifecycleCmd = LIFECYCLE_COMMANDS[command];
+  if (lifecycleCmd) {
+    runCommandLifecycle(lifecycleCmd, args).catch((e: unknown) => {
+      console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
+      process.exit(1);
+    });
+    return;
+  }
+
+  // Legacy path: spawn command as a child process
   const commandPath = join(__dirname, "commands", cmd.file);
   const child = spawn("node", [commandPath, ...args], {
     stdio: "inherit",

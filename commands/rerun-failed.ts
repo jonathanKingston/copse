@@ -9,6 +9,7 @@
 import { initializeRuntime } from "../lib/runtime-init.js";
 import { getOriginRepo } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
+import type { Command } from "../lib/command.js";
 import {
   REPO_PATTERN, validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
 } from "../lib/gh.js";
@@ -44,11 +45,15 @@ function rerunWorkflow(repo: string, runId: number, dryRun: boolean): boolean {
   }
 }
 
-function main(): void {
-  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
-  const { dryRun, mineOnly } = flags;
+interface RerunFailedParsed {
+  repo: string;
+  agent: string | null;
+  hours: number;
+  dryRun: boolean;
+  mineOnly: boolean;
+}
 
-  const help = `Usage: rerun-failed [repo] [agent] [options]
+const HELP = `Usage: rerun-failed [repo] [agent] [options]
 
   repo       GitHub repo in owner/name format (e.g. acme/cool-project).
              Omit when run inside a git repo to use origin remote.
@@ -68,6 +73,10 @@ Examples:
   rerun-failed acme/cool-project cursor --all
 `;
 
+function parseArgs(argv: string[]): RerunFailedParsed {
+  const { flags, filtered } = parseStandardFlags(argv);
+  const { dryRun, mineOnly } = flags;
+
   let repo: string;
   let agent: string | null = null;
   let rest: string[];
@@ -83,8 +92,7 @@ Examples:
   } else {
     repo = getOriginRepo() ?? "";
     if (!repo) {
-      console.error(help);
-      process.exit(1);
+      throw new Error(HELP);
     }
     if (filtered.length >= 1 && ["cursor", "claude"].includes(filtered[0].toLowerCase())) {
       agent = validateAgent(filtered[0]);
@@ -94,10 +102,7 @@ Examples:
     }
   }
 
-  validateRepo(repo);
-
   let hours = 24;
-
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--hours" && rest[i + 1]) {
@@ -106,85 +111,115 @@ Examples:
     }
   }
 
-  const currentUser = getUserForDisplay(mineOnly);
-  const pattern = agent
-    ? AGENT_BRANCH_PATTERNS[agent]
-    : /^(cursor|claude)\//i;
-  const agentLabel = agent ? `${agent}/*` : "cursor/* or claude/*";
-  const since = calculateSinceDate(hours);
-
-  if (mineOnly) {
-    console.error(`Fetching branches from ${repo} (only yours, @${currentUser})...`);
-  } else {
-    console.error(`Fetching branches from ${repo} (all authors)...`);
-  }
-  const allBranches = listBranches(repo);
-  const agentBranches = allBranches.filter((b) => pattern.test(b));
-
-  if (agentBranches.length === 0) {
-    console.error(`No agent branches (${agentLabel}) found.`);
-    process.exit(0);
-  }
-
-  const recentBranches: string[] = [];
-  for (const branch of agentBranches) {
-    try {
-      const { date, authorLogin } = getCommitInfo(repo, branch);
-      if (!date || date < since) continue;
-      if (mineOnly) {
-        if (authorLogin !== currentUser) {
-          console.error(`  Skipping ${branch} (latest commit by @${authorLogin || "unknown"}, not you)`);
-          continue;
-        }
-      }
-      recentBranches.push(branch);
-    } catch (e: unknown) {
-      console.error(`  Skipping ${branch}: ${(e as Error).message}`);
-    }
-  }
-
-  if (recentBranches.length === 0) {
-    console.error(
-      `No branches with commits in the last ${hours} hour(s). Use --hours to widen.`
-    );
-    process.exit(0);
-  }
-
-  console.error(
-    `Found ${recentBranches.length} recent branch(es). Checking for failed runs...`
-  );
-
-  let totalRerun = 0;
-  for (const branch of recentBranches) {
-    const failed = listFailedRuns(repo, branch);
-    if (failed.length === 0) continue;
-
-    console.error(`  ${branch}: ${failed.length} failed run(s)`);
-    for (const run of failed) {
-      const label = run.name ? `${run.name} #${run.databaseId}` : `#${run.databaseId}`;
-      if (dryRun) {
-        console.log(`Would rerun: ${branch} - ${label}`);
-      } else {
-        const ok = rerunWorkflow(repo, run.databaseId, false);
-        console.log(
-          ok
-            ? `Reran: ${branch} - ${label}`
-            : `Failed to rerun: ${branch} - ${label}`
-        );
-      }
-      totalRerun++;
-    }
-  }
-
-  if (totalRerun === 0) {
-    console.error("No failed workflow runs found on recent branches.");
-  } else {
-    console.error(
-      dryRun
-        ? `(dry run - would rerun ${totalRerun} run(s))`
-        : `Done. Reran ${totalRerun} failed run(s).`
-    );
-  }
+  return { repo, agent, hours, dryRun, mineOnly };
 }
 
-main();
+export const rerunFailedCommand: Command = {
+  name: "rerun-failed",
+  description: "Reruns failed workflow runs on recent agent branches",
+
+  validate(args: string[]): void {
+    const parsed = parseArgs(args);
+    validateRepo(parsed.repo);
+  },
+
+  run(args: string[]): void {
+    const { repo, agent, hours, dryRun, mineOnly } = parseArgs(args);
+
+    const currentUser = getUserForDisplay(mineOnly);
+    const pattern = agent
+      ? AGENT_BRANCH_PATTERNS[agent]
+      : /^(cursor|claude)\//i;
+    const agentLabel = agent ? `${agent}/*` : "cursor/* or claude/*";
+    const since = calculateSinceDate(hours);
+
+    if (mineOnly) {
+      console.error(`Fetching branches from ${repo} (only yours, @${currentUser})...`);
+    } else {
+      console.error(`Fetching branches from ${repo} (all authors)...`);
+    }
+    const allBranches = listBranches(repo);
+    const agentBranches = allBranches.filter((b) => pattern.test(b));
+
+    if (agentBranches.length === 0) {
+      console.error(`No agent branches (${agentLabel}) found.`);
+      process.exit(0);
+    }
+
+    const recentBranches: string[] = [];
+    for (const branch of agentBranches) {
+      try {
+        const { date, authorLogin } = getCommitInfo(repo, branch);
+        if (!date || date < since) continue;
+        if (mineOnly) {
+          if (authorLogin !== currentUser) {
+            console.error(`  Skipping ${branch} (latest commit by @${authorLogin || "unknown"}, not you)`);
+            continue;
+          }
+        }
+        recentBranches.push(branch);
+      } catch (e: unknown) {
+        console.error(`  Skipping ${branch}: ${(e as Error).message}`);
+      }
+    }
+
+    if (recentBranches.length === 0) {
+      console.error(
+        `No branches with commits in the last ${hours} hour(s). Use --hours to widen.`
+      );
+      process.exit(0);
+    }
+
+    console.error(
+      `Found ${recentBranches.length} recent branch(es). Checking for failed runs...`
+    );
+
+    let totalRerun = 0;
+    for (const branch of recentBranches) {
+      const failed = listFailedRuns(repo, branch);
+      if (failed.length === 0) continue;
+
+      console.error(`  ${branch}: ${failed.length} failed run(s)`);
+      for (const run of failed) {
+        const label = run.name ? `${run.name} #${run.databaseId}` : `#${run.databaseId}`;
+        if (dryRun) {
+          console.log(`Would rerun: ${branch} - ${label}`);
+        } else {
+          const ok = rerunWorkflow(repo, run.databaseId, false);
+          console.log(
+            ok
+              ? `Reran: ${branch} - ${label}`
+              : `Failed to rerun: ${branch} - ${label}`
+          );
+        }
+        totalRerun++;
+      }
+    }
+
+    if (totalRerun === 0) {
+      console.error("No failed workflow runs found on recent branches.");
+    } else {
+      console.error(
+        dryRun
+          ? `(dry run - would rerun ${totalRerun} run(s))`
+          : `Done. Reran ${totalRerun} failed run(s).`
+      );
+    }
+  },
+};
+
+// Direct execution: support running as a standalone script (backward compat)
+const isDirectExecution =
+  process.argv[1] &&
+  (process.argv[1].endsWith("/rerun-failed.js") || process.argv[1].endsWith("/rerun-failed.ts"));
+
+if (isDirectExecution) {
+  try {
+    const args = process.argv.slice(2);
+    if (rerunFailedCommand.validate) rerunFailedCommand.validate(args);
+    rerunFailedCommand.run(args);
+  } catch (e: unknown) {
+    console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
