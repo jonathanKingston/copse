@@ -20,9 +20,9 @@ import { initializeRuntime } from "../lib/runtime-init.js";
 import { getOriginRepo } from "../lib/utils.js";
 import type { ExecError } from "../lib/types.js";
 import {
-  REPO_PATTERN, validateRepo, gh, formatGhError, listOpenPRs,
+  validateRepo, gh, formatGhError, listOpenPRs,
 } from "../lib/gh.js";
-import { parseStandardFlags } from "../lib/args.js";
+import { parseCliArgs } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 
 initializeRuntime();
@@ -89,25 +89,10 @@ function enableMergeWhenReady(repo: string, prNumber: number): boolean {
 }
 
 function main(): void {
-  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
-  const { dryRun, mineOnly } = flags;
-
-  let repo: string | undefined;
-  let agent: string | null = null;
-  let query: string | null = null;
-
-  if (filtered.length >= 1 && REPO_PATTERN.test(filtered[0])) {
-    repo = filtered[0];
-    if (filtered.length >= 2 && ["cursor", "claude"].includes(filtered[1].toLowerCase())) {
-      agent = filtered[1].toLowerCase();
-      query = filtered[2] ?? null;
-    } else {
-      query = filtered[1] ?? null;
-    }
-  } else {
-    repo = getOriginRepo() ?? undefined;
-    if (!repo) {
-      console.error(`Usage: approval [repo] [agent] [query] [--dry-run] [--all]
+  const { flags, positionals } = parseCliArgs(process.argv.slice(2), {
+    repoRequired: false,
+    inferRepo: getOriginRepo,
+    helpText: `Usage: approval [repo] [agent] [query] [--dry-run] [--all]
 
   repo      GitHub repo in owner/name format (e.g. acme/cool-project).
             Omit when run inside a git repo to use origin remote.
@@ -123,16 +108,10 @@ Examples:
   approval acme/cool-project claude "fix login"
   approval acme/cool-project cursor --dry-run
   approval acme/cool-project cursor --all
-`);
-      process.exit(1);
-    }
-    if (filtered.length >= 1 && ["cursor", "claude"].includes(filtered[0].toLowerCase())) {
-      agent = filtered[0].toLowerCase();
-      query = filtered[1] ?? null;
-    } else {
-      query = filtered[0] ?? null;
-    }
-  }
+`,
+  });
+  const { dryRun, mineOnly } = flags;
+  const { repo, agent, query } = positionals;
 
   validateRepo(repo);
 

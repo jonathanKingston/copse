@@ -10,9 +10,9 @@ import { initializeRuntime } from "../lib/runtime-init.js";
 import { getOriginRepo } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
 import {
-  REPO_PATTERN, validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
+  validateRepo, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
 } from "../lib/gh.js";
-import { parseStandardFlags, parseHoursOption, calculateSinceDate } from "../lib/args.js";
+import { parseCliArgs, calculateSinceDate } from "../lib/args.js";
 import { getUserForDisplay } from "../lib/filters.js";
 
 initializeRuntime();
@@ -45,10 +45,11 @@ function rerunWorkflow(repo: string, runId: number, dryRun: boolean): boolean {
 }
 
 function main(): void {
-  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
-  const { dryRun, mineOnly } = flags;
-
-  const help = `Usage: rerun-failed [repo] [agent] [options]
+  const { flags, positionals, options } = parseCliArgs(process.argv.slice(2), {
+    repoRequired: false,
+    inferRepo: getOriginRepo,
+    defaultHours: 24,
+    helpText: `Usage: rerun-failed [repo] [agent] [options]
 
   repo       GitHub repo in owner/name format (e.g. acme/cool-project).
              Omit when run inside a git repo to use origin remote.
@@ -66,45 +67,13 @@ Examples:
   rerun-failed acme/cool-project cursor
   rerun-failed acme/cool-project claude --hours 48 --dry-run
   rerun-failed acme/cool-project cursor --all
-`;
-
-  let repo: string;
-  let agent: string | null = null;
-  let rest: string[];
-
-  if (filtered.length >= 1 && REPO_PATTERN.test(filtered[0])) {
-    repo = filtered[0];
-    if (filtered.length >= 2 && ["cursor", "claude"].includes(filtered[1].toLowerCase())) {
-      agent = validateAgent(filtered[1]);
-      rest = filtered.slice(2);
-    } else {
-      rest = filtered.slice(1);
-    }
-  } else {
-    repo = getOriginRepo() ?? "";
-    if (!repo) {
-      console.error(help);
-      process.exit(1);
-    }
-    if (filtered.length >= 1 && ["cursor", "claude"].includes(filtered[0].toLowerCase())) {
-      agent = validateAgent(filtered[0]);
-      rest = filtered.slice(1);
-    } else {
-      rest = filtered;
-    }
-  }
+`,
+  });
+  const { dryRun, mineOnly } = flags;
+  const { repo, agent } = positionals;
+  const { hours } = options;
 
   validateRepo(repo);
-
-  let hours = 24;
-
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i];
-    if (a === "--hours" && rest[i + 1]) {
-      hours = parseHoursOption(rest, i);
-      i++;
-    }
-  }
 
   const currentUser = getUserForDisplay(mineOnly);
   const pattern = agent

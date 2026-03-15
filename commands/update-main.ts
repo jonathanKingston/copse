@@ -10,7 +10,7 @@ import { initializeRuntime } from "../lib/runtime-init.js";
 import {
   validateRepo, gh, listOpenPRs,
 } from "../lib/gh.js";
-import { parseStandardFlags, parseBaseOption } from "../lib/args.js";
+import { parseCliArgs } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 
 initializeRuntime();
@@ -31,10 +31,10 @@ function mergeMainIntoBranch(repo: string, headRef: string, baseRef: string, dry
 }
 
 function main(): void {
-  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
-  const { dryRun, mineOnly } = flags;
-
-  const help = `Usage: update-main <repo> [agent] [options]
+  const { flags, positionals, options } = parseCliArgs(process.argv.slice(2), {
+    repoRequired: true,
+    defaultBase: "main",
+    helpText: `Usage: update-main <repo> [agent] [options]
 
   repo       GitHub repo in owner/name format (e.g. acme/cool-project)
   agent      Optional: "cursor" or "claude" to filter PRs. Omit to match both.
@@ -50,31 +50,13 @@ Examples:
   update-main acme/cool-project cursor
   update-main acme/cool-project claude --base main --dry-run
   update-main acme/cool-project cursor --all
-`;
+`,
+  });
+  const { dryRun, mineOnly } = flags;
+  const { repo, agent } = positionals;
+  const baseBranch = options.base;
 
-  if (filtered.length < 1) {
-    console.error(help);
-    process.exit(1);
-  }
-
-  const repo = filtered[0];
   validateRepo(repo);
-  let agent: string | null = null;
-  let rest = filtered.slice(1);
-
-  if (rest.length >= 1 && !rest[0].startsWith("--") && ["cursor", "claude"].includes(rest[0].toLowerCase())) {
-    agent = rest[0].toLowerCase();
-    rest = rest.slice(1);
-  }
-
-  let baseBranch = "main";
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i];
-    if (a === "--base" && rest[i + 1]) {
-      baseBranch = parseBaseOption(rest, i);
-      i++;
-    }
-  }
 
   const currentUser = getUserForDisplay(mineOnly);
   console.error(buildFetchMessage(repo, agent, mineOnly, currentUser));
