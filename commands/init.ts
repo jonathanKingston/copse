@@ -188,41 +188,54 @@ function ensureDirectoryExists(filePath: string): void {
   }
 }
 
-function createPRTemplate(): void {
+function createPRTemplate(dryRun: boolean): void {
   const path = resolve(GITHUB_DIR, "PULL_REQUEST_TEMPLATE.md");
-  
+
   if (existsSync(path)) {
     console.log(`${ANSI.yellow}PR template already exists at ${path}, skipping${ANSI.reset}`);
     return;
   }
-  
+
+  if (dryRun) {
+    console.log(`Would create PR template at ${path}`);
+    return;
+  }
   ensureDirectoryExists(path);
   writeFileSync(path, DEFAULT_PR_TEMPLATE, "utf-8");
   console.log(`${ANSI.green}✓${ANSI.reset} Created PR template at ${path}`);
 }
 
-function createIssueTemplate(): void {
+function createIssueTemplate(dryRun: boolean): void {
   const path = resolve(GITHUB_DIR, "issue_template.md");
-  
+
   if (existsSync(path)) {
     console.log(`${ANSI.yellow}Issue template already exists at ${path}, skipping${ANSI.reset}`);
     return;
   }
-  
+
+  if (dryRun) {
+    console.log(`Would create issue template at ${path}`);
+    return;
+  }
   ensureDirectoryExists(path);
   writeFileSync(path, DEFAULT_ISSUE_TEMPLATE, "utf-8");
   console.log(`${ANSI.green}✓${ANSI.reset} Created issue template at ${path}`);
 }
 
-function saveConfig(config: ScaffoldConfig, force: boolean): void {
+function saveConfig(config: ScaffoldConfig, force: boolean, dryRun: boolean): void {
   const configPath = getConfigPath();
-  
+
   if (existsSync(configPath) && !force) {
     console.log(`${ANSI.red}Error: ${configPath} already exists. Use --force to overwrite${ANSI.reset}`);
     process.exit(1);
   }
-  
+
   const json = JSON.stringify(config, null, 2);
+  if (dryRun) {
+    console.log(`Would create ${configPath} with contents:`);
+    console.log(json);
+    return;
+  }
   writeFileSync(configPath, json + "\n", "utf-8");
   console.log(`${ANSI.green}✓${ANSI.reset} Created ${configPath}`);
 }
@@ -231,6 +244,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const skipTemplates = args.includes("--skip-templates");
   const force = args.includes("--force");
+  const dryRun = args.includes("--dry-run");
   const isInteractive = stdin.isTTY;
 
   const help = `Usage: copse init [options]
@@ -243,11 +257,13 @@ async function main(): Promise<void> {
 Options:
   --skip-templates  Skip template creation prompts
   --force           Overwrite existing ~/.copserc file
+  --dry-run         Show what would be created without writing any files
 
 Examples:
   copse init                   # Interactive setup with all prompts
   copse init --skip-templates  # Only configure repos, skip templates
   copse init --force           # Overwrite existing ~/.copserc
+  copse init --dry-run         # Preview what would be created
 `;
 
   if (args.includes("--help") || args.includes("-h")) {
@@ -285,20 +301,20 @@ Examples:
       shouldCreateIssueTemplate = templates.createIssue;
     }
 
-    console.log(`\n${ANSI.cyan}Creating configuration...${ANSI.reset}\n`);
+    console.log(`\n${ANSI.cyan}${dryRun ? "Dry run — showing what would be created..." : "Creating configuration..."}${ANSI.reset}\n`);
 
     const config: ScaffoldConfig = { repos };
-    saveConfig(config, force);
+    saveConfig(config, force, dryRun);
 
     if (shouldCreatePRTemplate) {
-      createPRTemplate();
+      createPRTemplate(dryRun);
     }
 
     if (shouldCreateIssueTemplate) {
-      createIssueTemplate();
+      createIssueTemplate(dryRun);
     }
 
-    console.log(`\n${ANSI.bold}${ANSI.green}Setup complete!${ANSI.reset}\n`);
+    console.log(`\n${ANSI.bold}${ANSI.green}${dryRun ? "Dry run complete — no files were written." : "Setup complete!"}${ANSI.reset}\n`);
     
     if (repos.length > 0) {
       console.log(`${ANSI.dim}You can now run commands like:${ANSI.reset}`);

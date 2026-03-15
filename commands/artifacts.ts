@@ -17,7 +17,7 @@ import { basename as pathBasename } from "node:path";
 initializeRuntime();
 
 function usage(): string {
-  return `Usage: copse artifacts <repo> <pr-number> [--download ABSOLUTE_PATH] [--out FILE]
+  return `Usage: copse artifacts <repo> <pr-number> [--download ABSOLUTE_PATH] [--out FILE] [--dry-run]
 
 Lists artifacts from the latest Cursor Cloud Agent linked to the PR URL.
 
@@ -28,6 +28,7 @@ Arguments:
 Options:
   --download PATH      Download the artifact at PATH (absolutePath from the list)
   --out FILE           Output file path (default: ./<basename of artifact path>)
+  --dry-run            Show what would be downloaded without downloading
 
 Notes:
   Requires "cursorApiKey" configured in .copserc.
@@ -39,11 +40,14 @@ function parseArgs(argv: string[]): {
   prNumber: number;
   downloadPath: string | null;
   outFile: string | null;
+  dryRun: boolean;
 } {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(usage());
     process.exit(0);
   }
+
+  const dryRun = argv.includes("--dry-run");
 
   const repo = argv[0] || "";
   const prNumberRaw = argv[1] || "";
@@ -62,6 +66,9 @@ function parseArgs(argv: string[]): {
   let outFile: string | null = null;
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
+    if (a === "--dry-run") {
+      continue;
+    }
     if (a === "--download") {
       const v = argv[i + 1];
       if (!v) {
@@ -88,7 +95,7 @@ function parseArgs(argv: string[]): {
     }
   }
 
-  return { repo, prNumber, downloadPath, outFile };
+  return { repo, prNumber, downloadPath, outFile, dryRun };
 }
 
 async function downloadFile(url: string, outPath: string): Promise<void> {
@@ -104,7 +111,7 @@ async function downloadFile(url: string, outPath: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const { repo, prNumber, downloadPath, outFile } = parseArgs(process.argv.slice(2));
+  const { repo, prNumber, downloadPath, outFile, dryRun } = parseArgs(process.argv.slice(2));
   validateRepo(repo);
 
   const cursorApiKey = loadConfig()?.cursorApiKey?.trim() || "";
@@ -139,6 +146,11 @@ async function main(): Promise<void> {
   if (!downloadPath) return;
 
   const out = outFile || `./${pathBasename(downloadPath) || "artifact"}`;
+  if (dryRun) {
+    console.log("");
+    console.log(`Would download ${downloadPath} to ${out}`);
+    return;
+  }
   const { url } = await getArtifactDownloadUrl(cursorApiKey, agent.id, downloadPath);
   await downloadFile(url, out);
   console.log("");
