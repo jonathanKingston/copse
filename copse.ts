@@ -4,7 +4,7 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import type { CommandDef } from "./lib/types.js";
-import { ensureGh, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
+import { checkGhInstalled, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
 import { initializeRuntime } from "./lib/runtime-init.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -338,7 +338,7 @@ function runCommand(command: string, args: string[]): void {
 
   if (command !== "init") {
     try {
-      ensureGh();
+      checkGhInstalled();
     } catch (e: unknown) {
       if (e instanceof GhNotFoundError || e instanceof GhNotAuthenticatedError) {
         console.error(e.message);

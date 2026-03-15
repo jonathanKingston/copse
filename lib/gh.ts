@@ -136,39 +136,76 @@ export class GhNotFoundError extends Error {
   constructor() {
     super(
       "GitHub CLI (gh) is not installed or not in your PATH.\n" +
-      "Install it from https://cli.github.com/"
+      "\n" +
+      "copse requires the GitHub CLI to interact with GitHub.\n" +
+      "\n" +
+      "To install it:\n" +
+      "  macOS:   brew install gh\n" +
+      "  Linux:   https://github.com/cli/cli/blob/trunk/docs/install_linux.md\n" +
+      "  Windows: winget install --id GitHub.cli\n" +
+      "\n" +
+      "Or visit: https://cli.github.com"
     );
     this.name = "GhNotFoundError";
   }
 }
 
 export class GhNotAuthenticatedError extends Error {
-  constructor() {
-    super(
-      "GitHub CLI (gh) is not authenticated.\n" +
-      "Run: gh auth login"
-    );
+  constructor(detail?: string) {
+    const lines = [
+      "GitHub CLI (gh) is installed but not authenticated.",
+      "",
+      "copse needs an authenticated GitHub session to manage PRs.",
+      "",
+      "To authenticate, run:",
+      "  gh auth login",
+      "",
+      "If you use a personal access token, you can also run:",
+      "  gh auth login --with-token < token.txt",
+    ];
+    if (detail) {
+      lines.push("", `Detail: ${detail}`);
+    }
+    super(lines.join("\n"));
     this.name = "GhNotAuthenticatedError";
   }
 }
 
-/** Check that `gh` is installed and authenticated. */
-export function ensureGh(): void {
+/**
+ * Check that `gh` is installed and authenticated.
+ *
+ * Returns a clear, actionable error message if:
+ * - `gh` is not found in PATH (GhNotFoundError)
+ * - `gh auth status` reports the user is not logged in (GhNotAuthenticatedError)
+ *
+ * Call this early in any command that needs to talk to GitHub.
+ */
+export function checkGhInstalled(): void {
   const provider = activeProvider();
   if (provider?.ensureGh) {
     provider.ensureGh();
     return;
   }
+  // 1. Check if gh is in PATH
   try {
     execFileSync("gh", ["--version"], { stdio: "ignore" });
   } catch (e: unknown) {
     if (isGhNotFound(e)) throw new GhNotFoundError();
+    // If it's some other error (permissions, etc.), still throw a descriptive error
+    throw new GhNotFoundError();
   }
+  // 2. Check if gh is authenticated
   try {
-    execFileSync("gh", ["auth", "token"], { stdio: "ignore" });
-  } catch {
-    throw new GhNotAuthenticatedError();
+    execFileSync("gh", ["auth", "status"], { encoding: "utf-8", stdio: "pipe" });
+  } catch (e: unknown) {
+    const stderr = ((e as { stderr?: string }).stderr || "").toString().trim();
+    throw new GhNotAuthenticatedError(stderr || undefined);
   }
+}
+
+/** @deprecated Use checkGhInstalled() instead. */
+export function ensureGh(): void {
+  checkGhInstalled();
 }
 
 /** True after a gh child process was killed by SIGINT/SIGTERM (set synchronously). */
