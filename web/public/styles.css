@@ -1371,3 +1371,71 @@ tr.is-expandable td {
     grid-column: auto;
   }
 }
+
+/* Keyboard shortcuts help button */
+.shortcuts-help-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.shortcuts-help-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* Keyboard shortcuts modal */
+.shortcuts-modal .modal-card {
+  max-width: 420px;
+}
+
+.shortcuts-list {
+  margin: 0;
+  padding: 0;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-row:last-child {
+  border-bottom: none;
+}
+
+.shortcut-row dt {
+  flex-shrink: 0;
+}
+
+.shortcut-row dd {
+  margin: 0;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+kbd {
+  display: inline-block;
+  padding: 2px 7px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}

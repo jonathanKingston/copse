@@ -13,6 +13,7 @@
       <p>Status dashboard for agent PR workflows.</p>
     </div>
     <span id="statusText"></span>
+    <button id="shortcutsHelpBtn" type="button" class="shortcuts-help-btn" title="Keyboard shortcuts (?)">?</button>
   </header>
 
   <main>
@@ -137,6 +138,23 @@
       </form>
     </section>
   </main>
+
+  <dialog id="shortcutsDialog" class="modal shortcuts-modal">
+    <div class="modal-card">
+      <h2>Keyboard Shortcuts</h2>
+      <dl class="shortcuts-list">
+        <div class="shortcut-row"><dt><kbd>/</kbd> or <kbd>Ctrl+K</kbd></dt><dd>Focus search input</dd></div>
+        <div class="shortcut-row"><dt><kbd>r</kbd></dt><dd>Refresh data</dd></div>
+        <div class="shortcut-row"><dt><kbd>a</kbd></dt><dd>Approve selected PR(s)</dd></div>
+        <div class="shortcut-row"><dt><kbd>m</kbd></dt><dd>Merge selected PR(s)</dd></div>
+        <div class="shortcut-row"><dt><kbd>?</kbd></dt><dd>Show this help</dd></div>
+        <div class="shortcut-row"><dt><kbd>Escape</kbd></dt><dd>Close modals/overlays</dd></div>
+      </dl>
+      <div class="modal-actions">
+        <button id="shortcutsCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="chainMergeDialog" class="modal">
     <div class="modal-card">

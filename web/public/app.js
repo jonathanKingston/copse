@@ -2075,3 +2075,87 @@ Promise.all([
   fetchTemplates(),
   fetchStatus(),
 ]).catch((error) => setStatus(error.message));
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts
+// ---------------------------------------------------------------------------
+const shortcutsDialogEl = document.getElementById("shortcutsDialog");
+const shortcutsHelpBtnEl = document.getElementById("shortcutsHelpBtn");
+const shortcutsCloseBtnEl = document.getElementById("shortcutsCloseBtn");
+
+function isTypingInInput(event) {
+  const tag = event.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (event.target.isContentEditable) return true;
+  return false;
+}
+
+function openShortcutsDialog() {
+  if (shortcutsDialogEl instanceof HTMLDialogElement) {
+    shortcutsDialogEl.showModal();
+  }
+}
+
+function closeShortcutsDialog() {
+  if (shortcutsDialogEl instanceof HTMLDialogElement && shortcutsDialogEl.open) {
+    shortcutsDialogEl.close();
+  }
+}
+
+if (shortcutsHelpBtnEl) {
+  shortcutsHelpBtnEl.addEventListener("click", openShortcutsDialog);
+}
+
+if (shortcutsCloseBtnEl) {
+  shortcutsCloseBtnEl.addEventListener("click", closeShortcutsDialog);
+}
+
+document.addEventListener("keydown", (event) => {
+  // Ctrl+K always focuses search, even from inputs
+  if ((event.ctrlKey || event.metaKey) && event.key === "k") {
+    event.preventDefault();
+    textFilterInputEl.focus();
+    textFilterInputEl.select();
+    return;
+  }
+
+  // Escape closes any open dialog
+  if (event.key === "Escape") {
+    closeShortcutsDialog();
+    return;
+  }
+
+  // Don't trigger single-key shortcuts when typing in form fields
+  if (isTypingInInput(event)) return;
+
+  // Don't trigger when modifier keys are held (except for Ctrl+K above)
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  switch (event.key) {
+    case "/":
+      event.preventDefault();
+      textFilterInputEl.focus();
+      textFilterInputEl.select();
+      break;
+
+    case "r":
+      event.preventDefault();
+      refreshBtnEl.click();
+      break;
+
+    case "a":
+      event.preventDefault();
+      bulkApproveBtnEl.click();
+      break;
+
+    case "m":
+      event.preventDefault();
+      bulkMergeAutoBtnEl.click();
+      break;
+
+    case "?":
+      event.preventDefault();
+      openShortcutsDialog();
+      break;
+  }
+});
