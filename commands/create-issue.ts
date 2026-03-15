@@ -34,17 +34,9 @@ import { REPO_PATTERN, validateRepo, validateAgent } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { loadConfig } from "../lib/config.js";
 import { launchAgentForPrUrl, launchAgentForRepository } from "../lib/cursor-api.js";
+import { ANSI } from "../lib/format.js";
 
 initializeRuntime();
-
-const ANSI = {
-  reset: "\x1b[0m",
-  dim: "\x1b[2m",
-  bold: "\x1b[1m",
-  cyan: "\x1b[36m",
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-};
 
 const DEFAULT_ISSUE_TEMPLATE_PATHS = [
   ".github/issue_template.md",

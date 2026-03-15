@@ -20,18 +20,9 @@ import { homedir } from "os";
 import { initializeRuntime } from "../lib/runtime-init.js";
 import { REPO_PATTERN } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
+import { ANSI } from "../lib/format.js";
 
 initializeRuntime();
-
-const ANSI = {
-  reset: "\x1b[0m",
-  dim: "\x1b[2m",
-  bold: "\x1b[1m",
-  cyan: "\x1b[36m",
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-  yellow: "\x1b[33m",
-};
 
 const CONFIG_FILENAME = ".copserc";
 const GITHUB_DIR = ".github";

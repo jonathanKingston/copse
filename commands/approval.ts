@@ -18,6 +18,7 @@
 
 import { initializeRuntime } from "../lib/runtime-init.js";
 import { getOriginRepo } from "../lib/utils.js";
+import { ANSI } from "../lib/format.js";
 import type { ExecError } from "../lib/types.js";
 import {
   REPO_PATTERN, validateRepo, gh, formatGhError, listOpenPRs,
@@ -174,6 +175,6 @@ Examples:
 try {
   main();
 } catch (e: unknown) {
-  console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
+  console.error(`${ANSI.red}error${ANSI.reset} ${(e as Error).message}`);
   process.exit(1);
 }

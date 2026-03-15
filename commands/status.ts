@@ -23,7 +23,7 @@ import {
 } from "../lib/gh.js";
 import type { PRReviewComment, PRChangedFile } from "../lib/types.js";
 import { getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
-import { formatCommentBody, wrapAnsiText } from "../lib/format.js";
+import { ANSI, formatBytes, formatCommentBody, wrapAnsiText } from "../lib/format.js";
 import { getConfiguredRepos, loadConfig } from "../lib/config.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
@@ -51,7 +51,6 @@ import {
   needsScaffold,
   resolveTemplatesPath,
 } from "../lib/templates.js";
-import { formatBytes } from "../lib/format.js";
 
 initializeRuntime();
 
@@ -93,15 +92,6 @@ function matchesSearch(pr: PRWithStatus, query: string): boolean {
   return searchable.some(f => f.toLowerCase().includes(q));
 }
 
-
-const ANSI = {
-  reset: "\x1b[0m",
-  red: "\x1b[31m",
-  amber: "\x1b[33m",
-  green: "\x1b[32m",
-  dim: "\x1b[2m",
-  bold: "\x1b[1m",
-};
 
 function hyperlink(url: string, text: string): string {
   if (!process.stdout.isTTY) return text;

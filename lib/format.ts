@@ -1,12 +1,15 @@
 import { hyperlink } from "./utils.js";
 
-const ANSI = {
+export const ANSI = {
   reset: "\x1b[0m",
   dim: "\x1b[2m",
   bold: "\x1b[1m",
+  underline: "\x1b[4m",
   cyan: "\x1b[36m",
   yellow: "\x1b[33m",
+  amber: "\x1b[33m",
   red: "\x1b[31m",
+  green: "\x1b[32m",
 };
 
 const BYTES_STEP = 1024;
