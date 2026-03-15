@@ -14,10 +14,36 @@ import {
 import { parseStandardFlags } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 
+interface PRJsonEntry {
+  number: number;
+  title: string;
+  author: string;
+  url: string;
+  branch: string;
+  ciStatus: string;
+  failedWorkflows: { name: string; attempts: number[]; runIds: number[] }[];
+}
+
+function deriveCIStatus(runs: WorkflowRun[]): string {
+  const failed = runs.filter((r) => r.conclusion === "failure");
+  if (failed.length > 0) return "failing";
+  const inProgress = runs.filter(
+    (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
+  );
+  if (inProgress.length > 0) return "in_progress";
+  const lastSuccess = runs.find((r) => r.conclusion === "success");
+  return lastSuccess ? "passing" : "no_runs";
+}
+
+
 initializeRuntime();
 
 function main(): void {
-  const { flags, filtered } = parseStandardFlags(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  const jsonFlag = rawArgs.includes("--json");
+  const argsWithoutJson = rawArgs.filter((a) => a !== "--json");
+
+  const { flags, filtered } = parseStandardFlags(argsWithoutJson);
   const { mineOnly } = flags;
 
   const help = `Usage: pr-status [repo] [agent] [options]
@@ -29,12 +55,14 @@ function main(): void {
 Options:
   --mine     Only your PRs (default)
   --all      Include PRs from all authors
+  --json     Output machine-readable JSON array to stdout
 
 Examples:
   pr-status                    # Uses origin when run inside a git repo
   pr-status acme/cool-project
   pr-status acme/cool-project cursor
   pr-status acme/cool-project claude --all
+  pr-status --json             # JSON output for piping
 `;
 
   let repo: string | undefined;
@@ -71,10 +99,51 @@ Examples:
 
   if (matching.length === 0) {
     console.error("No matching PRs found.");
+    if (jsonFlag) {
+      console.log("[]");
+    }
     process.exit(0);
   }
 
   console.error(`Found ${matching.length} matching PR(s)\n`);
+
+  if (jsonFlag) {
+    const results: PRJsonEntry[] = [];
+    for (const pr of matching) {
+      const runs = listWorkflowRuns(repo, pr.headRefName);
+      const failed = runs.filter((r) => r.conclusion === "failure");
+      const prUrl = `https://github.com/${repo}/pull/${pr.number}`;
+
+      const failedWorkflows: PRJsonEntry["failedWorkflows"] = [];
+      if (failed.length > 0) {
+        const byWorkflow = new Map<string, WorkflowRun[]>();
+        for (const r of failed) {
+          const key = r.name || r.displayTitle || `Run #${r.databaseId}`;
+          if (!byWorkflow.has(key)) byWorkflow.set(key, []);
+          byWorkflow.get(key)!.push(r);
+        }
+        for (const [name, workflowRuns] of byWorkflow) {
+          failedWorkflows.push({
+            name,
+            attempts: workflowRuns.map((r) => r.attempt ?? 1),
+            runIds: workflowRuns.map((r) => r.databaseId),
+          });
+        }
+      }
+
+      results.push({
+        number: pr.number,
+        title: pr.title || "",
+        author: pr.author?.login ?? "",
+        url: prUrl,
+        branch: pr.headRefName,
+        ciStatus: deriveCIStatus(runs),
+        failedWorkflows,
+      });
+    }
+    console.log(JSON.stringify(results, null, 2));
+    return;
+  }
 
   const columns = getTerminalColumns();
 
