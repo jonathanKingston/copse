@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import { runWebServer } from "../web/server.js";
+
+initializeRuntime();
 
 function maybeOpenBrowser(url: string): void {
   const opener = process.platform === "darwin" ? "open" : "xdg-open";

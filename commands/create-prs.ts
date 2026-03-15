@@ -14,11 +14,14 @@
 import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import {
   validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
 } from "../lib/gh.js";
 import { parseStandardFlags, parseHoursOption, parseBaseOption, parseTemplateOption, calculateSinceDate } from "../lib/args.js";
 import { getUserForDisplay } from "../lib/filters.js";
+
+initializeRuntime();
 
 const DEFAULT_TEMPLATE_URL =
   "https://raw.githubusercontent.com/duckduckgo/content-scope-scripts/main/.github/pull_request_template.md";

@@ -12,6 +12,7 @@ import { basename as pathBasename } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import {
   REPO_PATTERN,
   ghQuietAsync,
@@ -50,6 +51,8 @@ import {
   resolveTemplatesPath,
 } from "../lib/templates.js";
 import { formatBytes } from "../lib/format.js";
+
+initializeRuntime();
 
 function execAsync(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {

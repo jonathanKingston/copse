@@ -7,11 +7,14 @@
 
 import { getOriginRepo, hyperlink, getTerminalColumns } from "../lib/utils.js";
 import type { WorkflowRun } from "../lib/types.js";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import {
   REPO_PATTERN, validateRepo, listOpenPRs, listWorkflowRuns,
 } from "../lib/gh.js";
 import { parseStandardFlags } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
+
+initializeRuntime();
 
 function main(): void {
   const { flags, filtered } = parseStandardFlags(process.argv.slice(2));

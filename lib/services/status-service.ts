@@ -36,6 +36,7 @@ import {
   type StatusFilterScope,
   isPRWithStatus,
 } from "./status-types.js";
+import { getApiProvider } from "../api-provider.js";
 
 export interface StatusQueryOptions {
   repos: string[];
@@ -63,6 +64,7 @@ function cacheKey(options: StatusQueryOptions): string {
 export function invalidateStatusCache(): void {
   statusCache.clear();
   inflightRequests.clear();
+  getApiProvider()?.invalidateStatusCache?.();
   void clearDiskStatusCache();
 }
 

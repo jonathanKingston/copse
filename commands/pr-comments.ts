@@ -8,6 +8,7 @@
 
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import { getOriginRepo, isBotComment } from "../lib/utils.js";
 import { formatCommentBody } from "../lib/format.js";
 import type { PR, PRReviewComment } from "../lib/types.js";
@@ -33,6 +34,8 @@ import {
   resolveTemplatesPath,
 } from "../lib/templates.js";
 import type { ExecError } from "../lib/types.js";
+
+initializeRuntime();
 
 const ANSI = {
   reset: "\x1b[0m",
