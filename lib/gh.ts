@@ -501,30 +501,13 @@ export async function listWorkflowRunsAsync(repo: string, branch: string): Promi
   }
 }
 
-const AGENT_BRANCH_PREFIXES = ["cursor/", "claude/", "copilot/"];
-
-function extractBranchNames(out: string): string[] {
-  if (!out.trim()) return [];
-  return out.trim().split("\n").filter(Boolean);
-}
-
 export function listBranches(repo: string): string[] {
   const provider = activeProvider();
   if (provider?.listBranches) {
     return provider.listBranches(repo);
   }
-  const results: string[] = [];
-  for (const prefix of AGENT_BRANCH_PREFIXES) {
-    try {
-      const out = gh(
-        "api", `repos/${repo}/git/matching-refs/heads/${prefix}`,
-        "--paginate",
-        "-q", '.[].ref | sub("^refs/heads/"; "")',
-      );
-      results.push(...extractBranchNames(out));
-    } catch { /* skip prefix */ }
-  }
-  return results;
+  const out = gh("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
+  return out.trim() ? out.trim().split("\n") : [];
 }
 
 export async function listBranchesAsync(repo: string): Promise<string[]> {
@@ -532,21 +515,8 @@ export async function listBranchesAsync(repo: string): Promise<string[]> {
   if (provider?.listBranchesAsync) {
     return provider.listBranchesAsync(repo);
   }
-  const results = await Promise.all(
-    AGENT_BRANCH_PREFIXES.map(async (prefix) => {
-      try {
-        const out = await ghQuietAsync(
-          "api", `repos/${repo}/git/matching-refs/heads/${prefix}`,
-          "--paginate",
-          "-q", '.[].ref | sub("^refs/heads/"; "")',
-        );
-        return extractBranchNames(out);
-      } catch {
-        return [];
-      }
-    })
-  );
-  return results.flat();
+  const out = await ghQuietAsync("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
+  return out.trim() ? out.trim().split("\n") : [];
 }
 
 export function getDefaultBranch(repo: string): string {
