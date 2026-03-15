@@ -73,3 +73,20 @@ export interface CommandDef {
   usage: string;
   args: CommandArg[];
 }
+
+export interface CursorAgent {
+  id: string;
+  name: string;
+  status: "RUNNING" | "FINISHED" | "FAILED" | "CANCELLED";
+  sourceRepo?: string;
+  branchRef?: string;
+  targetBranch?: string;
+  prUrl?: string;
+  summary?: string;
+  createdAt: string;
+}
+
+export interface CursorAgentsResponse {
+  agents: CursorAgent[];
+  nextCursor?: string;
+}
