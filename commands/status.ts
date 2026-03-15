@@ -43,7 +43,8 @@ import {
   postPullRequestReply,
   rerunFailedWorkflowRuns,
 } from "../lib/services/status-actions.js";
-import { STALE_DAYS, WATCH_INTERVAL_MS, type PRWithStatus, isPRWithStatus } from "../lib/services/status-types.js";
+import { STALE_DAYS, type PRWithStatus, isPRWithStatus } from "../lib/services/status-types.js";
+import { getWatchIntervalMs } from "../lib/config.js";
 import {
   loadTemplates,
   scaffoldTemplates,
@@ -1764,12 +1765,13 @@ function runWatch(
 
   refresh();
 
+  const pollMs = getWatchIntervalMs();
   function loop(): void {
     if (isInterrupted()) { cleanup(); return; }
     if (!busy && !ciUpdatePending) refresh();
-    setTimeout(loop, WATCH_INTERVAL_MS);
+    setTimeout(loop, pollMs);
   }
-  setTimeout(loop, WATCH_INTERVAL_MS);
+  setTimeout(loop, pollMs);
 }
 
 async function main(): Promise<void> {

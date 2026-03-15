@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { setApiProvider, resetApiProvider } from "../lib/api-provider.js";
 import { MockApiProvider } from "../lib/mock-api-provider.js";
-import { fetchPRsWithStatus, invalidateStatusCache } from "../lib/services/status-service.js";
+import { fetchPRsWithStatus, filterStandaloneBranches, invalidateStatusCache } from "../lib/services/status-service.js";
 import { markPullRequestReady, retargetPullRequest, enableMergeWhenReady, rerunFailedWorkflowRuns } from "../lib/services/status-actions.js";
-import { getCurrentUser } from "../lib/gh.js";
+import { getCurrentUser, getCommitInfoBatch, getCommitInfoBatchAsync, listBranches } from "../lib/gh.js";
 
 test("status + actions run through mock provider", async () => {
   const repo = "acme/mock-provider";
@@ -58,5 +58,80 @@ test("status + actions run through mock provider", async () => {
   } finally {
     resetApiProvider();
     invalidateStatusCache();
+  }
+});
+
+test("getCommitInfoBatch delegates to mock provider", () => {
+  const repo = "acme/batch-test";
+  const mock = new MockApiProvider();
+  mock.addRepo(repo, { defaultBranch: "main" });
+  mock.addBranch(repo, "cursor/feat-a", { message: "Feature A", authorLogin: "alice", date: new Date("2026-03-10T10:00:00Z") });
+  mock.addBranch(repo, "claude/feat-b", { message: "Feature B", authorLogin: "bob", date: new Date("2026-03-11T10:00:00Z") });
+
+  setApiProvider(mock);
+  try {
+    const result = getCommitInfoBatch(repo, ["cursor/feat-a", "claude/feat-b"], true);
+    assert.equal(result.size, 2);
+
+    const infoA = result.get("cursor/feat-a");
+    assert.ok(infoA);
+    assert.equal(infoA.message, "Feature A");
+    assert.equal(infoA.authorLogin, "alice");
+
+    const infoB = result.get("claude/feat-b");
+    assert.ok(infoB);
+    assert.equal(infoB.message, "Feature B");
+    assert.equal(infoB.authorLogin, "bob");
+  } finally {
+    resetApiProvider();
+  }
+});
+
+test("getCommitInfoBatchAsync delegates to mock provider", async () => {
+  const repo = "acme/batch-async-test";
+  const mock = new MockApiProvider();
+  mock.addRepo(repo, { defaultBranch: "main" });
+  mock.addBranch(repo, "cursor/async-a", { message: "Async A", authorLogin: "carol", date: new Date("2026-03-12T10:00:00Z") });
+
+  setApiProvider(mock);
+  try {
+    const result = await getCommitInfoBatchAsync(repo, ["cursor/async-a"], true);
+    assert.equal(result.size, 1);
+
+    const info = result.get("cursor/async-a");
+    assert.ok(info);
+    assert.equal(info.message, "Async A");
+    assert.equal(info.authorLogin, "carol");
+  } finally {
+    resetApiProvider();
+  }
+});
+
+test("standalone branch building delegates to mock provider for listBranches and batch commit info", () => {
+  const repo = "acme/standalone-test";
+  const mock = new MockApiProvider();
+  mock.addRepo(repo, { defaultBranch: "main" });
+  mock.addBranch(repo, "cursor/has-pr", { message: "Has PR", authorLogin: "alice", date: new Date("2026-03-10T10:00:00Z") });
+  mock.addBranch(repo, "cursor/standalone", { message: "Standalone work", authorLogin: "alice", date: new Date("2026-03-11T10:00:00Z") });
+
+  setApiProvider(mock);
+  try {
+    const branches = listBranches(repo);
+    assert.ok(branches.includes("cursor/has-pr"));
+    assert.ok(branches.includes("cursor/standalone"));
+
+    const prs = [{ headRefName: "cursor/has-pr", baseRefName: "main", number: 1 }];
+    const standalone = filterStandaloneBranches(branches, prs);
+    assert.deepEqual(standalone, ["cursor/standalone"]);
+
+    const batchInfo = getCommitInfoBatch(repo, standalone, true);
+    assert.equal(batchInfo.size, 1);
+    const info = batchInfo.get("cursor/standalone");
+    assert.ok(info);
+    assert.equal(info.message, "Standalone work");
+    assert.equal(info.authorLogin, "alice");
+    assert.ok(info.date instanceof Date);
+  } finally {
+    resetApiProvider();
   }
 });
