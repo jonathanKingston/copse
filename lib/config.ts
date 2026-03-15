@@ -12,6 +12,23 @@ import { homedir } from "os";
 import { getApiProvider } from "./api-provider.js";
 
 const CONFIG_FILENAME = ".copserc";
+const CONFIG_TTL_MS = 30_000; // 30 seconds
+
+interface CachedConfig {
+  config: Copserc | null;
+  timestamp: number;
+  cwd: string;
+}
+
+let cachedEntry: CachedConfig | null = null;
+
+/**
+ * Clears the config cache. Useful for testing or when you know the
+ * config file has changed and want to force a re-read.
+ */
+export function clearConfigCache(): void {
+  cachedEntry = null;
+}
 
 export interface Copserc {
   repos?: string[];
@@ -61,14 +78,28 @@ export function loadConfig(cwd: string = process.cwd()): Copserc | null {
   if (provider?.loadConfig) {
     return provider.loadConfig(cwd);
   }
+
+  const now = Date.now();
+  if (cachedEntry && cachedEntry.cwd === cwd && now - cachedEntry.timestamp < CONFIG_TTL_MS) {
+    return cachedEntry.config;
+  }
+
   const homeConfig = join(homedir(), CONFIG_FILENAME);
   const globalConfig = loadConfigFromPath(homeConfig);
-  if (globalConfig) return globalConfig;
+  if (globalConfig) {
+    cachedEntry = { config: globalConfig, timestamp: now, cwd };
+    return globalConfig;
+  }
 
   const configDir = findConfigDir(cwd);
-  if (!configDir) return null;
+  if (!configDir) {
+    cachedEntry = { config: null, timestamp: now, cwd };
+    return null;
+  }
 
-  return loadConfigFromPath(join(configDir, CONFIG_FILENAME));
+  const result = loadConfigFromPath(join(configDir, CONFIG_FILENAME));
+  cachedEntry = { config: result, timestamp: now, cwd };
+  return result;
 }
 
 export function getConfiguredRepos(cwd: string = process.cwd()): string[] | null {
