@@ -1,3 +1,11 @@
+function debounce(fn, delay) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
+
 const statusRowsEl = document.getElementById("statusRows");
 const statusTextEl = document.getElementById("statusText");
 const reposInputEl = document.getElementById("reposInput");
@@ -2023,10 +2031,10 @@ filterScopeInputEl.addEventListener("change", async () => {
   }
 });
 
-textFilterInputEl.addEventListener("input", () => {
+textFilterInputEl.addEventListener("input", debounce(() => {
   persistCurrentUIState();
   syncVisibleRows(true);
-});
+}, 200));
 
 draftFilterInputEl.addEventListener("change", () => {
   persistCurrentUIState();
