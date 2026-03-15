@@ -574,6 +574,163 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
   sendJson(res, 404, { error: "Endpoint not found" });
 }
 
+
+// ---------------------------------------------------------------------------
+// SSE (Server-Sent Events) support
+// ---------------------------------------------------------------------------
+
+type SSEClient = {
+  res: ServerResponse;
+  repos: string[];
+  scope: StatusFilterScope;
+};
+
+const sseClients = new Set<SSEClient>();
+let sseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let ssePollTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Serialise and broadcast an SSE event to every connected client whose
+ *  query parameters match. We re-fetch per unique (repos, scope) pair so
+ *  each client gets the data it asked for. */
+async function broadcastSSEUpdates(): Promise<void> {
+  if (sseClients.size === 0) return;
+
+  // Deduplicate (repos+scope) combinations to avoid redundant fetches
+  const seen = new Map<string, { repos: string[]; scope: StatusFilterScope }>();
+  for (const client of sseClients) {
+    const key = `${client.repos.join(",")}::${client.scope}`;
+    if (!seen.has(key)) {
+      seen.set(key, { repos: client.repos, scope: client.scope });
+    }
+  }
+
+  const results = new Map<string, JsonMap>();
+  for (const [key, { repos, scope }] of seen) {
+    try {
+      const rows = await fetchPRsWithStatus({ repos, scope });
+      results.set(key, {
+        repos,
+        scope,
+        pollIntervalMs: WATCH_INTERVAL_MS,
+        rows,
+        cursorApiConfigured: Boolean(loadConfig()?.cursorApiKey?.trim()),
+      });
+    } catch {
+      // Skip this combination on error; clients will get data on next cycle
+    }
+  }
+
+  for (const client of sseClients) {
+    const key = `${client.repos.join(",")}::${client.scope}`;
+    const data = results.get(key);
+    if (data) {
+      try {
+        client.res.write(`event: status\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        // Client likely disconnected; will be cleaned up
+        sseClients.delete(client);
+      }
+    }
+  }
+}
+
+function startSSEPolling(): void {
+  if (ssePollTimer) return;
+
+  function scheduleNext(): void {
+    ssePollTimer = setTimeout(async () => {
+      await broadcastSSEUpdates();
+      if (sseClients.size > 0) {
+        scheduleNext();
+      } else {
+        ssePollTimer = null;
+      }
+    }, WATCH_INTERVAL_MS);
+  }
+
+  scheduleNext();
+}
+
+function startSSEHeartbeat(): void {
+  if (sseHeartbeatTimer) return;
+  sseHeartbeatTimer = setInterval(() => {
+    for (const client of sseClients) {
+      try {
+        client.res.write(": heartbeat\n\n");
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+    if (sseClients.size === 0 && sseHeartbeatTimer) {
+      clearInterval(sseHeartbeatTimer);
+      sseHeartbeatTimer = null;
+    }
+  }, 30_000);
+}
+
+function handleSSE(req: IncomingMessage, url: URL, res: ServerResponse): void {
+  let repos: string[];
+  let scope: StatusFilterScope;
+  try {
+    repos = resolveReposFromRequest(url);
+    scope = parseStatusFilterScope(url);
+  } catch (error: unknown) {
+    sendJson(res, 400, { error: (error as Error).message });
+    return;
+  }
+
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  res.flushHeaders();
+
+  const client: SSEClient = { res, repos, scope };
+  sseClients.add(client);
+
+  // Send initial data immediately
+  (async () => {
+    try {
+      const rows = await fetchPRsWithStatus({ repos, scope });
+      const data: JsonMap = {
+        repos,
+        scope,
+        pollIntervalMs: WATCH_INTERVAL_MS,
+        rows,
+        cursorApiConfigured: Boolean(loadConfig()?.cursorApiKey?.trim()),
+      };
+      res.write(`event: status\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      // Client will get data on next broadcast cycle
+    }
+  })();
+
+  startSSEHeartbeat();
+  startSSEPolling();
+
+  // Clean up on client disconnect
+  req.on("close", () => {
+    sseClients.delete(client);
+    if (sseClients.size === 0) {
+      if (sseHeartbeatTimer) {
+        clearInterval(sseHeartbeatTimer);
+        sseHeartbeatTimer = null;
+      }
+      if (ssePollTimer) {
+        clearTimeout(ssePollTimer);
+        ssePollTimer = null;
+      }
+    }
+  });
+}
+
+/** Notify all SSE clients after a mutation so they get fresh data quickly. */
+function notifySSEClients(): void {
+  if (sseClients.size === 0) return;
+  // Fire-and-forget broadcast; do not block the HTTP response
+  broadcastSSEUpdates().catch(() => {});
+}
 export function startWebServer(options: WebServerOptions = {}): ReturnType<typeof createServer> {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
@@ -585,8 +742,18 @@ export function startWebServer(options: WebServerOptions = {}): ReturnType<typeo
     }
     const url = new URL(req.url, `http://${host}:${port}`);
     try {
+      // SSE endpoint — handled separately (long-lived connection)
+      if (req.method === "GET" && url.pathname === "/api/events") {
+        handleSSE(req, url, res);
+        return;
+      }
+
       if (url.pathname.startsWith("/api/")) {
         await handleApi(req, url, res);
+        // After any successful POST (mutation), push updates to SSE clients
+        if (req.method === "POST") {
+          notifySSEClients();
+        }
       } else {
         await serveStatic(url, res);
       }

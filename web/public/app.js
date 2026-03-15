@@ -44,6 +44,8 @@ let allRows = [];
 let currentRows = [];
 let pollTimer = null;
 let pollIntervalMs = 30000;
+let eventSource = null;
+let sseConnected = false;
 let cursorApiConfigured = false;
 let commentTemplates = [];
 let collapsedRepos = new Set();
@@ -1965,6 +1967,25 @@ async function fetchStatus(options = {}) {
   if (repos) params.set("repos", repos);
   params.set("scope", filterScopeInputEl.value);
   const data = await api(`/api/status?${params.toString()}`);
+  applyStatusData(data, { silentStatus });
+  // Only schedule polling if SSE is not active
+  if (!sseConnected) {
+    schedulePoll();
+  }
+}
+
+async function fetchTemplates() {
+  try {
+    const data = await api("/api/templates");
+    commentTemplates = data.templates || [];
+  } catch {
+    commentTemplates = [];
+  }
+}
+
+/** Apply status data from either fetch or SSE. */
+function applyStatusData(data, { silentStatus = false } = {}) {
+  const repos = reposInputEl.value.trim();
   if (!repos && data.repos.length > 0) {
     reposInputEl.value = data.repos.join(", ");
   }
@@ -1976,15 +1997,63 @@ async function fetchStatus(options = {}) {
   pollIntervalMs = data.pollIntervalMs;
   cursorApiConfigured = Boolean(data.cursorApiConfigured);
   syncVisibleRows(!silentStatus);
-  schedulePoll();
 }
 
-async function fetchTemplates() {
+/** Build the SSE URL from the current filter state. */
+function buildSSEUrl() {
+  const repos = reposInputEl.value.trim();
+  const params = new URLSearchParams();
+  if (repos) params.set("repos", repos);
+  params.set("scope", filterScopeInputEl.value);
+  return `/api/events?${params.toString()}`;
+}
+
+/** Connect to the SSE endpoint. Falls back to polling on failure. */
+function connectSSE() {
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+
   try {
-    const data = await api("/api/templates");
-    commentTemplates = data.templates || [];
+    eventSource = new EventSource(buildSSEUrl());
   } catch {
-    commentTemplates = [];
+    // EventSource not supported or URL error -- fall back to polling
+    sseConnected = false;
+    schedulePoll();
+    return;
+  }
+
+  eventSource.addEventListener("status", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      sseConnected = true;
+      applyStatusData(data, { silentStatus: true });
+      // Cancel any active polling timer since SSE is delivering updates
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    } catch {
+      // Ignore malformed SSE data
+    }
+  });
+
+  eventSource.addEventListener("error", () => {
+    // SSE connection lost -- fall back to polling
+    sseConnected = false;
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    schedulePoll();
+  });
+}
+
+/** Reconnect SSE when the user changes repos or scope. */
+function reconnectSSE() {
+  if (eventSource || sseConnected) {
+    connectSSE();
   }
 }
 
@@ -2012,12 +2081,14 @@ refreshBtnEl.addEventListener("click", async () => {
 
 reposInputEl.addEventListener("input", () => {
   persistCurrentUIState();
+  reconnectSSE();
 });
 
 filterScopeInputEl.addEventListener("change", async () => {
   persistCurrentUIState();
   try {
     await fetchStatus();
+    reconnectSSE();
   } catch (error) {
     setStatus(error.message);
   }
@@ -2074,4 +2145,7 @@ applyStoredUIState();
 Promise.all([
   fetchTemplates(),
   fetchStatus(),
-]).catch((error) => setStatus(error.message));
+]).then(() => {
+  // After initial fetch succeeds, attempt SSE connection for push updates
+  connectSSE();
+}).catch((error) => setStatus(error.message));
