@@ -1,0 +1,4 @@
+#42 cursor/fix-login
+  Fix login flow for SSO users
+  https://github.com/acme/widgets/pull/42
+  CI: passing

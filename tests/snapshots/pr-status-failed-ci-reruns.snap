@@ -1,0 +1,5 @@
+#99 claude/add-tests
+  Add unit tests for auth module
+  https://github.com/acme/widgets/pull/99
+  FAILED: Tests [attempt 1, attempt 2] run #2001, 2002 (1 rerun)
+  FAILED: Lint [attempt 1] run #2003

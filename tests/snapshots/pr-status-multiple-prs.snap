@@ -1,0 +1,14 @@
+#42 cursor/fix-login
+  Fix login flow
+  https://github.com/acme/widgets/pull/42
+  CI: passing
+
+#43 claude/add-cache
+  Add Redis caching layer
+  https://github.com/acme/widgets/pull/43
+  FAILED: CI [attempt 1] run #4001
+
+#44 cursor/ui-tweaks
+  Minor UI adjustments
+  https://github.com/acme/widgets/pull/44
+  CI: no runs
