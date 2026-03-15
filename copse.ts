@@ -154,13 +154,13 @@ Commands:`);
   for (const [name, cmd] of Object.entries(COMMANDS)) {
     console.log(`  ${name.padEnd(maxLen)}  ${cmd.description}`);
   }
-  console.log(`  ${"completion".padEnd(maxLen)}  Output shell completion script (bash/zsh)`);
+  console.log(`  ${"completion".padEnd(maxLen)}  Output shell completion script (bash/zsh/fish)`);
 
   console.log(`
 Run 'copse <command>' to see arguments for that command.
 Run 'copse <command> --help' for detailed help.
 
-Tab completion: eval "\$(copse completion)"   # or "copse completion zsh" for zsh
+Tab completion: eval "\$(copse completion)"   # or "copse completion fish | source" for fish
 `);
 }
 
@@ -184,7 +184,7 @@ Arguments:`);
   console.log();
 }
 
-function generateCompletion(shell: "bash" | "zsh"): void {
+function generateCompletion(shell: "bash" | "zsh" | "fish"): void {
   const commands = [...Object.keys(COMMANDS), "completion"].join(" ");
   
   const commonOpts: Record<string, string> = { "--dry-run": "Preview without acting", "--all": "Include all authors", "--mine": "Only yours", "--help": "Show help" };
@@ -266,6 +266,71 @@ compdef _copse copse
 
 # Usage: Add to your ~/.zshrc:
 #   eval "\\$(copse completion zsh)"
+`;
+    console.log(script);
+    return;
+  }
+
+  if (shell === "fish") {
+    const formatFishCompletions = (subcmd: string, opts: Record<string, string>): string =>
+      Object.entries(opts)
+        .map(([o, d]) => {
+          const long = o.replace(/^--/, "");
+          return `complete -c copse -n "__fish_seen_subcommand_from ${subcmd}" -l ${long} -d '${d.replace(/'/g, "\\'")}'`;
+        })
+        .join("\n");
+
+    const subcmdCompletions = [
+      ...Object.keys(COMMANDS).map(
+        (c) => `complete -c copse -n "__fish_use_subcommand" -a ${c} -d '${COMMANDS[c].description.replace(/'/g, "\\'")}'`
+      ),
+      `complete -c copse -n "__fish_use_subcommand" -a completion -d 'Output shell completion script'`,
+    ].join("\n");
+
+    const script = `# Fish completion for copse
+
+# Disable file completions by default
+complete -c copse -f
+
+# Subcommands
+${subcmdCompletions}
+
+# init
+${formatFishCompletions("init", initOpts)}
+
+# approval, pr-status
+${formatFishCompletions("approval", commonOpts)}
+${formatFishCompletions("pr-status", commonOpts)}
+
+# pr-comments
+${formatFishCompletions("pr-comments", prCommentsOpts)}
+
+# status
+${formatFishCompletions("status", statusOpts)}
+
+# update-main
+${formatFishCompletions("update-main", baseOpts)}
+
+# create-prs
+${formatFishCompletions("create-prs", createPrsOpts)}
+
+# rerun-failed
+${formatFishCompletions("rerun-failed", rerunFailedOpts)}
+
+# create-issue
+${formatFishCompletions("create-issue", createIssueOpts)}
+
+# web
+${formatFishCompletions("web", webOpts)}
+
+# artifacts
+${formatFishCompletions("artifacts", artifactsOpts)}
+
+# completion subcommand arguments
+complete -c copse -n "__fish_seen_subcommand_from completion" -a "bash zsh fish" -d 'Shell type'
+
+# Usage: Add to your ~/.config/fish/config.fish:
+#   copse completion fish | source
 `;
     console.log(script);
     return;
@@ -375,22 +440,23 @@ function main(): void {
 
   if (command === "completion") {
     if (args[1] === "--help" || args[1] === "-h") {
-      console.log(`Output shell completion script. Detects zsh vs bash from $SHELL when no arg given.
+      console.log(`Output shell completion script. Detects shell from $SHELL when no arg given.
 
-Usage: copse completion [bash|zsh]
+Usage: copse completion [bash|zsh|fish]
 
-Add to your shell config (~/.zshrc or ~/.bashrc):
-  eval "$(copse completion)"
+Add to your shell config (~/.zshrc, ~/.bashrc, or ~/.config/fish/config.fish):
+  eval "$(copse completion)"          # bash/zsh
+  copse completion fish | source      # fish
 `);
       process.exit(0);
     }
     let shell = args[1];
     if (!shell) {
       const envShell = process.env.SHELL || "";
-      shell = envShell.endsWith("zsh") ? "zsh" : "bash";
+      shell = envShell.endsWith("fish") ? "fish" : envShell.endsWith("zsh") ? "zsh" : "bash";
     }
-    if (shell !== "bash" && shell !== "zsh") {
-      console.error("Usage: copse completion [bash|zsh]");
+    if (shell !== "bash" && shell !== "zsh" && shell !== "fish") {
+      console.error("Usage: copse completion [bash|zsh|fish]");
       process.exit(1);
     }
     generateCompletion(shell);
