@@ -2,6 +2,7 @@ import { execFileSync, execFile } from "child_process";
 import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 import { WATCH_INTERVAL_MS } from "./services/status-types.js";
 import { getApiProvider } from "./api-provider.js";
+import { diskCacheGet, diskCacheSet, cleanupDiskCache } from "./disk-cache.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -182,6 +183,7 @@ export function gh(...args: string[]): string {
   if (provider?.gh) {
     return provider.gh(...args);
   }
+  cleanupDiskCache();
   const stdio = _pipeStdio ? "pipe" as const : undefined;
   const decision = cacheDecisionForGhArgs(args);
   if (decision.ok) {
@@ -191,6 +193,12 @@ export function gh(...args: string[]): string {
     if (cached && cached.expiresAt > now) {
       return cached.value;
     }
+    // Fall through to disk cache
+    const diskHit = diskCacheGet(decision.key, decision.ttlMs);
+    if (diskHit !== null) {
+      ghReadCache.set(decision.key, { value: diskHit, expiresAt: now + decision.ttlMs });
+      return diskHit;
+    }
   }
   for (let attempt = 0; ; attempt++) {
     try {
@@ -198,6 +206,7 @@ export function gh(...args: string[]): string {
       if (decision.ok) {
         const now = Date.now();
         ghReadCache.set(decision.key, { value: out, expiresAt: now + decision.ttlMs });
+        diskCacheSet(decision.key, out);
       }
       return out;
     } catch (e: unknown) {
@@ -219,6 +228,7 @@ export function ghQuiet(...args: string[]): string {
   if (provider?.ghQuiet) {
     return provider.ghQuiet(...args);
   }
+  cleanupDiskCache();
   const decision = cacheDecisionForGhArgs(args);
   if (decision.ok) {
     const now = Date.now();
@@ -227,6 +237,11 @@ export function ghQuiet(...args: string[]): string {
     if (cached && cached.expiresAt > now) {
       return cached.value;
     }
+    const diskHit = diskCacheGet(decision.key, decision.ttlMs);
+    if (diskHit !== null) {
+      ghReadCache.set(decision.key, { value: diskHit, expiresAt: now + decision.ttlMs });
+      return diskHit;
+    }
   }
   for (let attempt = 0; ; attempt++) {
     try {
@@ -234,6 +249,7 @@ export function ghQuiet(...args: string[]): string {
       if (decision.ok) {
         const now = Date.now();
         ghReadCache.set(decision.key, { value: out, expiresAt: now + decision.ttlMs });
+        diskCacheSet(decision.key, out);
       }
       return out;
     } catch (e: unknown) {
@@ -255,6 +271,7 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
   if (provider?.ghQuietAsync) {
     return provider.ghQuietAsync(...args);
   }
+  cleanupDiskCache();
   const decision = cacheDecisionForGhArgs(args);
   if (decision.ok) {
     const now = Date.now();
@@ -262,6 +279,11 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
     const cached = ghReadCache.get(decision.key);
     if (cached && cached.expiresAt > now) {
       return Promise.resolve(cached.value);
+    }
+    const diskHit = diskCacheGet(decision.key, decision.ttlMs);
+    if (diskHit !== null) {
+      ghReadCache.set(decision.key, { value: diskHit, expiresAt: now + decision.ttlMs });
+      return Promise.resolve(diskHit);
     }
   }
   return new Promise((resolve, reject) => {
@@ -283,6 +305,7 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
         if (decision.ok) {
           const now = Date.now();
           ghReadCache.set(decision.key, { value: stdout, expiresAt: now + decision.ttlMs });
+          diskCacheSet(decision.key, stdout);
         }
         resolve(stdout);
       });
