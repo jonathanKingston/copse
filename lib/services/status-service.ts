@@ -30,6 +30,8 @@ import {
   type StatusFilterScope,
   isPRWithStatus,
 } from "./status-types.js";
+import { getApiProvider } from "../api-provider.js";
+import { ensureMockProviderConfigured } from "../mock-mode.js";
 
 export interface StatusQueryOptions {
   repos: string[];
@@ -49,6 +51,7 @@ const statusCache = new Map<string, CacheEntry>();
 const inflightRequests = new Map<string, Promise<StatusRow[]>>();
 const STATUS_CACHE_DIR = join(tmpdir(), "copse", "status-cache");
 let diskCacheDirPromise: Promise<string | null> | null = null;
+ensureMockProviderConfigured();
 
 function cacheKey(options: StatusQueryOptions): string {
   return `${[...options.repos].sort().join(",")}\0${options.scope}`;
@@ -57,6 +60,7 @@ function cacheKey(options: StatusQueryOptions): string {
 export function invalidateStatusCache(): void {
   statusCache.clear();
   inflightRequests.clear();
+  getApiProvider()?.invalidateStatusCache?.();
   void clearDiskStatusCache();
 }
 

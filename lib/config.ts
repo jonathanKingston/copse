@@ -9,8 +9,12 @@
 import { readFileSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
+import { getApiProvider } from "./api-provider.js";
+import { ensureMockProviderConfigured } from "./mock-mode.js";
 
 const CONFIG_FILENAME = ".copserc";
+
+ensureMockProviderConfigured();
 
 export interface Copserc {
   repos?: string[];
@@ -56,6 +60,10 @@ function loadConfigFromPath(configPath: string): Copserc | null {
 }
 
 export function loadConfig(cwd: string = process.cwd()): Copserc | null {
+  const provider = getApiProvider();
+  if (provider?.loadConfig) {
+    return provider.loadConfig(cwd);
+  }
   const homeConfig = join(homedir(), CONFIG_FILENAME);
   const globalConfig = loadConfigFromPath(homeConfig);
   if (globalConfig) return globalConfig;
@@ -67,6 +75,10 @@ export function loadConfig(cwd: string = process.cwd()): Copserc | null {
 }
 
 export function getConfiguredRepos(cwd: string = process.cwd()): string[] | null {
+  const provider = getApiProvider();
+  if (provider?.getConfiguredRepos) {
+    return provider.getConfiguredRepos(cwd);
+  }
   const config = loadConfig(cwd);
   if (!config?.repos || config.repos.length === 0) return null;
   return config.repos;

@@ -6,8 +6,12 @@
 import { readdirSync, readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { getApiProvider } from "./api-provider.js";
+import { ensureMockProviderConfigured } from "./mock-mode.js";
 
 const DEFAULT_TEMPLATES_DIR = ".copse/comment-templates";
+
+ensureMockProviderConfigured();
 
 const STARTER_TEMPLATES: Record<string, string> = {
   "please-fix.md": "Please fix this.",
@@ -42,6 +46,10 @@ export function scaffoldTemplates(dirPath: string): void {
  * Does NOT prompt or scaffold—caller handles that.
  */
 export function loadTemplates(dirPath: string): Map<string, string> {
+  const provider = getApiProvider();
+  if (provider?.loadTemplates) {
+    return provider.loadTemplates(dirPath);
+  }
   const resolved = expandTildePath(dirPath);
   if (!existsSync(resolved)) {
     return new Map();

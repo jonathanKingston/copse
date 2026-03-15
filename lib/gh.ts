@@ -1,6 +1,8 @@
 import { execFileSync, execFile } from "child_process";
 import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 import { WATCH_INTERVAL_MS } from "./services/status-types.js";
+import { getApiProvider } from "./api-provider.js";
+import { ensureMockProviderConfigured } from "./mock-mode.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -27,6 +29,13 @@ const COAUTHOR_SCAN_COMMIT_COUNT = 100;
 
 let _interrupted = false;
 let _pipeStdio = false;
+
+ensureMockProviderConfigured();
+
+function activeProvider() {
+  ensureMockProviderConfigured();
+  return getApiProvider();
+}
 
 type CacheDecision = { ok: true; key: string; ttlMs: number } | { ok: false };
 
@@ -149,6 +158,11 @@ export class GhNotAuthenticatedError extends Error {
 
 /** Check that `gh` is installed and authenticated. */
 export function ensureGh(): void {
+  const provider = activeProvider();
+  if (provider?.ensureGh) {
+    provider.ensureGh();
+    return;
+  }
   try {
     execFileSync("gh", ["--version"], { stdio: "ignore" });
   } catch (e: unknown) {
@@ -168,6 +182,10 @@ export function isInterrupted(): boolean { return _interrupted; }
 export function setPipeStdio(on: boolean): void { _pipeStdio = on; }
 
 export function gh(...args: string[]): string {
+  const provider = activeProvider();
+  if (provider?.gh) {
+    return provider.gh(...args);
+  }
   const stdio = _pipeStdio ? "pipe" as const : undefined;
   const decision = cacheDecisionForGhArgs(args);
   if (decision.ok) {
@@ -201,6 +219,10 @@ export function gh(...args: string[]): string {
 
 /** Like gh() but suppresses stderr output (for use in TUI watch modes). */
 export function ghQuiet(...args: string[]): string {
+  const provider = activeProvider();
+  if (provider?.ghQuiet) {
+    return provider.ghQuiet(...args);
+  }
   const decision = cacheDecisionForGhArgs(args);
   if (decision.ok) {
     const now = Date.now();
@@ -233,6 +255,10 @@ export function ghQuiet(...args: string[]): string {
 
 /** Non-blocking variant of ghQuiet — keeps the event loop responsive for TUI key handling. */
 export function ghQuietAsync(...args: string[]): Promise<string> {
+  const provider = activeProvider();
+  if (provider?.ghQuietAsync) {
+    return provider.ghQuietAsync(...args);
+  }
   const decision = cacheDecisionForGhArgs(args);
   if (decision.ok) {
     const now = Date.now();
@@ -271,6 +297,10 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
 
 let _cachedUser: string | null = null;
 export function getCurrentUser(): string {
+  const provider = activeProvider();
+  if (provider?.getCurrentUser) {
+    return provider.getCurrentUser();
+  }
   if (!_cachedUser) {
     _cachedUser = gh("api", "user", "-q", ".login").trim();
   }
@@ -406,6 +436,10 @@ export function checkPRsForAgentCoAuthors(
 }
 
 export function listOpenPRs(repo: string, fields: string[]): PR[] {
+  const provider = activeProvider();
+  if (provider?.listOpenPRs) {
+    return provider.listOpenPRs(repo, fields);
+  }
   const out = gh(
     "pr", "list",
     "--repo", repo,
@@ -417,6 +451,10 @@ export function listOpenPRs(repo: string, fields: string[]): PR[] {
 }
 
 export async function listOpenPRsAsync(repo: string, fields: string[]): Promise<PR[]> {
+  const provider = activeProvider();
+  if (provider?.listOpenPRsAsync) {
+    return provider.listOpenPRsAsync(repo, fields);
+  }
   const out = await ghQuietAsync(
     "pr", "list",
     "--repo", repo,
@@ -428,6 +466,10 @@ export async function listOpenPRsAsync(repo: string, fields: string[]): Promise<
 }
 
 export function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
+  const provider = activeProvider();
+  if (provider?.listWorkflowRuns) {
+    return provider.listWorkflowRuns(repo, branch);
+  }
   try {
     const out = gh(
       "run", "list",
@@ -444,6 +486,10 @@ export function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
 }
 
 export async function listWorkflowRunsAsync(repo: string, branch: string): Promise<WorkflowRun[]> {
+  const provider = activeProvider();
+  if (provider?.listWorkflowRunsAsync) {
+    return provider.listWorkflowRunsAsync(repo, branch);
+  }
   try {
     const out = await ghQuietAsync(
       "run", "list",
@@ -460,16 +506,28 @@ export async function listWorkflowRunsAsync(repo: string, branch: string): Promi
 }
 
 export function listBranches(repo: string): string[] {
+  const provider = activeProvider();
+  if (provider?.listBranches) {
+    return provider.listBranches(repo);
+  }
   const out = gh("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
   return out.trim() ? out.trim().split("\n") : [];
 }
 
 export async function listBranchesAsync(repo: string): Promise<string[]> {
+  const provider = activeProvider();
+  if (provider?.listBranchesAsync) {
+    return provider.listBranchesAsync(repo);
+  }
   const out = await ghQuietAsync("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
   return out.trim() ? out.trim().split("\n") : [];
 }
 
 export async function getDefaultBranchAsync(repo: string): Promise<string> {
+  const provider = activeProvider();
+  if (provider?.getDefaultBranchAsync) {
+    return provider.getDefaultBranchAsync(repo);
+  }
   const out = await ghQuietAsync("api", `repos/${repo}`, "-q", ".default_branch");
   const branch = out.trim();
   if (!branch) {
@@ -528,6 +586,10 @@ export function getResolvedCommentNodeIds(repo: string, prNumber: number): Set<s
 }
 
 export function listPRReviewComments(repo: string, prNumber: number): PRReviewComment[] {
+  const provider = activeProvider();
+  if (provider?.listPRReviewComments) {
+    return provider.listPRReviewComments(repo, prNumber);
+  }
   try {
     const out = gh(
       "api",
@@ -551,6 +613,11 @@ export function replyToPRComment(
   inReplyToId: number,
   body: string
 ): void {
+  const provider = activeProvider();
+  if (provider?.replyToPRCommentAsync) {
+    void provider.replyToPRCommentAsync(repo, prNumber, inReplyToId, body);
+    return;
+  }
   gh(
     "api",
     `repos/${repo}/pulls/${prNumber}/comments/${inReplyToId}/replies`,
@@ -565,6 +632,11 @@ export async function replyToPRCommentAsync(
   inReplyToId: number,
   body: string
 ): Promise<void> {
+  const provider = activeProvider();
+  if (provider?.replyToPRCommentAsync) {
+    await provider.replyToPRCommentAsync(repo, prNumber, inReplyToId, body);
+    return;
+  }
   await ghQuietAsync(
     "api",
     `repos/${repo}/pulls/${prNumber}/comments/${inReplyToId}/replies`,
@@ -620,6 +692,10 @@ export function resolveReviewThread(repo: string, prNumber: number, commentNodeI
 }
 
 export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): Map<number, number> {
+  const provider = activeProvider();
+  if (provider?.getUnresolvedCommentCounts) {
+    return provider.getUnresolvedCommentCounts(repo, prNumbers);
+  }
   if (prNumbers.length === 0) return new Map();
 
   const [owner, name] = repo.split("/");
@@ -667,6 +743,10 @@ export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): M
 }
 
 export async function getUnresolvedCommentCountsAsync(repo: string, prNumbers: number[]): Promise<Map<number, number>> {
+  const provider = activeProvider();
+  if (provider?.getUnresolvedCommentCountsAsync) {
+    return provider.getUnresolvedCommentCountsAsync(repo, prNumbers);
+  }
   if (prNumbers.length === 0) return new Map();
 
   const [owner, name] = repo.split("/");
@@ -755,6 +835,10 @@ export async function getResolvedCommentNodeIdsAsync(repo: string, prNumber: num
 }
 
 export async function listPRReviewCommentsAsync(repo: string, prNumber: number): Promise<PRReviewComment[]> {
+  const provider = activeProvider();
+  if (provider?.listPRReviewCommentsAsync) {
+    return provider.listPRReviewCommentsAsync(repo, prNumber);
+  }
   try {
     const out = await ghQuietAsync(
       "api",
@@ -773,10 +857,19 @@ export async function listPRReviewCommentsAsync(repo: string, prNumber: number):
 }
 
 export async function addPRCommentAsync(repo: string, prNumber: number, body: string): Promise<void> {
+  const provider = activeProvider();
+  if (provider?.addPRCommentAsync) {
+    await provider.addPRCommentAsync(repo, prNumber, body);
+    return;
+  }
   await ghQuietAsync("pr", "comment", String(prNumber), "--repo", repo, "--body", body);
 }
 
 export function listPRFiles(repo: string, prNumber: number): PRChangedFile[] {
+  const provider = activeProvider();
+  if (provider?.listPRFiles) {
+    return provider.listPRFiles(repo, prNumber);
+  }
   try {
     const out = gh(
       "api",
@@ -793,6 +886,10 @@ export function listPRFiles(repo: string, prNumber: number): PRChangedFile[] {
 }
 
 export async function listPRFilesAsync(repo: string, prNumber: number): Promise<PRChangedFile[]> {
+  const provider = activeProvider();
+  if (provider?.listPRFilesAsync) {
+    return provider.listPRFilesAsync(repo, prNumber);
+  }
   try {
     const out = await ghQuietAsync(
       "api",
@@ -809,6 +906,15 @@ export async function listPRFilesAsync(repo: string, prNumber: number): Promise<
 }
 
 export function getCommitInfo(repo: string, branchRef: string, includeMessage: boolean = false): CommitInfo {
+  const provider = activeProvider();
+  if (provider?.getCommitInfo) {
+    const info = provider.getCommitInfo(repo, branchRef, includeMessage);
+    return {
+      message: info.message,
+      date: info.date,
+      authorLogin: info.authorLogin,
+    };
+  }
   const ref = encodeURIComponent(branchRef);
   const query = includeMessage
     ? `.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`
@@ -834,6 +940,15 @@ export function getCommitInfo(repo: string, branchRef: string, includeMessage: b
 }
 
 export async function getCommitInfoAsync(repo: string, branchRef: string, includeMessage: boolean = false): Promise<CommitInfo> {
+  const provider = activeProvider();
+  if (provider?.getCommitInfoAsync) {
+    const info = await provider.getCommitInfoAsync(repo, branchRef, includeMessage);
+    return {
+      message: info.message,
+      date: info.date,
+      authorLogin: info.authorLogin,
+    };
+  }
   const ref = encodeURIComponent(branchRef);
   const query = includeMessage
     ? `.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`

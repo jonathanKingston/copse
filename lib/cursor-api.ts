@@ -1,3 +1,8 @@
+import { getApiProvider } from "./api-provider.js";
+import { ensureMockProviderConfigured } from "./mock-mode.js";
+
+ensureMockProviderConfigured();
+
 const CURSOR_API_BASE_URL = "https://api.cursor.com";
 const DEFAULT_LIST_LIMIT = 100;
 
@@ -80,6 +85,10 @@ async function cursorRequest<T>(
 }
 
 export async function listAgentsByPrUrl(apiKey: string, prUrl: string): Promise<CursorAgent[]> {
+  const provider = getApiProvider();
+  if (provider?.cursorListAgentsByPrUrl) {
+    return provider.cursorListAgentsByPrUrl(apiKey, prUrl);
+  }
   const agents: CursorAgent[] = [];
   let cursor: string | null = null;
 
@@ -103,6 +112,10 @@ export async function listAgentsByPrUrl(apiKey: string, prUrl: string): Promise<
 }
 
 export async function findLatestAgentByPrUrl(apiKey: string, prUrl: string): Promise<CursorAgent | null> {
+  const provider = getApiProvider();
+  if (provider?.cursorFindLatestAgentByPrUrl) {
+    return provider.cursorFindLatestAgentByPrUrl(apiKey, prUrl);
+  }
   const agents = await listAgentsByPrUrl(apiKey, prUrl);
   if (agents.length === 0) return null;
 
@@ -115,6 +128,10 @@ export async function findLatestAgentByPrUrl(apiKey: string, prUrl: string): Pro
 }
 
 export async function addFollowup(apiKey: string, agentId: string, text: string): Promise<string> {
+  const provider = getApiProvider();
+  if (provider?.cursorAddFollowup) {
+    return provider.cursorAddFollowup(apiKey, agentId, text);
+  }
   const payload = {
     prompt: {
       text,
@@ -135,6 +152,10 @@ export async function addFollowup(apiKey: string, agentId: string, text: string)
 }
 
 export async function launchAgentForPrUrl(apiKey: string, prUrl: string, text: string): Promise<string> {
+  const provider = getApiProvider();
+  if (provider?.cursorLaunchAgentForPrUrl) {
+    return provider.cursorLaunchAgentForPrUrl(apiKey, prUrl, text);
+  }
   const payload = {
     prompt: {
       text,
@@ -179,6 +200,10 @@ export async function launchAgentForRepository(
 }
 
 export async function listAgentArtifacts(apiKey: string, agentId: string): Promise<CursorArtifact[]> {
+  const provider = getApiProvider();
+  if (provider?.cursorListAgentArtifacts) {
+    return provider.cursorListAgentArtifacts(apiKey, agentId);
+  }
   const response = await cursorRequest<CursorListArtifactsResponse>(
     apiKey,
     `/v0/agents/${encodeURIComponent(agentId)}/artifacts`,
@@ -192,6 +217,10 @@ export async function getArtifactDownloadUrl(
   agentId: string,
   absolutePath: string
 ): Promise<{ url: string; expiresAt?: string }> {
+  const provider = getApiProvider();
+  if (provider?.cursorGetArtifactDownloadUrl) {
+    return provider.cursorGetArtifactDownloadUrl(apiKey, agentId, absolutePath);
+  }
   const params = new URLSearchParams({ path: absolutePath });
   const response = await cursorRequest<CursorArtifactDownloadResponse>(
     apiKey,
