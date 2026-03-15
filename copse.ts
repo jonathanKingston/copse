@@ -4,8 +4,10 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import type { CommandDef } from "./lib/types.js";
-import { ensureGh, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
-import { initializeRuntime } from "./lib/runtime-init.js";
+
+// Lazy-loaded at command execution time for faster CLI startup:
+//   ./lib/gh.js        -> ensureGh, GhNotFoundError, GhNotAuthenticatedError
+//   ./lib/runtime-init.js -> initializeRuntime
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -328,7 +330,7 @@ complete -F _copse_completion copse
   console.log(script);
 }
 
-function runCommand(command: string, args: string[]): void {
+async function runCommand(command: string, args: string[]): Promise<void> {
   const cmd = COMMANDS[command];
   if (!cmd) {
     console.error(`Unknown command: ${command}`);
@@ -336,11 +338,18 @@ function runCommand(command: string, args: string[]): void {
     process.exit(1);
   }
 
+  // Lazy-load runtime initialization - only needed when actually running a command
+  const runtimeModule = await import("./lib/runtime-init.js");
+  runtimeModule.initializeRuntime();
+
   if (command !== "init") {
+    // Lazy-load gh module - avoids pulling in child_process/execFileSync and
+    // the full gh helper graph for help/completion paths
+    const ghModule = await import("./lib/gh.js");
     try {
-      ensureGh();
+      ghModule.ensureGh();
     } catch (e: unknown) {
-      if (e instanceof GhNotFoundError || e instanceof GhNotAuthenticatedError) {
+      if (e instanceof ghModule.GhNotFoundError || e instanceof ghModule.GhNotAuthenticatedError) {
         console.error(e.message);
         process.exit(1);
       }
@@ -363,7 +372,6 @@ function runCommand(command: string, args: string[]): void {
 }
 
 function main(): void {
-  initializeRuntime();
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
@@ -407,7 +415,7 @@ Add to your shell config (~/.zshrc or ~/.bashrc):
     process.exit(0);
   }
 
-  runCommand(command, args.slice(1));
+  void runCommand(command, args.slice(1));
 }
 
 main();
