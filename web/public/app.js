@@ -54,6 +54,70 @@ let detailStateByKey = new Map();
 
 const UI_STATE_STORAGE_KEY = "copse.web.uiState";
 
+/** Map between URL query param names and their corresponding filter keys. */
+const FILTER_PARAM_MAP = {
+  repos: "repos",
+  q: "textFilter",
+  scope: "scope",
+  draft: "draftFilter",
+  conflict: "conflictFilter",
+  review: "reviewFilter",
+  comment: "commentFilter",
+};
+
+/** Inverse mapping: filter key -> URL param name. */
+const FILTER_KEY_TO_PARAM = Object.fromEntries(
+  Object.entries(FILTER_PARAM_MAP).map(([param, key]) => [key, param]),
+);
+
+/** Default values for each filter (values that should be omitted from the URL). */
+const FILTER_DEFAULTS = {
+  repos: "",
+  textFilter: "",
+  scope: "authored",
+  draftFilter: "any",
+  conflictFilter: "any",
+  reviewFilter: "any",
+  commentFilter: "any",
+};
+
+function readFiltersFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  const result = {};
+  for (const [param, key] of Object.entries(FILTER_PARAM_MAP)) {
+    if (params.has(param)) {
+      result[key] = params.get(param);
+    }
+  }
+  return result;
+}
+
+function syncFiltersToURL() {
+  const params = new URLSearchParams(window.location.search);
+  const filters = {
+    repos: reposInputEl.value,
+    textFilter: textFilterInputEl.value,
+    scope: filterScopeInputEl.value,
+    draftFilter: draftFilterInputEl.value,
+    conflictFilter: conflictFilterInputEl.value,
+    reviewFilter: reviewFilterInputEl.value,
+    commentFilter: commentFilterInputEl.value,
+  };
+  for (const [key, value] of Object.entries(filters)) {
+    const param = FILTER_KEY_TO_PARAM[key];
+    if (value && value !== FILTER_DEFAULTS[key]) {
+      params.set(param, value);
+    } else {
+      params.delete(param);
+    }
+  }
+  const qs = params.toString();
+  const newURL = qs
+    ? `${window.location.pathname}?${qs}`
+    : window.location.pathname;
+  window.history.replaceState(null, "", newURL);
+}
+
 function readStoredUIState() {
   try {
     const raw = window.localStorage.getItem(UI_STATE_STORAGE_KEY);
@@ -75,7 +139,11 @@ function writeStoredUIState(partialState = {}) {
 }
 
 function applyStoredUIState() {
-  const state = readStoredUIState();
+  // URL query params take priority over localStorage so filtered views can be shared.
+  const stored = readStoredUIState();
+  const fromURL = readFiltersFromURL();
+  const hasURLFilters = Object.keys(fromURL).length > 0;
+  const state = hasURLFilters ? { ...stored, ...fromURL } : stored;
   if (typeof state.repos === "string") reposInputEl.value = state.repos;
   if (typeof state.textFilter === "string") textFilterInputEl.value = state.textFilter;
   if (typeof state.scope === "string") filterScopeInputEl.value = state.scope;
@@ -83,6 +151,8 @@ function applyStoredUIState() {
   if (typeof state.conflictFilter === "string") conflictFilterInputEl.value = state.conflictFilter;
   if (typeof state.reviewFilter === "string") reviewFilterInputEl.value = state.reviewFilter;
   if (typeof state.commentFilter === "string") commentFilterInputEl.value = state.commentFilter;
+  // Ensure URL reflects the resolved state so bookmarks are always accurate.
+  syncFiltersToURL();
 }
 
 function persistCurrentUIState() {
@@ -95,6 +165,7 @@ function persistCurrentUIState() {
     reviewFilter: reviewFilterInputEl.value,
     commentFilter: commentFilterInputEl.value,
   });
+  syncFiltersToURL();
 }
 
 function createDetailState() {
