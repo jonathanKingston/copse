@@ -32,6 +32,7 @@ import { tmpdir } from "os";
 import { initializeRuntime } from "../lib/runtime-init.js";
 import { REPO_PATTERN, validateRepo, validateAgent } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
+import { getCommentTemplates } from "../lib/config.js";
 import { loadConfig } from "../lib/config.js";
 import { launchAgentForPrUrl, launchAgentForRepository } from "../lib/cursor-api.js";
 
@@ -243,27 +244,27 @@ async function promptTitle(rl: readline.Interface): Promise<string> {
   }
 }
 
-async function promptComment(rl: readline.Interface, mention: string): Promise<string | null> {
+async function promptComment(rl: readline.Interface, mention: string, templates: CommentTemplate[]): Promise<string | null> {
   console.error(`\n${ANSI.bold}Select comment for the agent:${ANSI.reset}`);
   console.error(`  ${ANSI.cyan}[0]${ANSI.reset} No comment`);
-  for (let i = 0; i < COMMENT_TEMPLATES.length; i++) {
-    console.error(`  ${ANSI.cyan}[${i + 1}]${ANSI.reset} ${COMMENT_TEMPLATES[i].label}`);
+  for (let i = 0; i < templates.length; i++) {
+    console.error(`  ${ANSI.cyan}[${i + 1}]${ANSI.reset} ${templates[i].label}`);
   }
-  console.error(`  ${ANSI.cyan}[${COMMENT_TEMPLATES.length + 1}]${ANSI.reset} Custom – type your own message`);
+  console.error(`  ${ANSI.cyan}[${templates.length + 1}]${ANSI.reset} Custom – type your own message`);
 
   for (;;) {
-    const raw = await rl.question(`\n${ANSI.bold}Choice (0-${COMMENT_TEMPLATES.length + 1}):${ANSI.reset} `);
+    const raw = await rl.question(`\n${ANSI.bold}Choice (0-${templates.length + 1}):${ANSI.reset} `);
     const choice = parseInt(raw.trim(), 10);
 
     if (choice === 0) return null;
 
-    if (choice >= 1 && choice <= COMMENT_TEMPLATES.length) {
-      const comment = COMMENT_TEMPLATES[choice - 1].build(mention);
+    if (choice >= 1 && choice <= templates.length) {
+      const comment = templates[choice - 1].build(mention);
       console.error(`${ANSI.dim}→ ${comment}${ANSI.reset}`);
       return comment;
     }
 
-    if (choice === COMMENT_TEMPLATES.length + 1) {
+    if (choice === templates.length + 1) {
       const custom = await rl.question(`${ANSI.bold}Comment:${ANSI.reset} `);
       const trimmed = custom.trim();
       if (!trimmed) {
@@ -282,6 +283,23 @@ async function promptComment(rl: readline.Interface, mention: string): Promise<s
 const AGENTS = ["cursor", "claude", "copilot"];
 function isAgent(s: string | undefined): boolean {
   return !!s && AGENTS.includes(s.toLowerCase());
+}
+
+function loadCommentTemplates(): CommentTemplate[] {
+  const customTemplates = getCommentTemplates();
+  if (customTemplates && customTemplates.length > 0) {
+    return customTemplates.map((t) => ({
+      label: t.label,
+      build: (mention: string) => {
+        const msg = t.message.trim();
+        if (msg.startsWith(mention)) {
+          return msg;
+        }
+        return `${mention} ${msg}`;
+      },
+    }));
+  }
+  return COMMENT_TEMPLATES;
 }
 
 async function main(): Promise<void> {
@@ -307,6 +325,8 @@ async function main(): Promise<void> {
     if (prIdx >= 0 && i === prIdx + 1) return false;
     return true;
   });
+
+  const commentTemplates = loadCommentTemplates();
 
   const help = `Usage: create-issue [repo] [title] [body] [agent] [options]
 
@@ -456,11 +476,13 @@ Examples:
 
     if (!noComment) {
       if (dryRun) {
-        comment = COMMENT_TEMPLATES[2].build(mention);
+        const defaultIdx = Math.min(2, commentTemplates.length - 1);
+        comment = commentTemplates[defaultIdx].build(mention);
       } else if (rl) {
-        comment = await promptComment(rl, mention);
+        comment = await promptComment(rl, mention, commentTemplates);
       } else {
-        comment = COMMENT_TEMPLATES[2].build(mention);
+        const defaultIdx = Math.min(2, commentTemplates.length - 1);
+        comment = commentTemplates[defaultIdx].build(mention);
       }
     }
 
