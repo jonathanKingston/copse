@@ -599,6 +599,8 @@ export function startWebServer(options: WebServerOptions = {}): ReturnType<typeo
   return server;
 }
 
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
 export function runWebServer(options: WebServerOptions = {}): void {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
@@ -609,6 +611,33 @@ export function runWebServer(options: WebServerOptions = {}): void {
     console.error(`Failed to start web server: ${error.message}`);
     process.exit(1);
   });
+
+  let shuttingDown = false;
+
+  function gracefulShutdown(signal: string): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`\nReceived ${signal}, shutting down gracefully...`);
+
+    // Stop accepting new connections and wait for in-flight requests
+    server.close((err) => {
+      if (err) {
+        console.error(`Error during server close: ${err.message}`);
+        process.exit(1);
+      }
+      console.error("All in-flight requests completed. Server closed cleanly.");
+      process.exit(0);
+    });
+
+    // Force shutdown after timeout if in-flight requests don't finish
+    setTimeout(() => {
+      console.error(`Shutdown timed out after ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit.`);
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS).unref();
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
