@@ -159,6 +159,44 @@ function setStatus(message) {
   statusTextEl.textContent = message;
 }
 
+const toastContainerEl = (() => {
+  const el = document.createElement("div");
+  el.className = "toast-container";
+  document.body.appendChild(el);
+  return el;
+})();
+
+const TOAST_ICONS = { success: "✓", error: "!", info: "•" };
+const TOAST_DURATIONS = { success: 4000, error: 5000, info: 3000 };
+
+function showToast(message, type = "info") {
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+
+  const icon = document.createElement("span");
+  icon.className = "toast-icon";
+  icon.textContent = TOAST_ICONS[type] || TOAST_ICONS.info;
+
+  const msg = document.createElement("span");
+  msg.className = "toast-message";
+  msg.textContent = message;
+
+  toast.append(icon, msg);
+  toastContainerEl.appendChild(toast);
+
+  const duration = TOAST_DURATIONS[type] || 3000;
+
+  function dismiss() {
+    if (toast.classList.contains("is-dismissing")) return;
+    toast.classList.add("is-dismissing");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  }
+
+  toast.addEventListener("click", dismiss);
+  setTimeout(dismiss, duration);
+}
+
+
 function normalizeReviewDecision(value) {
   return String(value || REVIEW_REQUIRED);
 }
@@ -701,9 +739,9 @@ function createPRRow(row) {
       try {
         const result = await performAction(row, "ready");
         await fetchStatus({ silentStatus: true });
-        setStatus(result.alreadyReady ? `#${row.number} already ready for review` : `Marked #${row.number} ready for review`);
+        showToast(result.alreadyReady ? `#${row.number} already ready for review` : `Marked #${row.number} ready for review`, "success");
       } catch (error) {
-        setStatus(error.message);
+        showToast(error.message, "error");
       }
     }),
     makeActionButton("Rerun", async () => {
@@ -711,7 +749,7 @@ function createPRRow(row) {
         await performAction(row, "rerun");
         await fetchStatus();
       } catch (error) {
-        setStatus(error.message);
+        showToast(error.message, "error");
       }
     }),
     makeActionButton("Update", async () => {
@@ -719,7 +757,7 @@ function createPRRow(row) {
         await performAction(row, "update-main");
         await fetchStatus();
       } catch (error) {
-        setStatus(error.message);
+        showToast(error.message, "error");
       }
     }),
     makeActionButton("Approve", async () => {
@@ -727,7 +765,7 @@ function createPRRow(row) {
         await performAction(row, "approve");
         await fetchStatus();
       } catch (error) {
-        setStatus(error.message);
+        showToast(error.message, "error");
       }
     }),
     makeActionButton("M.Auto", async () => {
@@ -735,7 +773,7 @@ function createPRRow(row) {
         await performAction(row, "merge-auto");
         await fetchStatus();
       } catch (error) {
-        setStatus(error.message);
+        showToast(error.message, "error");
       }
     })
   );
@@ -773,9 +811,9 @@ function createBranchRow(row) {
     try {
       const result = await createBranchPullRequest(row);
       await fetchStatus({ silentStatus: true });
-      setStatus(result.message || `Created PR for ${row.headRefName}`);
+      showToast(result.message || `Created PR for ${row.headRefName}`, "success");
     } catch (error) {
-      setStatus(error.message);
+      showToast(error.message, "error");
     }
   }));
   actionTd.append(actions);
@@ -1306,11 +1344,11 @@ function createCommentsPanel(row, state) {
   batchReplyBtn.addEventListener("click", async () => {
     const body = state.selectedBatchTemplate || templateSelect.value;
     if (!body) {
-      setStatus("Select a template first");
+      showToast("Select a template first", "info");
       return;
     }
     if (state.selectedCommentIds.size === 0) {
-      setStatus("No comments selected");
+      showToast("No comments selected", "info");
       return;
     }
     batchReplyBtn.disabled = true;
@@ -1324,15 +1362,16 @@ function createCommentsPanel(row, state) {
       const deliveredCount = typeof result.total === "number"
         ? result.total
         : state.selectedCommentIds.size;
-      setStatus(
+      showToast(
         typeof result.message === "string" && result.message.trim()
           ? result.message
-          : `Replied to ${deliveredCount} comment(s)`
+          : `Replied to ${deliveredCount} comment(s)`,
+        "success"
       );
       state.selectedCommentIds = new Set();
       await ensureCommentsLoaded(row, true);
     } catch (error) {
-      setStatus(error.message);
+      showToast(error.message, "error");
       batchReplyBtn.disabled = false;
       batchReplyBtn.textContent = "Reply to selected";
     }
@@ -1397,10 +1436,11 @@ function createCommentsPanel(row, state) {
         delivery: state.replyDestination,
       });
       delete state.replyDrafts[comment.id];
-      setStatus(
+      showToast(
         typeof result.message === "string" && result.message.trim()
           ? result.message
-          : `Reply sent via ${replyDestinationLabel(state.replyDestination)}`
+          : `Reply sent via ${replyDestinationLabel(state.replyDestination)}`,
+        "success"
       );
       await ensureCommentsLoaded(row, true);
     });
@@ -1734,19 +1774,20 @@ function togglePRSelection(row) {
 function getSelectedRows(minimumCount, actionLabel) {
   const selectedRows = currentRows.filter((row) => selectedPRs.has(selectionKey(row)));
   if (selectedRows.length < minimumCount) {
-    setStatus(`Select at least ${minimumCount} PR${minimumCount === 1 ? "" : "s"} to ${actionLabel}`);
+    showToast(`Select at least ${minimumCount} PR${minimumCount === 1 ? "" : "s"} to ${actionLabel}`, "info");
     return null;
   }
   return selectedRows;
 }
 
-async function refreshAfterBulk(message) {
+async function refreshAfterBulk(message, type = "success") {
   try {
     await fetchStatus({ silentStatus: true });
   } catch {
     // Keep the action message even when refresh fails.
   }
-  setStatus(message);
+  setStatus("");
+  showToast(message, type);
 }
 
 selectAllCheckboxEl.addEventListener("change", () => {
@@ -1781,7 +1822,7 @@ markReadyBtnEl.addEventListener("click", async () => {
         : `Marked ${marked} PR(s) ready`
     );
   } catch (error) {
-    await refreshAfterBulk(`Stopped after ${marked + alreadyReady} of ${selectedRows.length}: ${error.message}`);
+    await refreshAfterBulk(`Stopped after ${marked + alreadyReady} of ${selectedRows.length}: ${error.message}`, "error");
   }
 });
 
@@ -1812,7 +1853,7 @@ bulkApproveBtnEl.addEventListener("click", async () => {
         : `Approved ${approved} PR(s)`
     );
   } catch (error) {
-    await refreshAfterBulk(`Stopped after ${approved + alreadyApproved} of ${selectedRows.length}: ${error.message}`);
+    await refreshAfterBulk(`Stopped after ${approved + alreadyApproved} of ${selectedRows.length}: ${error.message}`, "error");
   }
 });
 
@@ -1838,7 +1879,7 @@ bulkMergeAutoBtnEl.addEventListener("click", async () => {
         : `Enabled merge when ready on ${enabled} PR(s)`
     );
   } catch (error) {
-    await refreshAfterBulk(`Stopped after ${enabled + alreadyEnabled} of ${selectedRows.length}: ${error.message}`);
+    await refreshAfterBulk(`Stopped after ${enabled + alreadyEnabled} of ${selectedRows.length}: ${error.message}`, "error");
   }
 });
 
@@ -1865,7 +1906,7 @@ bulkRerunBtnEl.addEventListener("click", async () => {
         : "No failed workflows found on the selected PRs"
     );
   } catch (error) {
-    await refreshAfterBulk(`Stopped after ${processedRows} of ${selectedRows.length}: ${error.message}`);
+    await refreshAfterBulk(`Stopped after ${processedRows} of ${selectedRows.length}: ${error.message}`, "error");
   }
 });
 
@@ -1891,7 +1932,7 @@ bulkUpdateBtnEl.addEventListener("click", async () => {
         : `Updated ${updated} PR(s)`
     );
   } catch (error) {
-    await refreshAfterBulk(`Stopped after ${updated + alreadyUpToDate} of ${selectedRows.length}: ${error.message}`);
+    await refreshAfterBulk(`Stopped after ${updated + alreadyUpToDate} of ${selectedRows.length}: ${error.message}`, "error");
   }
 });
 
@@ -1899,21 +1940,21 @@ chainMergeBtnEl.addEventListener("click", async () => {
   // Keep queue order based on the underlying youngest-first data, even when the UI is grouped by stack.
   const chain = currentRows.filter(r => selectedPRs.has(selectionKey(r)));
   if (chain.length < 2) {
-    setStatus("Select at least 2 PRs to chain merge");
+    showToast("Select at least 2 PRs to chain merge", "info");
     return;
   }
 
   // All selected PRs must be in the same repo
   const repos = new Set(chain.map(r => r.repo));
   if (repos.size > 1) {
-    setStatus("Chain merge only works within a single repo");
+    showToast("Chain merge only works within a single repo", "info");
     return;
   }
 
   const draftPRs = chain.filter((row) => row.isDraft);
   if (draftPRs.length > 0) {
     const draftLabels = draftPRs.map((row) => `#${row.number}`).join(", ");
-    setStatus(`Chain merge requires all selected PRs to be ready for review. Draft PRs: ${draftLabels}`);
+    showToast(`Chain merge requires all selected PRs to be ready for review. Draft PRs: ${draftLabels}`, "info");
     return;
   }
 
@@ -1925,7 +1966,7 @@ chainMergeBtnEl.addEventListener("click", async () => {
   try {
     await runChainMergeSteps(chain, result.steps);
   } catch (error) {
-    setStatus(error.message);
+    showToast(error.message, "error");
   }
 });
 
@@ -1996,7 +2037,7 @@ function schedulePoll() {
     try {
       await fetchStatus({ silentStatus: true });
     } catch (error) {
-      setStatus(error.message);
+      showToast(error.message, "error");
       schedulePoll();
     }
   }, pollIntervalMs);
@@ -2006,7 +2047,7 @@ refreshBtnEl.addEventListener("click", async () => {
   try {
     await fetchStatus();
   } catch (error) {
-    setStatus(error.message);
+    showToast(error.message, "error");
   }
 });
 
@@ -2019,7 +2060,7 @@ filterScopeInputEl.addEventListener("change", async () => {
   try {
     await fetchStatus();
   } catch (error) {
-    setStatus(error.message);
+    showToast(error.message, "error");
   }
 });
 
@@ -2061,11 +2102,11 @@ issueFormEl.addEventListener("submit", async (event) => {
         templateChoice: Number(issueTemplateEl.value),
       }),
     });
-    setStatus(result.message);
+    showToast(result.message, "success");
     issueTitleEl.value = "";
     issueBodyEl.value = "";
   } catch (error) {
-    setStatus(error.message);
+    showToast(error.message, "error");
   }
 });
 
@@ -2074,4 +2115,4 @@ applyStoredUIState();
 Promise.all([
   fetchTemplates(),
   fetchStatus(),
-]).catch((error) => setStatus(error.message));
+]).catch((error) => showToast(error.message, "error"));

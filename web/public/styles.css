@@ -1315,6 +1315,108 @@ tr.is-expandable td {
   margin-top: 1.1rem;
 }
 
+/* --- Toast notifications --- */
+
+.toast-container {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  pointer-events: none;
+  max-width: min(420px, calc(100vw - 2.5rem));
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  color: var(--text);
+  animation: toast-in 280ms ease forwards;
+  cursor: pointer;
+}
+
+.toast.is-dismissing {
+  animation: toast-out 220ms ease forwards;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-top: 0.05rem;
+}
+
+.toast.toast-success .toast-icon {
+  background: rgba(47, 111, 78, 0.16);
+  color: var(--accent-2);
+}
+
+.toast.toast-error .toast-icon {
+  background: rgba(144, 47, 47, 0.14);
+  color: #7f2424;
+}
+
+.toast.toast-info .toast-icon {
+  background: rgba(30, 42, 34, 0.1);
+  color: var(--text-muted);
+}
+
+.toast.toast-error {
+  border-color: rgba(144, 47, 47, 0.25);
+  background: rgba(255, 248, 248, 0.97);
+}
+
+.toast.toast-success {
+  border-color: rgba(47, 111, 78, 0.22);
+  background: rgba(247, 253, 249, 0.97);
+}
+
+.toast-message {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.96);
+  }
+}
+
 @media (max-width: 1200px) {
   #statusTable {
     width: max-content;
