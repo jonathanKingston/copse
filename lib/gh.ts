@@ -33,12 +33,12 @@ function activeProvider() {
   return getApiProvider();
 }
 
-type CacheDecision = { ok: true; key: string; ttlMs: number } | { ok: false };
+export type CacheDecision = { ok: true; key: string; ttlMs: number } | { ok: false };
 
-const GH_READ_CACHE_MAX_ENTRIES = 500;
-const ghReadCache = new Map<string, { expiresAt: number; value: string }>();
+export const GH_READ_CACHE_MAX_ENTRIES = 500;
+export const ghReadCache = new Map<string, { expiresAt: number; value: string }>();
 
-function maybePruneGhReadCache(now: number): void {
+export function maybePruneGhReadCache(now: number): void {
   // Opportunistic prune: remove expired entries and cap size.
   for (const [k, v] of ghReadCache) {
     if (v.expiresAt <= now) ghReadCache.delete(k);
@@ -80,7 +80,7 @@ function isGraphqlMutation(query: string): boolean {
   return /\bmutation\b/i.test(query);
 }
 
-function cacheDecisionForGhArgs(args: string[]): CacheDecision {
+export function cacheDecisionForGhArgs(args: string[]): CacheDecision {
   if (args.length === 0) return { ok: false };
 
   const sub = args[0];
