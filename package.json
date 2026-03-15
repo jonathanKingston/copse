@@ -32,6 +32,7 @@
     "web:dev": "npm run build && node dist/copse.js web --open",
     "web:build": "npm run build",
     "test": "node --test \"dist/tests/**/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage \"dist/tests/**/*.test.js\"",
     "test:pr-status": "node dist/copse.js pr-status",
     "prepublishOnly": "npm run build",
     "bump": "bash scripts/bump-version.sh"

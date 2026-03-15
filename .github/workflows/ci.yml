@@ -29,6 +29,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test with coverage
+        run: npm run test:coverage
+
       - name: Verify CLI runs
         run: |
           node dist/copse.js --help
