@@ -1,6 +1,7 @@
 import { ghQuietAsync, addPRCommentAsync, replyToPRCommentAsync, validateAgent, validateRepo } from "../gh.js";
 import type { WorkflowRun } from "../types.js";
 import { sendReplyViaCursorApi } from "../cursor-replies.js";
+import { launchAgentForPrUrl, launchAgentForRepository } from "../cursor-api.js";
 import { invalidateStatusCache } from "./status-service.js";
 
 const UP_TO_DATE_ERRORS = ["nothing to merge", "already up to date"];
@@ -377,13 +378,20 @@ export async function createIssueWithAgentComment(params: {
   body: string;
   agent: string;
   templateChoice: 0 | 1 | 2 | 3;
-}): Promise<{ issueNumber: number; commentAdded: boolean }> {
-  const { repo, title, body, agent, templateChoice } = params;
+  cursorApiKey?: string | null;
+  targetPr?: number | null;
+}): Promise<{ issueNumber: number; commentAdded: boolean; cursorAgentLaunched: boolean }> {
+  const { repo, title, body, agent, templateChoice, cursorApiKey, targetPr } = params;
   validateRepo(repo);
   const validatedAgent = validateAgent(agent);
   const trimmedTitle = title.trim();
   if (!trimmedTitle) {
     throw new Error("issue title cannot be empty");
+  }
+
+  const shouldUseCursorApi = validatedAgent === "cursor" && Boolean(cursorApiKey);
+  if (targetPr && !shouldUseCursorApi) {
+    throw new Error("targetPr requires the Cursor API (agent=cursor with cursorApiKey configured)");
   }
 
   const issueBody = body.trim() || ".";
@@ -404,12 +412,40 @@ export async function createIssueWithAgentComment(params: {
   const issueNumber = parseInt(match[1], 10);
 
   const selectedTemplate = getIssueTemplateComment(validatedAgent, templateChoice);
-  if (selectedTemplate) {
-    await ghQuietAsync("issue", "comment", String(issueNumber), "--repo", repo, "--body", selectedTemplate);
-    return { issueNumber, commentAdded: true };
+  if (!selectedTemplate) {
+    return { issueNumber, commentAdded: false, cursorAgentLaunched: false };
   }
 
-  return { issueNumber, commentAdded: false };
+  if (shouldUseCursorApi) {
+    const issueUrl = `https://github.com/${repo}/issues/${issueNumber}`;
+    const instruction = stripMention(selectedTemplate, validatedAgent);
+    const prompt = `${instruction}\n\nIssue: ${issueUrl}`;
+
+    if (targetPr) {
+      const prUrl = `https://github.com/${repo}/pull/${targetPr}`;
+      await launchAgentForPrUrl(cursorApiKey!, prUrl, prompt);
+    } else {
+      await launchAgentForRepository(
+        cursorApiKey!,
+        `https://github.com/${repo}`,
+        prompt,
+        { autoCreatePr: true, openAsCursorGithubApp: true }
+      );
+    }
+    return { issueNumber, commentAdded: false, cursorAgentLaunched: true };
+  }
+
+  await ghQuietAsync("issue", "comment", String(issueNumber), "--repo", repo, "--body", selectedTemplate);
+  return { issueNumber, commentAdded: true, cursorAgentLaunched: false };
+}
+
+function stripMention(comment: string, agent: string): string {
+  const mention = `@${agent}`;
+  const trimmed = comment.trim();
+  if (trimmed.toLowerCase().startsWith(mention.toLowerCase())) {
+    return trimmed.slice(mention.length).trimStart();
+  }
+  return trimmed;
 }
 
 export function getIssueTemplateComment(agent: string, templateChoice: 0 | 1 | 2 | 3): string | null {

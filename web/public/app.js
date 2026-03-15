@@ -14,6 +14,7 @@ const issueTitleEl = document.getElementById("issueTitle");
 const issueBodyEl = document.getElementById("issueBody");
 const issueAgentEl = document.getElementById("issueAgent");
 const issueTemplateEl = document.getElementById("issueTemplate");
+const issuePrEl = document.getElementById("issuePr");
 const selectAllCheckboxEl = document.getElementById("selectAllCheckbox");
 const chainMergeControlsEl = document.getElementById("chainMergeControls");
 const chainMergeBtnEl = document.getElementById("chainMergeBtn");
@@ -1876,19 +1877,25 @@ commentFilterInputEl.addEventListener("change", () => {
 issueFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
+    const payload = {
+      repo: issueRepoEl.value.trim(),
+      title: issueTitleEl.value.trim(),
+      body: issueBodyEl.value.trim(),
+      agent: issueAgentEl.value,
+      templateChoice: Number(issueTemplateEl.value),
+    };
+    const prValue = issuePrEl.value.trim();
+    if (prValue) {
+      payload.pr = Number(prValue);
+    }
     const result = await api("/api/issues", {
       method: "POST",
-      body: JSON.stringify({
-        repo: issueRepoEl.value.trim(),
-        title: issueTitleEl.value.trim(),
-        body: issueBodyEl.value.trim(),
-        agent: issueAgentEl.value,
-        templateChoice: Number(issueTemplateEl.value),
-      }),
+      body: JSON.stringify(payload),
     });
     setStatus(result.message);
     issueTitleEl.value = "";
     issueBodyEl.value = "";
+    issuePrEl.value = "";
   } catch (error) {
     setStatus(error.message);
   }
