@@ -250,6 +250,24 @@ td.pr-cell {
   gap: 0.35rem;
 }
 
+.branch-head {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+}
+
+.branch-head .pr-number {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.branch-head .ci-indicator {
+  margin-left: auto;
+  align-self: center;
+}
+
 .pr-number:hover {
   text-decoration: underline;
 }

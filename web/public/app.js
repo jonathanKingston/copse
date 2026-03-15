@@ -601,7 +601,7 @@ function branchCell(row) {
   main.className = "pr-main";
 
   const head = document.createElement("div");
-  head.className = "pr-head";
+  head.className = "pr-head branch-head";
 
   const kind = createBadge("branch", "branch-badge");
   const branch = document.createElement("a");

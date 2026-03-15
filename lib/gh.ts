@@ -469,6 +469,15 @@ export async function listBranchesAsync(repo: string): Promise<string[]> {
   return out.trim() ? out.trim().split("\n") : [];
 }
 
+export function getDefaultBranch(repo: string): string {
+  const out = gh("api", `repos/${repo}`, "-q", ".default_branch");
+  const branch = out.trim();
+  if (!branch) {
+    throw new Error(`Could not determine default branch for ${repo}`);
+  }
+  return branch;
+}
+
 export async function getDefaultBranchAsync(repo: string): Promise<string> {
   const out = await ghQuietAsync("api", `repos/${repo}`, "-q", ".default_branch");
   const branch = out.trim();
@@ -476,6 +485,36 @@ export async function getDefaultBranchAsync(repo: string): Promise<string> {
     throw new Error(`Could not determine default branch for ${repo}`);
   }
   return branch;
+}
+
+function parseAheadBy(value: string, repo: string, baseBranch: string, headBranch: string): number {
+  const aheadBy = Number.parseInt(value.trim(), 10);
+  if (!Number.isInteger(aheadBy) || aheadBy < 0) {
+    throw new Error(
+      `Could not determine commit delta for ${repo} (${baseBranch}...${headBranch})`
+    );
+  }
+  return aheadBy;
+}
+
+export function branchHasUniqueCommits(repo: string, baseBranch: string, headBranch: string): boolean {
+  const out = gh(
+    "api",
+    `repos/${repo}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headBranch)}`,
+    "-q",
+    ".ahead_by"
+  );
+  return parseAheadBy(out, repo, baseBranch, headBranch) > 0;
+}
+
+export async function branchHasUniqueCommitsAsync(repo: string, baseBranch: string, headBranch: string): Promise<boolean> {
+  const out = await ghQuietAsync(
+    "api",
+    `repos/${repo}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headBranch)}`,
+    "-q",
+    ".ahead_by"
+  );
+  return parseAheadBy(out, repo, baseBranch, headBranch) > 0;
 }
 
 const COMMIT_DELIM = "\x01";

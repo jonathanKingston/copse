@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyCIStatus, filterPRsByStatusScope, filterStandaloneBranches, hasPRConflicts } from "../lib/services/status-service.js";
+import {
+  applyCIStatus,
+  filterPRsByStatusScope,
+  filterStandaloneBranches,
+  filterStandaloneBranchesWithoutMerged,
+  hasPRConflicts,
+} from "../lib/services/status-service.js";
 import type { PRWithStatus, StatusBasePR } from "../lib/services/status-types.js";
 
 function makeRow(): PRWithStatus {
@@ -129,4 +135,19 @@ test("filterStandaloneBranches keeps only standalone agent branches", () => {
   );
 
   assert.deepEqual(filtered, ["cursor/ready", "cursor/base-for-stack", "claude/standalone"]);
+});
+
+test("filterStandaloneBranchesWithoutMerged excludes branches already merged into default", () => {
+  const filtered = filterStandaloneBranchesWithoutMerged(
+    [
+      "cursor/merged",
+      "cursor/ready",
+      "claude/merged-too",
+      "main",
+    ],
+    [],
+    ["cursor/merged", "claude/merged-too"]
+  );
+
+  assert.deepEqual(filtered, ["cursor/ready"]);
 });
