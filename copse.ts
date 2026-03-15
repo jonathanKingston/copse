@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import type { CommandDef } from "./lib/types.js";
 import { ensureGh, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
+import { initializeRuntime } from "./lib/runtime-init.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -362,6 +363,7 @@ function runCommand(command: string, args: string[]): void {
 }
 
 function main(): void {
+  initializeRuntime();
   const args = process.argv.slice(2);
 
   if (args.length === 0) {

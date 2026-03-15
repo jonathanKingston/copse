@@ -3,6 +3,7 @@
  *
  * Usage: copse artifacts <repo> <pr-number> [--download ABSOLUTE_PATH] [--out FILE]
  */
+import { initializeRuntime } from "../lib/runtime-init.js";
 import { validateRepo } from "../lib/gh.js";
 import { loadConfig } from "../lib/config.js";
 import { findLatestAgentByPrUrl, getArtifactDownloadUrl, listAgentArtifacts } from "../lib/cursor-api.js";
@@ -12,6 +13,8 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { basename as pathBasename } from "node:path";
+
+initializeRuntime();
 
 function usage(): string {
   return `Usage: copse artifacts <repo> <pr-number> [--download ABSOLUTE_PATH] [--out FILE]

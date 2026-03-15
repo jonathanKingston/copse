@@ -6,6 +6,7 @@
 import { readdirSync, readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { getApiProvider } from "./api-provider.js";
 
 const DEFAULT_TEMPLATES_DIR = ".copse/comment-templates";
 
@@ -42,6 +43,10 @@ export function scaffoldTemplates(dirPath: string): void {
  * Does NOT prompt or scaffold—caller handles that.
  */
 export function loadTemplates(dirPath: string): Map<string, string> {
+  const provider = getApiProvider();
+  if (provider?.loadTemplates) {
+    return provider.loadTemplates(dirPath);
+  }
   const resolved = expandTildePath(dirPath);
   if (!existsSync(resolved)) {
     return new Map();

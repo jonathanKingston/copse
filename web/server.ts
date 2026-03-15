@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import { getConfiguredRepos, loadConfig } from "../lib/config.js";
 import { REPO_PATTERN, listPRReviewCommentsAsync, listPRFilesAsync, validateRepo } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
@@ -27,6 +28,8 @@ import {
 import { findLatestAgentByPrUrl, getArtifactDownloadUrl, listAgentArtifacts, listAgentsByPrUrl } from "../lib/cursor-api.js";
 import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
 import { loadTemplates, resolveTemplatesPath } from "../lib/templates.js";
+
+initializeRuntime();
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;

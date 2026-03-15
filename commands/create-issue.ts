@@ -28,10 +28,13 @@ import { execFileSync, execSync } from "child_process";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync } from "fs";
 import { resolve, join } from "path";
 import { tmpdir } from "os";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import { REPO_PATTERN, validateRepo, validateAgent } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { loadConfig } from "../lib/config.js";
 import { launchAgentForRepository } from "../lib/cursor-api.js";
+
+initializeRuntime();
 
 const ANSI = {
   reset: "\x1b[0m",

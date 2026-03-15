@@ -16,6 +16,7 @@
  *   - Optionally contain the query in title or body
  */
 
+import { initializeRuntime } from "../lib/runtime-init.js";
 import { getOriginRepo } from "../lib/utils.js";
 import type { ExecError } from "../lib/types.js";
 import {
@@ -23,6 +24,8 @@ import {
 } from "../lib/gh.js";
 import { parseStandardFlags } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
+
+initializeRuntime();
 
 const autoMergeStrategyCache = new Map<string, string>();
 
