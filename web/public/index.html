@@ -7,9 +7,12 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header>
-    <h1>Copse Web</h1>
-    <p>Status dashboard for agent PR workflows.</p>
+  <header class="page-header">
+    <div class="page-header-copy">
+      <h1>Copse Web</h1>
+      <p>Status dashboard for agent PR workflows.</p>
+    </div>
+    <span id="statusText"></span>
   </header>
 
   <main>
@@ -74,7 +77,6 @@
         <button id="bulkUpdateBtn" title="Merge main into selected PR branches">Update</button>
         <button id="chainMergeBtn" title="Retarget selected PRs into a stack and enable auto-merge in order">Chain Merge</button>
       </span>
-      <span id="statusText"></span>
     </section>
 
     <section class="layout">
