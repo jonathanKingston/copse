@@ -141,6 +141,12 @@ const COMMANDS: Record<string, CommandDef> = {
       { name: "--out FILE", description: "Output file path (default: ./<basename>)" },
     ],
   },
+  doctor: {
+    file: "doctor.js",
+    description: "Checks system health and configuration",
+    usage: "copse doctor",
+    args: [],
+  },
 };
 
 function showHelp(): void {
@@ -336,7 +342,7 @@ function runCommand(command: string, args: string[]): void {
     process.exit(1);
   }
 
-  if (command !== "init") {
+  if (command !== "init" && command !== "doctor") {
     try {
       ensureGh();
     } catch (e: unknown) {
