@@ -32,7 +32,8 @@ import { initializeRuntime } from "../lib/runtime-init.js";
 import { REPO_PATTERN, validateRepo, validateAgent } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { loadConfig } from "../lib/config.js";
-import { launchAgentForRepository } from "../lib/cursor-api.js";
+import { launchAgentForRepository as launchCursorAgentForRepository } from "../lib/cursor-api.js";
+import { launchAgentForRepository as launchClaudeAgentForRepository } from "../lib/claude-api.js";
 
 initializeRuntime();
 
@@ -211,13 +212,38 @@ async function sendInstructionViaCursorApi(
     return;
   }
 
-  const id = await launchAgentForRepository(
+  const id = await launchCursorAgentForRepository(
     cursorApiKey,
     `https://github.com/${repo}`,
     prompt,
     { autoCreatePr: true, openAsCursorGithubApp: true }
   );
   console.error(`${ANSI.green}Cursor agent launched: ${id}${ANSI.reset}`);
+}
+
+async function sendInstructionViaClaudeApi(
+  repo: string,
+  issueNumber: number,
+  agent: string,
+  comment: string,
+  claudeApiKey: string,
+  dryRun: boolean
+): Promise<void> {
+  const issueUrl = `https://github.com/${repo}/issues/${issueNumber}`;
+  const instruction = stripAgentMention(comment, agent);
+  const prompt = `${instruction}\n\nIssue: ${issueUrl}`;
+  if (dryRun) {
+    console.error(`Would launch Claude agent for ${issueUrl} with prompt: "${prompt.slice(0, 120)}${prompt.length > 120 ? "..." : ""}"`);
+    return;
+  }
+
+  const id = await launchClaudeAgentForRepository(
+    claudeApiKey,
+    `https://github.com/${repo}`,
+    prompt,
+    { autoCreatePr: true }
+  );
+  console.error(`${ANSI.green}Claude agent launched: ${id}${ANSI.reset}`);
 }
 
 async function promptTitle(rl: readline.Interface): Promise<string> {
@@ -396,7 +422,9 @@ Examples:
   agent = validateAgent(agent);
   const config = loadConfig();
   const cursorApiKey = config?.cursorApiKey?.trim() || null;
+  const claudeApiKey = config?.claudeApiKey?.trim() || null;
   const shouldUseCursorApi = agent === "cursor" && cursorApiKey !== null;
+  const shouldUseClaudeApi = agent === "claude" && claudeApiKey !== null;
 
   const isInteractive = stdout.isTTY;
 
@@ -442,6 +470,8 @@ Examples:
       if (comment) {
         if (shouldUseCursorApi) {
           await sendInstructionViaCursorApi(repo, issueNumber, agent, comment, cursorApiKey!, dryRun);
+        } else if (shouldUseClaudeApi) {
+          await sendInstructionViaClaudeApi(repo, issueNumber, agent, comment, claudeApiKey!, dryRun);
         } else {
           addComment(repo, issueNumber, comment, dryRun);
         }
@@ -451,6 +481,8 @@ Examples:
       if (!dryRun && comment) {
         if (shouldUseCursorApi) {
           console.error(`${ANSI.green}Sent instruction to Cursor API (instead of issue comment).${ANSI.reset}`);
+        } else if (shouldUseClaudeApi) {
+          console.error(`${ANSI.green}Sent instruction to Claude API (instead of issue comment).${ANSI.reset}`);
         } else {
           console.error(`${ANSI.green}Commented: ${comment}${ANSI.reset}`);
         }
@@ -459,6 +491,8 @@ Examples:
       if (comment) {
         if (shouldUseCursorApi) {
           console.error(`Would send instruction to Cursor API: "${comment}"`);
+        } else if (shouldUseClaudeApi) {
+          console.error(`Would send instruction to Claude API: "${comment}"`);
         } else {
           console.error(`Would add comment: "${comment}"`);
         }

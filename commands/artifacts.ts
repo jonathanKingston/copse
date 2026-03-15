@@ -6,7 +6,16 @@
 import { initializeRuntime } from "../lib/runtime-init.js";
 import { validateRepo } from "../lib/gh.js";
 import { loadConfig } from "../lib/config.js";
-import { findLatestAgentByPrUrl, getArtifactDownloadUrl, listAgentArtifacts } from "../lib/cursor-api.js";
+import {
+  findLatestAgentByPrUrl as findLatestCursorAgentByPrUrl,
+  getArtifactDownloadUrl as getCursorArtifactDownloadUrl,
+  listAgentArtifacts as listCursorAgentArtifacts,
+} from "../lib/cursor-api.js";
+import {
+  findLatestAgentByPrUrl as findLatestClaudeAgentByPrUrl,
+  getArtifactDownloadUrl as getClaudeArtifactDownloadUrl,
+  listAgentArtifacts as listClaudeAgentArtifacts,
+} from "../lib/claude-api.js";
 import { formatBytes } from "../lib/format.js";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
@@ -107,30 +116,57 @@ async function main(): Promise<void> {
   const { repo, prNumber, downloadPath, outFile } = parseArgs(process.argv.slice(2));
   validateRepo(repo);
 
-  const cursorApiKey = loadConfig()?.cursorApiKey?.trim() || "";
-  if (!cursorApiKey) {
-    console.error('Cursor API not configured. Set "cursorApiKey" in .copserc.');
+  const config = loadConfig();
+  const cursorApiKey = config?.cursorApiKey?.trim() || "";
+  const claudeApiKey = config?.claudeApiKey?.trim() || "";
+  if (!cursorApiKey && !claudeApiKey) {
+    console.error('No agent API configured. Set "cursorApiKey" or "claudeApiKey" in .copserc.');
     process.exit(1);
   }
 
   const prUrl = `https://github.com/${repo}/pull/${prNumber}`;
-  const agent = await findLatestAgentByPrUrl(cursorApiKey, prUrl);
-  if (!agent) {
-    console.error(`No Cursor agent linked to ${prUrl}`);
+
+  // Try Cursor first, then Claude
+  let agentId: string | null = null;
+  let agentLabel = "";
+  let artifactList: Array<{ absolutePath: string; sizeBytes?: number; updatedAt?: string }> = [];
+  let getDownloadUrl: ((agId: string, path: string) => Promise<{ url: string; expiresAt?: string }>) | null = null;
+
+  if (cursorApiKey) {
+    const agent = await findLatestCursorAgentByPrUrl(cursorApiKey, prUrl);
+    if (agent) {
+      agentId = agent.id;
+      agentLabel = "Cursor";
+      artifactList = await listCursorAgentArtifacts(cursorApiKey, agent.id);
+      getDownloadUrl = (agId, path) => getCursorArtifactDownloadUrl(cursorApiKey, agId, path);
+    }
+  }
+
+  if (!agentId && claudeApiKey) {
+    const agent = await findLatestClaudeAgentByPrUrl(claudeApiKey, prUrl);
+    if (agent) {
+      agentId = agent.id;
+      agentLabel = "Claude";
+      artifactList = await listClaudeAgentArtifacts(claudeApiKey, agent.id);
+      getDownloadUrl = (agId, path) => getClaudeArtifactDownloadUrl(claudeApiKey, agId, path);
+    }
+  }
+
+  if (!agentId) {
+    console.error(`No agent linked to ${prUrl}`);
     process.exit(1);
   }
 
-  const artifacts = await listAgentArtifacts(cursorApiKey, agent.id);
-  console.log(`Cursor agent: ${agent.id}`);
+  console.log(`${agentLabel} agent: ${agentId}`);
   console.log(`PR: ${prUrl}`);
   console.log("");
 
-  if (artifacts.length === 0) {
+  if (artifactList.length === 0) {
     console.log("No artifacts found.");
     process.exit(0);
   }
 
-  for (const a of artifacts) {
+  for (const a of artifactList) {
     const size = formatBytes(a.sizeBytes ?? null);
     const updated = a.updatedAt ? new Date(a.updatedAt).toISOString() : "";
     console.log(`${a.absolutePath}  ${size}${updated ? `  ${updated}` : ""}`);
@@ -139,7 +175,7 @@ async function main(): Promise<void> {
   if (!downloadPath) return;
 
   const out = outFile || `./${pathBasename(downloadPath) || "artifact"}`;
-  const { url } = await getArtifactDownloadUrl(cursorApiKey, agent.id, downloadPath);
+  const { url } = await getDownloadUrl!(agentId, downloadPath);
   await downloadFile(url, out);
   console.log("");
   console.log(`Downloaded to ${out}`);

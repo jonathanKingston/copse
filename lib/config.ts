@@ -17,6 +17,7 @@ export interface Copserc {
   repos?: string[];
   commentTemplates?: string;
   cursorApiKey?: string;
+  claudeApiKey?: string;
 }
 
 function findConfigDir(startDir: string): string | null {
@@ -46,8 +47,10 @@ function loadConfigFromPath(configPath: string): Copserc | null {
       !("commentTemplates" in config) || typeof config.commentTemplates === "string";
     const hasCursorApiKey =
       !("cursorApiKey" in config) || typeof config.cursorApiKey === "string";
+    const hasClaudeApiKey =
+      !("claudeApiKey" in config) || typeof config.claudeApiKey === "string";
 
-    if (hasRepos && hasCommentTemplates && hasCursorApiKey) {
+    if (hasRepos && hasCommentTemplates && hasCursorApiKey && hasClaudeApiKey) {
       return config;
     }
   } catch {

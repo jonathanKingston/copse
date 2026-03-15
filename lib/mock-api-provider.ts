@@ -11,6 +11,7 @@ import type { ApiProvider } from "./api-provider.js";
 import type { PR, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 import type { CommitInfo } from "./gh.js";
 import type { CursorAgent, CursorArtifact } from "./cursor-api.js";
+import type { ClaudeAgent, ClaudeArtifact } from "./claude-api.js";
 import type { Copserc } from "./config.js";
 
 export interface MockRepo {
@@ -57,6 +58,11 @@ export class MockApiProvider implements ApiProvider {
   cursorDownloadUrls = new Map<string, { url: string; expiresAt?: string }>();
   cursorFollowups = new Map<string, string[]>();
   cursorLaunches = new Map<string, string[]>();
+  claudeAgents = new Map<string, ClaudeAgent[]>();
+  claudeArtifacts = new Map<string, ClaudeArtifact[]>();
+  claudeDownloadUrls = new Map<string, { url: string; expiresAt?: string }>();
+  claudeFollowups = new Map<string, string[]>();
+  claudeLaunches = new Map<string, string[]>();
   ghCalls: string[][] = [];
   private _nextAgentId = 1;
   private _nextPRNumber = 1;
@@ -166,6 +172,19 @@ export class MockApiProvider implements ApiProvider {
     return full;
   }
 
+  addClaudeAgent(prUrl: string, agent: Partial<ClaudeAgent> = {}): ClaudeAgent {
+    const list = this.claudeAgents.get(prUrl) ?? [];
+    const full: ClaudeAgent = {
+      id: agent.id ?? `claude-agent-${this._nextAgentId++}`,
+      status: agent.status ?? "completed",
+      createdAt: agent.createdAt ?? new Date().toISOString(),
+      target: agent.target ?? { prUrl },
+    };
+    list.push(full);
+    this.claudeAgents.set(prUrl, list);
+    return full;
+  }
+
   reset(): void {
     this.currentUser = "test-user";
     this.originRepo = null;
@@ -186,6 +205,11 @@ export class MockApiProvider implements ApiProvider {
     this.cursorDownloadUrls.clear();
     this.cursorFollowups.clear();
     this.cursorLaunches.clear();
+    this.claudeAgents.clear();
+    this.claudeArtifacts.clear();
+    this.claudeDownloadUrls.clear();
+    this.claudeFollowups.clear();
+    this.claudeLaunches.clear();
     this.ghCalls = [];
     this._nextAgentId = 1;
     this._nextPRNumber = 1;
@@ -626,6 +650,53 @@ export class MockApiProvider implements ApiProvider {
   ): Promise<{ url: string; expiresAt?: string }> {
     const key = `${agentId}:${absolutePath}`;
     return this.cursorDownloadUrls.get(key) ?? { url: `https://mock-download.test/${agentId}/${absolutePath}` };
+  }
+
+  async claudeListAgentsByPrUrl(_apiKey: string, prUrl: string): Promise<ClaudeAgent[]> {
+    return this.claudeAgents.get(prUrl) ?? [];
+  }
+
+  async claudeFindLatestAgentByPrUrl(_apiKey: string, prUrl: string): Promise<ClaudeAgent | null> {
+    const agents = this.claudeAgents.get(prUrl) ?? [];
+    if (agents.length === 0) return null;
+    const sorted = [...agents].sort((a, b) => {
+      const aTs = a.createdAt ? Date.parse(a.createdAt) : 0;
+      const bTs = b.createdAt ? Date.parse(b.createdAt) : 0;
+      return bTs - aTs;
+    });
+    return sorted[0] ?? null;
+  }
+
+  async claudeAddFollowup(_apiKey: string, agentId: string, text: string): Promise<string> {
+    const list = this.claudeFollowups.get(agentId) ?? [];
+    list.push(text);
+    this.claudeFollowups.set(agentId, list);
+    return agentId;
+  }
+
+  async claudeLaunchAgentForPrUrl(_apiKey: string, prUrl: string, text: string): Promise<string> {
+    const list = this.claudeLaunches.get(prUrl) ?? [];
+    list.push(text);
+    this.claudeLaunches.set(prUrl, list);
+    const id = `claude-agent-${this._nextAgentId++}`;
+    const agent: ClaudeAgent = { id, status: "running", createdAt: new Date().toISOString(), target: { prUrl } };
+    const agents = this.claudeAgents.get(prUrl) ?? [];
+    agents.push(agent);
+    this.claudeAgents.set(prUrl, agents);
+    return id;
+  }
+
+  async claudeListAgentArtifacts(_apiKey: string, agentId: string): Promise<ClaudeArtifact[]> {
+    return this.claudeArtifacts.get(agentId) ?? [];
+  }
+
+  async claudeGetArtifactDownloadUrl(
+    _apiKey: string,
+    agentId: string,
+    absolutePath: string
+  ): Promise<{ url: string; expiresAt?: string }> {
+    const key = `${agentId}:${absolutePath}`;
+    return this.claudeDownloadUrls.get(key) ?? { url: `https://mock-download.test/${agentId}/${absolutePath}` };
   }
 
   loadConfig(_cwd?: string): Copserc | null {

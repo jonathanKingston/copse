@@ -25,8 +25,20 @@ import {
   WATCH_INTERVAL_MS,
   type StatusFilterScope,
 } from "../lib/services/status-types.js";
-import { findLatestAgentByPrUrl, getArtifactDownloadUrl, listAgentArtifacts, listAgentsByPrUrl } from "../lib/cursor-api.js";
+import {
+  findLatestAgentByPrUrl as findLatestCursorAgentByPrUrl,
+  getArtifactDownloadUrl as getCursorArtifactDownloadUrl,
+  listAgentArtifacts as listCursorAgentArtifacts,
+  listAgentsByPrUrl as listCursorAgentsByPrUrl,
+} from "../lib/cursor-api.js";
+import {
+  findLatestAgentByPrUrl as findLatestClaudeAgentByPrUrl,
+  getArtifactDownloadUrl as getClaudeArtifactDownloadUrl,
+  listAgentArtifacts as listClaudeAgentArtifacts,
+  listAgentsByPrUrl as listClaudeAgentsByPrUrl,
+} from "../lib/claude-api.js";
 import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
+import { sendReplyViaClaudeApi } from "../lib/claude-replies.js";
 import { loadTemplates, resolveTemplatesPath } from "../lib/templates.js";
 
 initializeRuntime();
@@ -149,14 +161,14 @@ function parsePrTarget(segments: string[]): { repo: string; prNumber: number; ac
   return { repo, prNumber, action };
 }
 
-function parseReplyDelivery(value: unknown): "github" | "cursor" {
+function parseReplyDelivery(value: unknown): "github" | "cursor" | "claude" {
   if (value == null || value === "") {
     return "github";
   }
-  if (value === "github" || value === "cursor") {
+  if (value === "github" || value === "cursor" || value === "claude") {
     return value;
   }
-  throw new Error('delivery must be either "github" or "cursor"');
+  throw new Error('delivery must be "github", "cursor", or "claude"');
 }
 
 function formatCommentLocation(comment: { path: string; line: number | null; original_line: number | null }): string {
@@ -186,6 +198,14 @@ function requireCursorApiKey(): string {
   const apiKey = loadConfig()?.cursorApiKey?.trim() || "";
   if (!apiKey) {
     throw new Error('Cursor API not configured. Set "cursorApiKey" in .copserc.');
+  }
+  return apiKey;
+}
+
+function requireClaudeApiKey(): string {
+  const apiKey = loadConfig()?.claudeApiKey?.trim() || "";
+  if (!apiKey) {
+    throw new Error('Claude API not configured. Set "claudeApiKey" in .copserc.');
   }
   return apiKey;
 }
@@ -232,11 +252,12 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       pollIntervalMs: WATCH_INTERVAL_MS,
       rows,
       cursorApiConfigured: Boolean(loadConfig()?.cursorApiKey?.trim()),
+      claudeApiConfigured: Boolean(loadConfig()?.claudeApiKey?.trim()),
     });
     return;
   }
 
-  // Cursor artifacts for a PR (latest Cursor agent by PR URL).
+  // Agent artifacts for a PR (latest agent by PR URL). Supports ?agent=cursor|claude.
   if (method === "GET" && segments.length === 5 && segments[0] === "api" && segments[1] === "pr" && segments[4] === "artifacts") {
     const repo = segments[2];
     const prNumber = parseInt(segments[3], 10);
@@ -245,34 +266,50 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       throw new Error(`Invalid pull request number: "${segments[3]}"`);
     }
 
-    const cursorApiKey = requireCursorApiKey();
+    const agentType = url.searchParams.get("agent") || "cursor";
     const prUrl = `https://github.com/${repo}/pull/${prNumber}`;
     const requestedAgentId = url.searchParams.get("agentId") || null;
 
     let agentId: string | null = null;
-    if (requestedAgentId) {
-      const agents = await listAgentsByPrUrl(cursorApiKey, prUrl);
-      const match = agents.find((a) => a.id === requestedAgentId) ?? null;
-      if (!match) {
-        throw new Error("Unknown agentId for this PR");
+    if (agentType === "claude") {
+      const claudeApiKey = requireClaudeApiKey();
+      if (requestedAgentId) {
+        const agents = await listClaudeAgentsByPrUrl(claudeApiKey, prUrl);
+        const match = agents.find((a) => a.id === requestedAgentId) ?? null;
+        if (!match) throw new Error("Unknown agentId for this PR");
+        agentId = match.id;
+      } else {
+        const agent = await findLatestClaudeAgentByPrUrl(claudeApiKey, prUrl);
+        agentId = agent?.id ?? null;
       }
-      agentId = match.id;
+      if (!agentId) {
+        sendJson(res, 200, { repo, prNumber, prUrl, agentId: null, artifacts: [] });
+        return;
+      }
+      const artifacts = await listClaudeAgentArtifacts(claudeApiKey, agentId);
+      sendJson(res, 200, { repo, prNumber, prUrl, agentId, agent: "claude", artifacts });
     } else {
-      const agent = await findLatestAgentByPrUrl(cursorApiKey, prUrl);
-      agentId = agent?.id ?? null;
+      const cursorApiKey = requireCursorApiKey();
+      if (requestedAgentId) {
+        const agents = await listCursorAgentsByPrUrl(cursorApiKey, prUrl);
+        const match = agents.find((a) => a.id === requestedAgentId) ?? null;
+        if (!match) throw new Error("Unknown agentId for this PR");
+        agentId = match.id;
+      } else {
+        const agent = await findLatestCursorAgentByPrUrl(cursorApiKey, prUrl);
+        agentId = agent?.id ?? null;
+      }
+      if (!agentId) {
+        sendJson(res, 200, { repo, prNumber, prUrl, agentId: null, artifacts: [] });
+        return;
+      }
+      const artifacts = await listCursorAgentArtifacts(cursorApiKey, agentId);
+      sendJson(res, 200, { repo, prNumber, prUrl, agentId, agent: "cursor", artifacts });
     }
-
-    if (!agentId) {
-      sendJson(res, 200, { repo, prNumber, prUrl, agentId: null, artifacts: [] });
-      return;
-    }
-
-    const artifacts = await listAgentArtifacts(cursorApiKey, agentId);
-    sendJson(res, 200, { repo, prNumber, prUrl, agentId, artifacts });
     return;
   }
 
-  // Cursor agents previously run for a PR (by PR URL).
+  // Agents previously run for a PR (by PR URL). Supports ?agent=cursor|claude.
   if (method === "GET" && segments.length === 5 && segments[0] === "api" && segments[1] === "pr" && segments[4] === "agents") {
     const repo = segments[2];
     const prNumber = parseInt(segments[3], 10);
@@ -280,30 +317,44 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
     if (!Number.isInteger(prNumber) || prNumber <= 0) {
       throw new Error(`Invalid pull request number: "${segments[3]}"`);
     }
-    const cursorApiKey = requireCursorApiKey();
+    const agentType = url.searchParams.get("agent") || "cursor";
     const prUrl = `https://github.com/${repo}/pull/${prNumber}`;
-    const agents = await listAgentsByPrUrl(cursorApiKey, prUrl);
-    sendJson(res, 200, { repo, prNumber, prUrl, agents });
+    if (agentType === "claude") {
+      const claudeApiKey = requireClaudeApiKey();
+      const agents = await listClaudeAgentsByPrUrl(claudeApiKey, prUrl);
+      sendJson(res, 200, { repo, prNumber, prUrl, agent: "claude", agents });
+    } else {
+      const cursorApiKey = requireCursorApiKey();
+      const agents = await listCursorAgentsByPrUrl(cursorApiKey, prUrl);
+      sendJson(res, 200, { repo, prNumber, prUrl, agent: "cursor", agents });
+    }
     return;
   }
 
-  // Redirect to presigned download URL (keeps Cursor API key server-side).
+  // Redirect to presigned download URL. Supports both /api/cursor/agents/... and /api/claude/agents/...
   if (
     method === "GET" &&
     segments.length === 6 &&
     segments[0] === "api" &&
-    segments[1] === "cursor" &&
+    (segments[1] === "cursor" || segments[1] === "claude") &&
     segments[2] === "agents" &&
     segments[4] === "artifacts" &&
     segments[5] === "download"
   ) {
+    const agentType = segments[1];
     const agentId = segments[3];
     const absolutePath = url.searchParams.get("path") || "";
     if (!absolutePath) {
       throw new Error('Missing required query param "path"');
     }
-    const cursorApiKey = requireCursorApiKey();
-    const { url: downloadUrl } = await getArtifactDownloadUrl(cursorApiKey, agentId, absolutePath);
+    let downloadUrl: string;
+    if (agentType === "claude") {
+      const claudeApiKey = requireClaudeApiKey();
+      ({ url: downloadUrl } = await getClaudeArtifactDownloadUrl(claudeApiKey, agentId, absolutePath));
+    } else {
+      const cursorApiKey = requireCursorApiKey();
+      ({ url: downloadUrl } = await getCursorArtifactDownloadUrl(cursorApiKey, agentId, absolutePath));
+    }
     res.writeHead(302, {
       location: downloadUrl,
       "cache-control": "no-store",
@@ -479,7 +530,7 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
         throw new Error("inReplyToId must be a positive number");
       }
       const delivery = parseReplyDelivery(body.delivery);
-      let result: { mode: "github" | "cursor-followup" | "cursor-launch" };
+      let result: { mode: "github" | "cursor-followup" | "cursor-launch" | "claude-followup" | "claude-launch" };
       if (delivery === "cursor") {
         const cursorApiKey = requireCursorApiKey();
         const comments = await listPRReviewCommentsAsync(target.repo, target.prNumber);
@@ -494,6 +545,20 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
           cursorApiKey,
         });
         result = { mode: cursorResult.mode === "followup" ? "cursor-followup" : "cursor-launch" };
+      } else if (delivery === "claude") {
+        const claudeApiKey = requireClaudeApiKey();
+        const comments = await listPRReviewCommentsAsync(target.repo, target.prNumber);
+        const selectedComment = comments.find((comment) => comment.id === inReplyToId);
+        if (!selectedComment) {
+          throw new Error(`Could not load selected comment ${inReplyToId}`);
+        }
+        const claudeResult = await sendReplyViaClaudeApi({
+          repo: target.repo,
+          prNumber: target.prNumber,
+          replyText: buildCursorCommentReplyPrompt([selectedComment], text),
+          claudeApiKey,
+        });
+        result = { mode: claudeResult.mode === "followup" ? "claude-followup" : "claude-launch" };
       } else {
         result = await postPullRequestReply({
           repo: target.repo,
@@ -505,10 +570,10 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       sendJson(res, 200, {
         ok: true,
         mode: result.mode,
-        message: result.mode === "cursor-followup"
-          ? "Reply sent to Cursor agent"
-          : result.mode === "cursor-launch"
-            ? "No linked agent found, so a new Cursor agent was launched"
+        message: result.mode === "cursor-followup" || result.mode === "claude-followup"
+          ? `Reply sent to ${result.mode.startsWith("claude") ? "Claude" : "Cursor"} agent`
+          : result.mode === "cursor-launch" || result.mode === "claude-launch"
+            ? `No linked agent found, so a new ${result.mode.startsWith("claude") ? "Claude" : "Cursor"} agent was launched`
             : "Reply posted in GitHub thread",
       });
       return;
@@ -528,8 +593,9 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
         return inReplyToId;
       });
 
-      if (delivery === "cursor") {
-        const cursorApiKey = requireCursorApiKey();
+      if (delivery === "cursor" || delivery === "claude") {
+        const isClaude = delivery === "claude";
+        const apiKey = isClaude ? requireClaudeApiKey() : requireCursorApiKey();
         const comments = await listPRReviewCommentsAsync(target.repo, target.prNumber);
         const commentsById = new Map(comments.map((comment) => [comment.id, comment]));
         const selectedComments = numericCommentIds.map((id) => {
@@ -539,20 +605,39 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
           }
           return comment;
         });
-        const result = await sendReplyViaCursorApi({
-          repo: target.repo,
-          prNumber: target.prNumber,
-          replyText: buildCursorCommentReplyPrompt(selectedComments, text),
-          cursorApiKey,
-        });
-        sendJson(res, 200, {
-          ok: true,
-          total: selectedComments.length,
-          mode: result.mode === "followup" ? "cursor-followup" : "cursor-launch",
-          message: result.mode === "followup"
-            ? `Sent Cursor follow-up with ${selectedComments.length} selected comment(s)`
-            : `Launched Cursor agent with ${selectedComments.length} selected comment(s)`,
-        });
+        const prompt = buildCursorCommentReplyPrompt(selectedComments, text);
+        const agentLabel = isClaude ? "Claude" : "Cursor";
+        if (isClaude) {
+          const result = await sendReplyViaClaudeApi({
+            repo: target.repo,
+            prNumber: target.prNumber,
+            replyText: prompt,
+            claudeApiKey: apiKey,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            total: selectedComments.length,
+            mode: result.mode === "followup" ? "claude-followup" : "claude-launch",
+            message: result.mode === "followup"
+              ? `Sent ${agentLabel} follow-up with ${selectedComments.length} selected comment(s)`
+              : `Launched ${agentLabel} agent with ${selectedComments.length} selected comment(s)`,
+          });
+        } else {
+          const result = await sendReplyViaCursorApi({
+            repo: target.repo,
+            prNumber: target.prNumber,
+            replyText: prompt,
+            cursorApiKey: apiKey,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            total: selectedComments.length,
+            mode: result.mode === "followup" ? "cursor-followup" : "cursor-launch",
+            message: result.mode === "followup"
+              ? `Sent ${agentLabel} follow-up with ${selectedComments.length} selected comment(s)`
+              : `Launched ${agentLabel} agent with ${selectedComments.length} selected comment(s)`,
+          });
+        }
         return;
       }
 

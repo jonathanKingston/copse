@@ -9,6 +9,7 @@ import {
 } from "../gh.js";
 import type { WorkflowRun } from "../types.js";
 import { sendReplyViaCursorApi } from "../cursor-replies.js";
+import { sendReplyViaClaudeApi } from "../claude-replies.js";
 import { invalidateStatusCache } from "./status-service.js";
 
 const UP_TO_DATE_ERRORS = ["nothing to merge", "already up to date"];
@@ -312,11 +313,23 @@ export async function postPullRequestReply(params: {
   inReplyToId: number;
   body: string;
   cursorApiKey?: string | null;
-}): Promise<{ mode: "github" | "cursor-followup" | "cursor-launch" }> {
-  const { repo, prNumber, inReplyToId, body, cursorApiKey } = params;
+  claudeApiKey?: string | null;
+  agent?: string | null;
+}): Promise<{ mode: "github" | "cursor-followup" | "cursor-launch" | "claude-followup" | "claude-launch" }> {
+  const { repo, prNumber, inReplyToId, body, cursorApiKey, claudeApiKey, agent } = params;
   validateRepo(repo);
   if (!body.trim()) {
     throw new Error("reply body cannot be empty");
+  }
+
+  if (agent === "claude" && claudeApiKey && claudeApiKey.trim()) {
+    const result = await sendReplyViaClaudeApi({
+      repo,
+      prNumber,
+      replyText: body,
+      claudeApiKey,
+    });
+    return { mode: result.mode === "followup" ? "claude-followup" : "claude-launch" };
   }
 
   if (cursorApiKey && cursorApiKey.trim()) {

@@ -29,11 +29,17 @@ import { getOriginRepo } from "../lib/utils.js";
 import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
 import { fetchPRsWithStatus, fetchPRsWithStatusSync } from "../lib/services/status-service.js";
 import {
-  findLatestAgentByPrUrl,
-  getArtifactDownloadUrl,
-  listAgentArtifacts,
+  findLatestAgentByPrUrl as findLatestCursorAgentByPrUrl,
+  getArtifactDownloadUrl as getCursorArtifactDownloadUrl,
+  listAgentArtifacts as listCursorAgentArtifacts,
   type CursorArtifact,
 } from "../lib/cursor-api.js";
+import {
+  findLatestAgentByPrUrl as findLatestClaudeAgentByPrUrl,
+  getArtifactDownloadUrl as getClaudeArtifactDownloadUrl,
+  listAgentArtifacts as listClaudeAgentArtifacts,
+  type ClaudeArtifact,
+} from "../lib/claude-api.js";
 import {
   approvePullRequest,
   createIssueWithAgentComment,
@@ -217,7 +223,8 @@ function runWatch(
   repos: string[],
   mineOnly: boolean,
   templatesMap: Map<string, string>,
-  cursorApiKey: string | null
+  cursorApiKey: string | null,
+  claudeApiKey: string | null
 ): void {
   const singleRepo = repos.length === 1;
   const TITLE = "copse status";
@@ -615,14 +622,17 @@ function runWatch(
     const pr = currentPRs[prIndex];
     if (!pr) return;
 
-    if (!cursorApiKey) {
-      statusMsg = `${ANSI.red}Cursor API not configured — set cursorApiKey in .copserc${ANSI.reset}`;
-      drawFooter();
-      return;
-    }
+    const prAgent = String(pr.agent || "").toLowerCase();
+    const hasAgentApi =
+      (prAgent === "cursor" && cursorApiKey) ||
+      (prAgent === "claude" && claudeApiKey);
 
-    if (String(pr.agent || "").toLowerCase() !== "cursor") {
-      statusMsg = `${ANSI.red}Artifacts only available for Cursor PRs${ANSI.reset}`;
+    if (!hasAgentApi) {
+      if (prAgent === "cursor" || prAgent === "claude") {
+        statusMsg = `${ANSI.red}${prAgent === "cursor" ? "Cursor" : "Claude"} API not configured — set ${prAgent}ApiKey in .copserc${ANSI.reset}`;
+      } else {
+        statusMsg = `${ANSI.red}Artifacts only available for Cursor or Claude PRs${ANSI.reset}`;
+      }
       drawFooter();
       return;
     }
@@ -651,15 +661,24 @@ function runWatch(
     (async () => {
       try {
         const prUrl = `https://github.com/${pr.repo}/pull/${pr.number}`;
-        const agent = await findLatestAgentByPrUrl(cursorApiKey, prUrl);
+        let foundAgent: { id: string } | null = null;
+        if (prAgent === "claude" && claudeApiKey) {
+          foundAgent = await findLatestClaudeAgentByPrUrl(claudeApiKey, prUrl);
+        } else if (cursorApiKey) {
+          foundAgent = await findLatestCursorAgentByPrUrl(cursorApiKey, prUrl);
+        }
         if (expandedPRNumber !== pr.number || expandedMode !== "artifacts") return;
-        if (!agent) {
+        if (!foundAgent) {
           expandedCursorAgentId = null;
           expandedArtifacts = [];
           return;
         }
-        expandedCursorAgentId = agent.id;
-        expandedArtifacts = await listAgentArtifacts(cursorApiKey, agent.id);
+        expandedCursorAgentId = foundAgent.id;
+        if (prAgent === "claude" && claudeApiKey) {
+          expandedArtifacts = await listClaudeAgentArtifacts(claudeApiKey, foundAgent.id);
+        } else if (cursorApiKey) {
+          expandedArtifacts = await listCursorAgentArtifacts(cursorApiKey, foundAgent.id);
+        }
       } catch (e: unknown) {
         statusMsg = `${ANSI.red}${(e as Error).message}${ANSI.reset}`;
         expandedCursorAgentId = null;
@@ -682,14 +701,17 @@ function runWatch(
   function handleDownloadSelected(): void {
     const vr = virtualRows[selectedIndex];
     if (!vr || vr.kind !== "artifact") return;
-    if (!cursorApiKey || !expandedCursorAgentId) {
-      statusMsg = `${ANSI.red}Cursor API not configured or no agent selected${ANSI.reset}`;
+    if (!expandedCursorAgentId || (!cursorApiKey && !claudeApiKey)) {
+      statusMsg = `${ANSI.red}Agent API not configured or no agent selected${ANSI.reset}`;
       drawFooter();
       return;
     }
 
     const artifact = expandedArtifacts[vr.artifactIndex];
     if (!artifact?.absolutePath) return;
+
+    const expandedPr = currentPRs[expandedPRIndex ?? -1];
+    const expandedPrAgent = String(expandedPr?.agent || "").toLowerCase();
 
     const defaultName = pathBasename(artifact.absolutePath) || `artifact-${vr.artifactIndex + 1}`;
     const outPath = `./${defaultName}`;
@@ -700,7 +722,13 @@ function runWatch(
 
     (async () => {
       try {
-        const { url } = await getArtifactDownloadUrl(cursorApiKey, expandedCursorAgentId, artifact.absolutePath);
+        let downloadResult: { url: string };
+        if (expandedPrAgent === "claude" && claudeApiKey) {
+          downloadResult = await getClaudeArtifactDownloadUrl(claudeApiKey, expandedCursorAgentId!, artifact.absolutePath);
+        } else {
+          downloadResult = await getCursorArtifactDownloadUrl(cursorApiKey!, expandedCursorAgentId!, artifact.absolutePath);
+        }
+        const { url } = downloadResult;
         const res = await fetch(url);
         if (!res.ok || !res.body) {
           throw new Error(`Download failed: ${res.status} ${res.statusText}`);
@@ -924,6 +952,8 @@ function runWatch(
                   inReplyToId: comment.id,
                   body,
                   cursorApiKey,
+                  claudeApiKey,
+                  agent: target.pr.agent,
                 });
                 succeeded++;
               } catch {
@@ -939,11 +969,13 @@ function runWatch(
               inReplyToId: target.comment.id,
               body,
               cursorApiKey,
+              claudeApiKey,
+              agent: target.pr.agent,
             });
-            statusMsg = result.mode === "cursor-followup"
-              ? `${ANSI.green}Reply sent via Cursor API on #${target.pr.number}${ANSI.reset}`
-              : result.mode === "cursor-launch"
-                ? `${ANSI.green}No linked agent; launched Cursor agent for #${target.pr.number}${ANSI.reset}`
+            statusMsg = result.mode === "cursor-followup" || result.mode === "claude-followup"
+              ? `${ANSI.green}Reply sent via ${result.mode.startsWith("claude") ? "Claude" : "Cursor"} API on #${target.pr.number}${ANSI.reset}`
+              : result.mode === "cursor-launch" || result.mode === "claude-launch"
+                ? `${ANSI.green}No linked agent; launched ${result.mode.startsWith("claude") ? "Claude" : "Cursor"} agent for #${target.pr.number}${ANSI.reset}`
                 : `${ANSI.green}Reply posted on #${target.pr.number}${ANSI.reset}`;
           } else {
             await postPullRequestComment(target.pr.repo, target.pr.number, body);
@@ -1461,16 +1493,24 @@ function runWatch(
       return;
     }
     if (vr.kind === "artifact") {
-      if (!cursorApiKey || !expandedCursorAgentId) {
-        statusMsg = `${ANSI.red}Cursor API not configured or no agent selected${ANSI.reset}`;
+      if (!expandedCursorAgentId || (!cursorApiKey && !claudeApiKey)) {
+        statusMsg = `${ANSI.red}Agent API not configured or no agent selected${ANSI.reset}`;
         drawFooter();
         return;
       }
       const artifact = expandedArtifacts[vr.artifactIndex];
       if (!artifact?.absolutePath) return;
+      const openExpandedPr = currentPRs[expandedPRIndex ?? -1];
+      const openPrAgent = String(openExpandedPr?.agent || "").toLowerCase();
       (async () => {
         try {
-          const { url } = await getArtifactDownloadUrl(cursorApiKey, expandedCursorAgentId, artifact.absolutePath);
+          let downloadResult: { url: string };
+          if (openPrAgent === "claude" && claudeApiKey) {
+            downloadResult = await getClaudeArtifactDownloadUrl(claudeApiKey, expandedCursorAgentId!, artifact.absolutePath);
+          } else {
+            downloadResult = await getCursorArtifactDownloadUrl(cursorApiKey!, expandedCursorAgentId!, artifact.absolutePath);
+          }
+          const { url } = downloadResult;
           const opener = process.platform === "darwin" ? "open" : "xdg-open";
           await execAsync(opener, [url]);
           statusMsg = `${ANSI.green}Opened artifact download URL${ANSI.reset}`;
@@ -1829,10 +1869,12 @@ TUI keys:
   if (watch) {
     let templatesMap = new Map<string, string>();
     let cursorApiKey: string | null = null;
+    let claudeApiKey: string | null = null;
     try {
       const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
       const config = loadConfig();
       cursorApiKey = config?.cursorApiKey?.trim() || null;
+      claudeApiKey = config?.claudeApiKey?.trim() || null;
       const templatesPath = resolveTemplatesPath(
         templatesFromFlag ?? null,
         config?.commentTemplates ?? null
@@ -1855,7 +1897,7 @@ TUI keys:
         process.exit(1);
       }
     }
-    runWatch(repos, mineOnly, templatesMap, cursorApiKey);
+    runWatch(repos, mineOnly, templatesMap, cursorApiKey, claudeApiKey);
   } else {
     runOnce(repos, mineOnly);
   }

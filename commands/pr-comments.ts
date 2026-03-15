@@ -27,6 +27,7 @@ import { parseStandardFlags, parseTemplatesOption } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
 import { loadConfig } from "../lib/config.js";
 import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
+import { sendReplyViaClaudeApi } from "../lib/claude-replies.js";
 import {
   loadTemplates,
   scaffoldTemplates,
@@ -181,17 +182,19 @@ Examples:
 
   let templatesPath: string;
   let cursorApiKey: string | null = null;
+  let claudeApiKey: string | null = null;
   try {
     const templatesFromFlag = parseTemplatesOption(process.argv.slice(2));
     const config = loadConfig();
     cursorApiKey = config?.cursorApiKey?.trim() || null;
+    claudeApiKey = config?.claudeApiKey?.trim() || null;
     templatesPath = resolveTemplatesPath(templatesFromFlag ?? null, config?.commentTemplates ?? null);
   } catch (e: unknown) {
     console.error((e as Error).message);
     process.exit(1);
   }
 
-  runInteractiveLoop(repo, comments, templatesPath, cursorApiKey).catch((e: unknown) => {
+  runInteractiveLoop(repo, comments, templatesPath, cursorApiKey, claudeApiKey).catch((e: unknown) => {
     console.error(`\x1b[31merror\x1b[0m ${(e as Error).message}`);
     process.exit(1);
   });
@@ -201,7 +204,8 @@ async function runInteractiveLoop(
   repo: string,
   comments: CommentWithContext[],
   templatesPath: string,
-  cursorApiKey: string | null
+  cursorApiKey: string | null,
+  claudeApiKey: string | null
 ): Promise<void> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
@@ -284,12 +288,31 @@ async function runInteractiveLoop(
       }
 
       try {
-        if (cursorApiKey) {
+        const agentApiKey =
+          ctx.agent === "claude" && claudeApiKey ? { agent: "claude" as const, key: claudeApiKey } :
+          ctx.agent === "cursor" && cursorApiKey ? { agent: "cursor" as const, key: cursorApiKey } :
+          cursorApiKey ? { agent: "cursor" as const, key: cursorApiKey } :
+          claudeApiKey ? { agent: "claude" as const, key: claudeApiKey } :
+          null;
+
+        if (agentApiKey?.agent === "claude") {
+          const result = await sendReplyViaClaudeApi({
+            repo,
+            prNumber: ctx.prNumber,
+            replyText: replyTrimmed,
+            claudeApiKey: agentApiKey.key,
+          });
+          if (result.mode === "followup") {
+            console.log(`\x1b[32mReply sent to Claude agent (${result.agentId}) via follow-up.\x1b[0m`);
+          } else {
+            console.log(`\x1b[32mNo linked agent found; launched new Claude agent (${result.agentId}).\x1b[0m`);
+          }
+        } else if (agentApiKey?.agent === "cursor") {
           const result = await sendReplyViaCursorApi({
             repo,
             prNumber: ctx.prNumber,
             replyText: replyTrimmed,
-            cursorApiKey,
+            cursorApiKey: agentApiKey.key,
           });
           if (result.mode === "followup") {
             console.log(`\x1b[32mReply sent to Cursor agent (${result.agentId}) via follow-up.\x1b[0m`);

@@ -1,5 +1,6 @@
 import type { PR, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 import type { CursorAgent, CursorArtifact } from "./cursor-api.js";
+import type { ClaudeAgent, ClaudeArtifact } from "./claude-api.js";
 import type { Copserc } from "./config.js";
 
 export interface CommitInfoLike {
@@ -40,6 +41,17 @@ export interface ApiProvider {
   cursorLaunchAgentForPrUrl?(apiKey: string, prUrl: string, text: string): Promise<string>;
   cursorListAgentArtifacts?(apiKey: string, agentId: string): Promise<CursorArtifact[]>;
   cursorGetArtifactDownloadUrl?(
+    apiKey: string,
+    agentId: string,
+    absolutePath: string
+  ): Promise<{ url: string; expiresAt?: string }>;
+
+  claudeListAgentsByPrUrl?(apiKey: string, prUrl: string): Promise<ClaudeAgent[]>;
+  claudeFindLatestAgentByPrUrl?(apiKey: string, prUrl: string): Promise<ClaudeAgent | null>;
+  claudeAddFollowup?(apiKey: string, agentId: string, text: string): Promise<string>;
+  claudeLaunchAgentForPrUrl?(apiKey: string, prUrl: string, text: string): Promise<string>;
+  claudeListAgentArtifacts?(apiKey: string, agentId: string): Promise<ClaudeArtifact[]>;
+  claudeGetArtifactDownloadUrl?(
     apiKey: string,
     agentId: string,
     absolutePath: string
