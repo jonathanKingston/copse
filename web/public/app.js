@@ -31,6 +31,7 @@ const chainMergeCopyEl = document.getElementById("chainMergeCopy");
 const chainMergeStatusEl = document.getElementById("chainMergeStatus");
 const chainMergePrimaryBtnEl = document.getElementById("chainMergePrimaryBtn");
 const chainMergeSecondaryBtnEl = document.getElementById("chainMergeSecondaryBtn");
+const themeToggleBtnEl = document.getElementById("themeToggle");
 
 const REVIEW_REQUIRED = "REVIEW_REQUIRED";
 const STATUS_TABLE_COLUMN_COUNT = 9;
@@ -2075,3 +2076,47 @@ Promise.all([
   fetchTemplates(),
   fetchStatus(),
 ]).catch((error) => setStatus(error.message));
+
+
+// --- Theme toggle ---
+
+const THEME_KEY = "copse-theme";
+
+function getEffectiveTheme() {
+  const stored = localStorage.getItem(THEME_KEY);
+  if (stored === "dark" || stored === "light") return stored;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  if (theme === "dark") {
+    document.documentElement.setAttribute("data-theme", "dark");
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
+  if (themeToggleBtnEl) {
+    themeToggleBtnEl.textContent = theme === "dark" ? "☀" : "☽";
+    themeToggleBtnEl.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+  }
+}
+
+function toggleTheme() {
+  const current = getEffectiveTheme();
+  const next = current === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+}
+
+// Initialize theme
+applyTheme(getEffectiveTheme());
+
+if (themeToggleBtnEl) {
+  themeToggleBtnEl.addEventListener("click", toggleTheme);
+}
+
+// Listen for system preference changes
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function() {
+  if (!localStorage.getItem(THEME_KEY)) {
+    applyTheme(getEffectiveTheme());
+  }
+});

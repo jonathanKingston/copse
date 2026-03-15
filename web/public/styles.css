@@ -26,6 +26,143 @@ html {
   --stack-connector-width: 0.7rem;
   --stack-connector-height: 0.55rem;
   --focus: rgba(47, 111, 78, 0.28);
+  --input-bg: rgba(255, 255, 255, 0.9);
+  --hover-row: rgba(47, 111, 78, 0.06);
+  --hover-menu: rgba(47, 111, 78, 0.08);
+  --accent-subtle: rgba(47, 111, 78, 0.09);
+  --accent-subtle-border: rgba(47, 111, 78, 0.18);
+  --accent-subtle-bg: rgba(47, 111, 78, 0.06);
+  --accent-code-bg: rgba(47, 111, 78, 0.12);
+  --accent-code-border: rgba(47, 111, 78, 0.22);
+  --neutral-subtle: rgba(30, 42, 34, 0.06);
+  --neutral-subtle-border: rgba(30, 42, 34, 0.16);
+  --stack-connector: rgba(30, 42, 34, 0.26);
+  --spinner-track: rgba(30, 42, 34, 0.18);
+  --popover-bg: rgba(255, 255, 255, 0.98);
+  --details-bg: rgba(255, 255, 255, 0.75);
+  --details-bg-hover: rgba(255, 255, 255, 0.78);
+  --detail-panel-bg: rgba(255, 255, 255, 0.78);
+  --detail-panel-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --detail-section-bg: rgba(255, 255, 255, 0.66);
+  --detail-row-bg: rgba(47, 111, 78, 0.04);
+  --expanded-row-bg: rgba(47, 111, 78, 0.08);
+  --selected-row-bg: rgba(47, 111, 78, 0.1);
+  --repo-group-bg: rgba(47, 111, 78, 0.05);
+  --diff-header-bg: rgba(30, 42, 34, 0.04);
+  --pre-bg: rgba(30, 42, 34, 0.92);
+  --modal-card-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 244, 236, 0.98));
+  --modal-backdrop-bg: rgba(23, 30, 25, 0.42);
+  --modal-status-bg: rgba(30, 42, 34, 0.06);
+  --modal-step-bg: rgba(255, 255, 255, 0.78);
+  --modal-step-border: rgba(30, 42, 34, 0.12);
+  --step-marker-bg: rgba(30, 42, 34, 0.08);
+  --step-marker-accent-bg: rgba(47, 111, 78, 0.16);
+  --step-marker-error-bg: rgba(144, 47, 47, 0.16);
+  --focus-ring: 0 0 0 4px rgba(47, 111, 78, 0.14);
+  --draft-border: rgba(192, 140, 23, 0.42);
+  --draft-bg: rgba(192, 140, 23, 0.14);
+  --draft-text: rgb(137, 96, 6);
+  --ci-default-bg: rgba(30, 42, 34, 0.18);
+  --ci-success-bg: rgba(47, 111, 78, 0.85);
+  --ci-success-border: rgba(47, 111, 78, 0.95);
+  --ci-error-bg: rgba(171, 58, 58, 0.88);
+  --ci-error-border: rgba(171, 58, 58, 0.96);
+  --ci-pending-bg: rgba(192, 140, 23, 0.9);
+  --ci-pending-border: rgba(192, 140, 23, 0.98);
+  --error-text: #7f2424;
+  --error-bg: rgba(144, 47, 47, 0.1);
+  --error-border: rgba(144, 47, 47, 0.25);
+  --error-step-bg: rgba(144, 47, 47, 0.08);
+  --diff-add-bg: rgba(46, 160, 67, 0.12);
+  --diff-add-text: #1a7f37;
+  --diff-add-badge: rgba(46, 160, 67, 0.18);
+  --diff-del-bg: rgba(248, 81, 73, 0.12);
+  --diff-del-text: #cf222e;
+  --diff-del-badge: rgba(248, 81, 73, 0.18);
+  --diff-mod-badge: rgba(227, 179, 65, 0.18);
+  --diff-mod-text: #9a6700;
+  --accent-running-bg: rgba(47, 111, 78, 0.09);
+  --accent-success-bg: rgba(47, 111, 78, 0.11);
+  --accent-running-step-bg: rgba(47, 111, 78, 0.08);
+  --accent-success-step-bg: rgba(47, 111, 78, 0.1);
+  --accent-running-step-border: rgba(47, 111, 78, 0.24);
+  --accent-success-step-border: rgba(47, 111, 78, 0.28);
+}
+
+[data-theme="dark"] {
+  --bg: #161b19;
+  --bg-2: #1c2320;
+  --panel: rgba(28, 35, 32, 0.92);
+  --border: rgba(200, 220, 210, 0.12);
+  --border-strong: rgba(200, 220, 210, 0.22);
+  --text: #d8e0db;
+  --text-muted: rgba(200, 220, 210, 0.58);
+  --accent: #4aaa76;
+  --accent-2: #5cbe88;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.42);
+  --focus: rgba(74, 170, 118, 0.35);
+  --input-bg: rgba(0, 0, 0, 0.25);
+  --hover-row: rgba(74, 170, 118, 0.08);
+  --hover-menu: rgba(74, 170, 118, 0.12);
+  --accent-subtle: rgba(74, 170, 118, 0.12);
+  --accent-subtle-border: rgba(74, 170, 118, 0.22);
+  --accent-subtle-bg: rgba(74, 170, 118, 0.08);
+  --accent-code-bg: rgba(74, 170, 118, 0.14);
+  --accent-code-border: rgba(74, 170, 118, 0.25);
+  --neutral-subtle: rgba(200, 220, 210, 0.06);
+  --neutral-subtle-border: rgba(200, 220, 210, 0.12);
+  --stack-connector: rgba(200, 220, 210, 0.22);
+  --spinner-track: rgba(200, 220, 210, 0.18);
+  --popover-bg: rgba(28, 35, 32, 0.98);
+  --details-bg: rgba(22, 27, 25, 0.85);
+  --details-bg-hover: rgba(22, 27, 25, 0.88);
+  --detail-panel-bg: rgba(28, 35, 32, 0.85);
+  --detail-panel-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --detail-section-bg: rgba(28, 35, 32, 0.6);
+  --detail-row-bg: rgba(74, 170, 118, 0.04);
+  --expanded-row-bg: rgba(74, 170, 118, 0.1);
+  --selected-row-bg: rgba(74, 170, 118, 0.12);
+  --repo-group-bg: rgba(74, 170, 118, 0.06);
+  --diff-header-bg: rgba(200, 220, 210, 0.05);
+  --pre-bg: rgba(0, 0, 0, 0.45);
+  --modal-card-bg: linear-gradient(180deg, rgba(28, 35, 32, 0.98), rgba(22, 27, 25, 0.98));
+  --modal-backdrop-bg: rgba(0, 0, 0, 0.55);
+  --modal-status-bg: rgba(200, 220, 210, 0.06);
+  --modal-step-bg: rgba(28, 35, 32, 0.6);
+  --modal-step-border: rgba(200, 220, 210, 0.1);
+  --step-marker-bg: rgba(200, 220, 210, 0.08);
+  --step-marker-accent-bg: rgba(74, 170, 118, 0.2);
+  --step-marker-error-bg: rgba(200, 80, 80, 0.2);
+  --focus-ring: 0 0 0 4px rgba(74, 170, 118, 0.2);
+  --draft-border: rgba(220, 170, 50, 0.38);
+  --draft-bg: rgba(220, 170, 50, 0.14);
+  --draft-text: #d4a843;
+  --ci-default-bg: rgba(200, 220, 210, 0.18);
+  --ci-success-bg: rgba(74, 170, 118, 0.7);
+  --ci-success-border: rgba(74, 170, 118, 0.85);
+  --ci-error-bg: rgba(200, 80, 80, 0.7);
+  --ci-error-border: rgba(200, 80, 80, 0.85);
+  --ci-pending-bg: rgba(220, 170, 50, 0.7);
+  --ci-pending-border: rgba(220, 170, 50, 0.85);
+  --error-text: #e07070;
+  --error-bg: rgba(200, 80, 80, 0.12);
+  --error-border: rgba(200, 80, 80, 0.25);
+  --error-step-bg: rgba(200, 80, 80, 0.1);
+  --diff-add-bg: rgba(46, 160, 67, 0.15);
+  --diff-add-text: #56d364;
+  --diff-add-badge: rgba(46, 160, 67, 0.2);
+  --diff-del-bg: rgba(248, 81, 73, 0.15);
+  --diff-del-text: #f47067;
+  --diff-del-badge: rgba(248, 81, 73, 0.2);
+  --diff-mod-badge: rgba(227, 179, 65, 0.2);
+  --diff-mod-text: #d4a843;
+  --accent-running-bg: rgba(74, 170, 118, 0.12);
+  --accent-success-bg: rgba(74, 170, 118, 0.14);
+  --accent-running-step-bg: rgba(74, 170, 118, 0.1);
+  --accent-success-step-bg: rgba(74, 170, 118, 0.12);
+  --accent-running-step-border: rgba(74, 170, 118, 0.28);
+  --accent-success-step-border: rgba(74, 170, 118, 0.32);
 }
 
 body {
@@ -46,6 +183,38 @@ body {
 
 .page-header-copy {
   min-width: 0;
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+/* --- Theme toggle --- */
+
+.theme-toggle {
+  background: var(--neutral-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  box-shadow: none;
+  padding: 0.3rem 0.45rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+}
+
+.theme-toggle:hover {
+  background: var(--hover-menu);
+  color: var(--text);
+  box-shadow: none;
 }
 
 header h1 {
@@ -90,7 +259,7 @@ header p {
   width: 100%;
   display: block;
   margin-top: 0.25rem;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--input-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -101,7 +270,7 @@ header p {
   width: 100%;
   display: block;
   margin-top: 0.25rem;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--input-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -112,7 +281,7 @@ header p {
 .controls select:focus {
   outline: none;
   border-color: var(--border-strong);
-  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
+  box-shadow: var(--focus-ring);
 }
 
 .controls input[type="text"]:focus,
@@ -120,7 +289,7 @@ header p {
 .controls select:focus {
   outline: none;
   border-color: var(--border-strong);
-  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
+  box-shadow: var(--focus-ring);
 }
 
 #refreshBtn {
@@ -207,7 +376,7 @@ th {
 }
 
 tbody tr:hover td {
-  background: rgba(47, 111, 78, 0.06);
+  background: var(--hover-row);
 }
 
 td.pr-cell {
@@ -232,8 +401,8 @@ td.pr-cell {
   top: var(--stack-connector-top);
   width: var(--stack-connector-width);
   height: var(--stack-connector-height);
-  border-left: 1px solid rgba(30, 42, 34, 0.26);
-  border-bottom: 1px solid rgba(30, 42, 34, 0.26);
+  border-left: 1px solid var(--stack-connector);
+  border-bottom: 1px solid var(--stack-connector);
   border-bottom-left-radius: 8px;
 }
 
@@ -280,9 +449,9 @@ td.pr-cell {
   height: 1rem;
   padding: 0 0.2rem;
   border-radius: 999px;
-  border: 1px solid rgba(192, 140, 23, 0.42);
-  background: rgba(192, 140, 23, 0.14);
-  color: rgb(137, 96, 6);
+  border: 1px solid var(--draft-border);
+  background: var(--draft-bg);
+  color: var(--draft-text);
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1;
@@ -294,24 +463,24 @@ td.pr-cell {
   width: 0.6rem;
   height: 0.6rem;
   border-radius: 999px;
-  border: 1px solid rgba(30, 42, 34, 0.18);
-  background: rgba(30, 42, 34, 0.18);
+  border: 1px solid var(--ci-default-bg);
+  background: var(--ci-default-bg);
   flex: 0 0 auto;
 }
 
 .ci-indicator.is-success {
-  background: rgba(47, 111, 78, 0.85);
-  border-color: rgba(47, 111, 78, 0.95);
+  background: var(--ci-success-bg);
+  border-color: var(--ci-success-border);
 }
 
 .ci-indicator.is-error {
-  background: rgba(171, 58, 58, 0.88);
-  border-color: rgba(171, 58, 58, 0.96);
+  background: var(--ci-error-bg);
+  border-color: var(--ci-error-border);
 }
 
 .ci-indicator.is-pending {
-  background: rgba(192, 140, 23, 0.9);
-  border-color: rgba(192, 140, 23, 0.98);
+  background: var(--ci-pending-bg);
+  border-color: var(--ci-pending-border);
 }
 
 .pr-stack-meta {
@@ -340,16 +509,16 @@ td.pr-cell {
   min-height: 1.3rem;
   padding: 0.05rem 0.45rem;
   border-radius: 999px;
-  border: 1px solid rgba(47, 111, 78, 0.18);
-  background: rgba(47, 111, 78, 0.09);
+  border: 1px solid var(--accent-subtle-border);
+  background: var(--accent-subtle);
   color: var(--accent-2);
   font-size: 0.7rem;
   line-height: 1.2;
 }
 
 .branch-badge {
-  background: rgba(30, 42, 34, 0.06);
-  border-color: rgba(30, 42, 34, 0.16);
+  background: var(--neutral-subtle);
+  border-color: var(--neutral-subtle-border);
   color: var(--text-muted);
 }
 
@@ -391,7 +560,7 @@ button[disabled] {
 }
 
 button.secondary {
-  background: rgba(30, 42, 34, 0.06);
+  background: var(--neutral-subtle);
   border: 1px solid var(--border);
   color: var(--text);
   box-shadow: none;
@@ -434,7 +603,7 @@ button.secondary {
   position: fixed;
   z-index: 50;
   min-width: 210px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--popover-bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
@@ -459,7 +628,7 @@ button.secondary {
 }
 
 .menu-popover .menu-item:hover {
-  background: rgba(47, 111, 78, 0.08);
+  background: var(--hover-menu);
 }
 
 .menu-popover .menu-item[disabled] {
@@ -482,7 +651,7 @@ button.secondary {
 }
 
 .menu-popover .menu-check:hover {
-  background: rgba(47, 111, 78, 0.08);
+  background: var(--hover-menu);
 }
 
 .menu-popover .menu-check input {
@@ -494,7 +663,7 @@ button.secondary {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 2px solid rgba(30, 42, 34, 0.18);
+  border: 2px solid var(--spinner-track);
   border-top-color: var(--accent);
   animation: spin 0.8s linear infinite;
   display: inline-block;
@@ -529,12 +698,12 @@ button.secondary {
 }
 
 .details-row td {
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--details-bg);
   white-space: normal;
 }
 
 tbody tr.details-row:hover td {
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--details-bg-hover);
 }
 
 .details-cell {
@@ -598,7 +767,7 @@ tbody tr.details-row:hover td {
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   padding: 0.35rem 0.45rem;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--input-bg);
   color: var(--text);
 }
 
@@ -649,8 +818,8 @@ tbody tr.details-row:hover td {
 .comment-body-html code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.95em;
-  background: rgba(47, 111, 78, 0.12);
-  border: 1px solid rgba(47, 111, 78, 0.22);
+  background: var(--accent-code-bg);
+  border: 1px solid var(--accent-code-border);
   /* Inline elements don't expand line boxes; use inline-block to prevent overlap between lines. */
   display: inline-block;
   line-height: 1.15;
@@ -665,9 +834,10 @@ tbody tr.details-row:hover td {
   margin: 0.45rem 0 0;
   padding: 0.5rem;
   border-radius: var(--radius);
-  background: rgba(30, 42, 34, 0.92);
+  background: var(--pre-bg);
   border: 1px solid var(--border);
   overflow-x: auto;
+  color: #e0e0e0;
 }
 
 .comment-body-html pre code {
@@ -676,11 +846,12 @@ tbody tr.details-row:hover td {
   padding: 0;
   border-radius: 0;
   font-size: 0.95em;
+  color: inherit;
 }
 
 .comment textarea {
   width: 100%;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--input-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -695,7 +866,7 @@ tbody tr.details-row:hover td {
 .comment textarea:focus {
   outline: none;
   border-color: var(--border-strong);
-  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
+  box-shadow: var(--focus-ring);
 }
 
 .comment-actions {
@@ -734,7 +905,7 @@ tbody tr.details-row:hover td {
   margin-bottom: 0.5rem;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  background: rgba(47, 111, 78, 0.06);
+  background: var(--accent-subtle-bg);
   font-size: 0.82rem;
 }
 
@@ -760,7 +931,7 @@ tbody tr.details-row:hover td {
 .batch-template-select {
   flex: 1;
   min-width: 120px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--input-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -772,7 +943,7 @@ tbody tr.details-row:hover td {
 .batch-template-select:focus {
   outline: none;
   border-color: var(--border-strong);
-  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
+  box-shadow: var(--focus-ring);
 }
 
 .batch-reply-btn {
@@ -791,7 +962,7 @@ tbody tr.details-row:hover td {
   padding: 0.55rem 0.65rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(47, 111, 78, 0.04);
+  background: var(--detail-row-bg);
 }
 
 .reply-destination-label {
@@ -816,13 +987,13 @@ tbody tr.details-row:hover td {
 
 .detail-row td {
   padding: 0.35rem 0.5rem 0.75rem;
-  background: rgba(47, 111, 78, 0.04);
+  background: var(--detail-row-bg);
 }
 
 .detail-panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--details-bg-hover);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
   padding: 0.75rem;
 }
@@ -862,7 +1033,7 @@ tbody tr.details-row:hover td {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.66);
+  background: var(--detail-section-bg);
   padding: 0.65rem;
 }
 
@@ -898,7 +1069,7 @@ tbody tr.details-row:hover td {
 }
 
 tr.is-expanded td {
-  background: rgba(47, 111, 78, 0.08);
+  background: var(--hover-menu);
 }
 
 .detail-empty,
@@ -914,7 +1085,7 @@ tr.is-expanded td {
 }
 
 .detail-error {
-  color: #7f2424;
+  color: var(--error-text);
 }
 
 /* --- Diff view --- */
@@ -924,7 +1095,7 @@ tr.is-expanded td {
   color: var(--text-muted);
   margin-bottom: 0.5rem;
   padding: 0.35rem 0.5rem;
-  background: rgba(47, 111, 78, 0.06);
+  background: var(--accent-subtle-bg);
   border-radius: var(--radius-sm);
 }
 
@@ -946,7 +1117,7 @@ tr.is-expanded td {
   gap: 0.35rem;
   padding: 0.3rem 0.5rem;
   font-size: 0.78rem;
-  background: rgba(30, 42, 34, 0.04);
+  background: var(--diff-header-bg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -967,18 +1138,18 @@ tr.is-expanded td {
 }
 
 .diff-status.diff-added {
-  background: rgba(46, 160, 67, 0.18);
-  color: #1a7f37;
+  background: var(--diff-add-badge);
+  color: var(--diff-add-text);
 }
 
 .diff-status.diff-removed {
-  background: rgba(248, 81, 73, 0.18);
-  color: #cf222e;
+  background: var(--diff-del-badge);
+  color: var(--diff-del-text);
 }
 
 .diff-status.diff-modified {
-  background: rgba(227, 179, 65, 0.18);
-  color: #9a6700;
+  background: var(--diff-mod-badge);
+  color: var(--diff-mod-text);
 }
 
 .diff-filename {
@@ -996,11 +1167,11 @@ tr.is-expanded td {
 }
 
 .diff-stats .diff-added {
-  color: #1a7f37;
+  color: var(--diff-add-text);
 }
 
 .diff-stats .diff-removed {
-  color: #cf222e;
+  color: var(--diff-del-text);
 }
 
 .diff-patch {
@@ -1015,13 +1186,13 @@ tr.is-expanded td {
 }
 
 .diff-line-add {
-  background: rgba(46, 160, 67, 0.12);
-  color: #1a7f37;
+  background: var(--diff-add-bg);
+  color: var(--diff-add-text);
 }
 
 .diff-line-del {
-  background: rgba(248, 81, 73, 0.12);
-  color: #cf222e;
+  background: var(--diff-del-bg);
+  color: var(--diff-del-text);
 }
 
 .diff-line-hunk {
@@ -1069,7 +1240,7 @@ aside.panel {
 #issueForm textarea,
 #issueForm select {
   width: 100%;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--input-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1084,7 +1255,7 @@ aside.panel {
 #issueForm select:focus {
   outline: none;
   border-color: var(--border-strong);
-  box-shadow: 0 0 0 4px rgba(47, 111, 78, 0.14);
+  box-shadow: var(--focus-ring);
 }
 
 #issueForm textarea {
@@ -1124,7 +1295,7 @@ td input[type="checkbox"] {
 }
 
 tr.selected td {
-  background: rgba(47, 111, 78, 0.1);
+  background: var(--selected-row-bg);
 }
 
 tr.is-expandable td {
@@ -1134,7 +1305,7 @@ tr.is-expandable td {
 .repo-group-row td {
   padding: 0;
   border-bottom: 0;
-  background: rgba(47, 111, 78, 0.05);
+  background: var(--repo-group-bg);
 }
 
 .repo-group-toggle {
@@ -1178,7 +1349,7 @@ tr.is-expandable td {
 }
 
 .modal::backdrop {
-  background: rgba(23, 30, 25, 0.42);
+  background: var(--modal-backdrop-bg);
   backdrop-filter: blur(3px);
 }
 
@@ -1187,7 +1358,7 @@ tr.is-expandable td {
   padding: 1.2rem 1.2rem 1rem;
   border: 1px solid var(--border);
   border-radius: 22px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 244, 236, 0.98));
+  background: var(--modal-card-bg);
   box-shadow: var(--shadow-lg);
 }
 
@@ -1216,24 +1387,24 @@ tr.is-expandable td {
   margin: 0.95rem 0 0;
   padding: 0.75rem 0.85rem;
   border-radius: 14px;
-  background: rgba(30, 42, 34, 0.06);
+  background: var(--modal-status-bg);
   color: var(--text);
   line-height: 1.4;
 }
 
 .modal-status.is-running {
-  background: rgba(47, 111, 78, 0.09);
+  background: var(--accent-running-bg);
   color: var(--accent-2);
 }
 
 .modal-status.is-success {
-  background: rgba(47, 111, 78, 0.11);
+  background: var(--accent-success-bg);
   color: var(--accent-2);
 }
 
 .modal-status.is-error {
-  background: rgba(144, 47, 47, 0.1);
-  color: #7f2424;
+  background: var(--error-bg);
+  color: var(--error-text);
 }
 
 .merge-preview {
@@ -1250,23 +1421,23 @@ tr.is-expandable td {
   padding: 0.65rem 0.75rem;
   border-radius: 14px;
   border: 1px solid rgba(30, 42, 34, 0.12);
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--details-bg-hover);
   line-height: 1.35;
 }
 
 .merge-preview-step.is-running {
   border-color: rgba(47, 111, 78, 0.24);
-  background: rgba(47, 111, 78, 0.08);
+  background: var(--hover-menu);
 }
 
 .merge-preview-step.is-success {
-  border-color: rgba(47, 111, 78, 0.28);
-  background: rgba(47, 111, 78, 0.1);
+  border-color: var(--accent-success-step-border);
+  background: var(--accent-success-step-bg);
 }
 
 .merge-preview-step.is-error {
-  border-color: rgba(144, 47, 47, 0.25);
-  background: rgba(144, 47, 47, 0.08);
+  border-color: var(--error-border);
+  background: var(--error-step-bg);
 }
 
 .merge-step-marker {
@@ -1277,7 +1448,7 @@ tr.is-expandable td {
   min-width: 1.9rem;
   height: 1.9rem;
   border-radius: 999px;
-  background: rgba(30, 42, 34, 0.08);
+  background: var(--step-marker-bg);
   color: var(--text-muted);
   font-size: 0.74rem;
   font-weight: 700;
@@ -1285,13 +1456,13 @@ tr.is-expandable td {
 
 .merge-preview-step.is-running .merge-step-marker,
 .merge-preview-step.is-success .merge-step-marker {
-  background: rgba(47, 111, 78, 0.16);
+  background: var(--step-marker-accent-bg);
   color: var(--accent-2);
 }
 
 .merge-preview-step.is-error .merge-step-marker {
-  background: rgba(144, 47, 47, 0.16);
-  color: #7f2424;
+  background: var(--step-marker-error-bg);
+  color: var(--error-text);
 }
 
 .merge-step-content {

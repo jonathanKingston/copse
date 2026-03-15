@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Copse Web</title>
   <link rel="stylesheet" href="/styles.css">
+  <script>
+    (function() {
+      var stored = localStorage.getItem('copse-theme');
+      if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 </head>
 <body>
   <header class="page-header">
@@ -12,7 +20,10 @@
       <h1>Copse Web</h1>
       <p>Status dashboard for agent PR workflows.</p>
     </div>
-    <span id="statusText"></span>
+    <div class="page-header-actions">
+      <span id="statusText"></span>
+      <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode"></button>
+    </div>
   </header>
 
   <main>
