@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Copse Rebrand Preview</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 40px 20px;
+        }
+        .preview-header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+        .preview-header h1 {
+            font-size: 2rem;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+        .preview-header p {
+            color: #888;
+            font-size: 1rem;
+        }
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+            max-width: 1200px;
+            margin: 0 auto 48px;
+        }
+        .panel {
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #333;
+        }
+        .panel-label {
+            padding: 12px 20px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .panel-label.old { background: #2D3748; color: #A8D8EA; }
+        .panel-label.new { background: #2D6A4F; color: #B7E4C7; }
+        .panel-body {
+            padding: 32px 24px;
+            min-height: 320px;
+        }
+        .panel-body.old-body { background: linear-gradient(135deg, #FAFBFC, #F0F4F8); color: #2D3748; }
+        .panel-body.new-body { background: #F5F7F5; color: #1B2A1F; }
+
+        /* Old design mini preview */
+        .old-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            justify-content: center;
+        }
+        .old-logo-circle {
+            width: 36px; height: 36px;
+            border-radius: 50%;
+            background: #A8D8EA;
+            border: 2px solid #7FB3D5;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-weight: bold; font-size: 1.1rem;
+        }
+        .old-logo-text {
+            font-size: 2rem; font-weight: 700;
+            background: linear-gradient(135deg, #A8D8EA, #7FB3D5);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .old-tagline { text-align: center; color: #718096; margin-bottom: 20px; font-size: 0.9rem; }
+        .old-hero {
+            background: white; border-radius: 16px; padding: 20px;
+            text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px;
+        }
+        .old-hero h3 { font-size: 1.4rem; margin-bottom: 6px; color: #2D3748; }
+        .old-hero p { color: #718096; font-size: 0.85rem; }
+        .old-features {
+            display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px;
+        }
+        .old-feature {
+            background: white; border-radius: 12px; padding: 12px 8px;
+            text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .old-feature-icon {
+            width: 32px; height: 32px; border-radius: 50%;
+            margin: 0 auto 6px; display: flex; align-items: center; justify-content: center;
+            font-size: 1rem;
+        }
+        .old-feature h4 {
+            font-size: 0.65rem; font-family: monospace; color: #2D3748;
+        }
+
+        /* New design mini preview */
+        .new-logo {
+            display: flex; align-items: center; gap: 12px;
+            margin-bottom: 8px; justify-content: center;
+        }
+        .new-logo-icon {
+            width: 36px; height: 36px; border-radius: 8px;
+            background: #2D6A4F; display: flex; align-items: center; justify-content: center;
+            position: relative;
+        }
+        .new-logo-icon::after {
+            content: ''; display: block; width: 16px; height: 16px;
+            border-radius: 50%; background: #52B788; opacity: 0.6;
+        }
+        .new-logo-text { font-size: 2rem; font-weight: 800; color: #2D6A4F; }
+        .new-tagline { text-align: center; color: #5A6E5F; margin-bottom: 20px; font-size: 0.9rem; }
+        .new-hero {
+            background: white; border-radius: 12px; padding: 20px;
+            text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            border: 1px solid #EDF2EE; margin-bottom: 20px;
+        }
+        .new-hero h3 { font-size: 1.3rem; margin-bottom: 6px; color: #1B2A1F; font-weight: 700; }
+        .new-hero p { color: #5A6E5F; font-size: 0.85rem; }
+        .new-features {
+            display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px;
+        }
+        .new-feature {
+            background: white; border-radius: 10px; padding: 12px 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06); border: 1px solid #EDF2EE;
+        }
+        .new-feature-icon {
+            width: 28px; height: 28px; border-radius: 5px;
+            margin-bottom: 6px; display: flex; align-items: center; justify-content: center;
+            font-size: 0.9rem;
+        }
+        .new-feature h4 {
+            font-size: 0.65rem; font-family: monospace; color: #1B2A1F;
+        }
+
+        /* Color swatches */
+        .swatches-section {
+            max-width: 1200px; margin: 0 auto 48px;
+        }
+        .swatches-section h2 {
+            font-size: 1.25rem; margin-bottom: 20px; color: #fff;
+        }
+        .swatch-row {
+            display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+        }
+        .swatch-row-label {
+            font-size: 0.8rem; color: #888; margin-bottom: 8px;
+            text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .swatch {
+            width: 80px; text-align: center;
+        }
+        .swatch-color {
+            width: 80px; height: 48px; border-radius: 8px;
+            margin-bottom: 6px; border: 1px solid #333;
+        }
+        .swatch-label { font-size: 0.7rem; color: #aaa; }
+        .swatch-hex { font-size: 0.65rem; color: #666; font-family: monospace; }
+
+        /* Code block comparison */
+        .code-comparison {
+            max-width: 1200px; margin: 0 auto 48px;
+        }
+        .code-comparison h2 {
+            font-size: 1.25rem; margin-bottom: 20px; color: #fff;
+        }
+        .code-pair {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 32px;
+        }
+        .code-sample {
+            border-radius: 12px; overflow: hidden; border: 1px solid #333;
+        }
+        .code-sample-label {
+            padding: 8px 16px; font-size: 0.8rem; font-weight: 600;
+        }
+        .code-sample-label.old { background: #2D3748; color: #A8D8EA; }
+        .code-sample-label.new { background: #2D6A4F; color: #B7E4C7; }
+        .code-sample-body {
+            padding: 16px; font-family: monospace; font-size: 0.85rem;
+        }
+        .code-sample-body.old-code { background: #2D3748; color: #E2E8F0; }
+        .code-sample-body.new-code { background: #1A2B1F; color: #D4E4D8; }
+
+        @media (max-width: 768px) {
+            .comparison, .code-pair { grid-template-columns: 1fr; }
+            .old-features, .new-features { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="preview-header">
+        <h1>Copse Rebrand Preview</h1>
+        <p>Side-by-side comparison of old vs new design direction</p>
+    </div>
+
+    <!-- Layout comparison -->
+    <div class="comparison">
+        <div class="panel">
+            <div class="panel-label old">Before &mdash; Pastel Blue</div>
+            <div class="panel-body old-body">
+                <div class="old-logo">
+                    <div class="old-logo-circle">&#10003;</div>
+                    <span class="old-logo-text">Copse</span>
+                </div>
+                <div class="old-tagline">Tools for managing agent-created PRs</div>
+                <div class="old-hero">
+                    <h3>Streamline your AI workflow</h3>
+                    <p>Copse helps you manage pull requests created by Cursor and Claude agents with a simple, powerful CLI tool.</p>
+                </div>
+                <div class="old-features">
+                    <div class="old-feature">
+                        <div class="old-feature-icon" style="background:#FFE5E5;">&#10003;</div>
+                        <h4>approval</h4>
+                    </div>
+                    <div class="old-feature">
+                        <div class="old-feature-icon" style="background:#E5F3FF;">+</div>
+                        <h4>create-prs</h4>
+                    </div>
+                    <div class="old-feature">
+                        <div class="old-feature-icon" style="background:#F0E5FF;">&#9673;</div>
+                        <h4>pr-status</h4>
+                    </div>
+                    <div class="old-feature">
+                        <div class="old-feature-icon" style="background:#E5FFE5;">&#8635;</div>
+                        <h4>rerun-failed</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-label new">After &mdash; Forest Green</div>
+            <div class="panel-body new-body">
+                <div class="new-logo">
+                    <div class="new-logo-icon"></div>
+                    <span class="new-logo-text">Copse</span>
+                </div>
+                <div class="new-tagline">Manage agent-created pull requests</div>
+                <div class="new-hero">
+                    <h3>Streamline your AI workflow</h3>
+                    <p>Eight commands to manage PRs created by Cursor and Claude agents across all your repos.</p>
+                </div>
+                <div class="new-features">
+                    <div class="new-feature">
+                        <div class="new-feature-icon" style="background:#E8F5E9;">&#10003;</div>
+                        <h4>approval</h4>
+                    </div>
+                    <div class="new-feature">
+                        <div class="new-feature-icon" style="background:#FFF8E1;">+</div>
+                        <h4>create-prs</h4>
+                    </div>
+                    <div class="new-feature">
+                        <div class="new-feature-icon" style="background:#E0F2F1;">&#9673;</div>
+                        <h4>pr-status</h4>
+                    </div>
+                    <div class="new-feature">
+                        <div class="new-feature-icon" style="background:#F1F8E9;">&#8635;</div>
+                        <h4>rerun-failed</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Color palette -->
+    <div class="swatches-section">
+        <h2>Color Palette</h2>
+        <p class="swatch-row-label">Primary</p>
+        <div class="swatch-row">
+            <div class="swatch">
+                <div class="swatch-color" style="background:#2D6A4F;"></div>
+                <div class="swatch-label">Primary</div>
+                <div class="swatch-hex">#2D6A4F</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#40916C;"></div>
+                <div class="swatch-label">Light</div>
+                <div class="swatch-hex">#40916C</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#52B788;"></div>
+                <div class="swatch-label">Lighter</div>
+                <div class="swatch-hex">#52B788</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#D4A373;"></div>
+                <div class="swatch-label">Accent</div>
+                <div class="swatch-hex">#D4A373</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#E9C46A;"></div>
+                <div class="swatch-label">Accent Light</div>
+                <div class="swatch-hex">#E9C46A</div>
+            </div>
+        </div>
+        <p class="swatch-row-label">Surfaces &amp; Text</p>
+        <div class="swatch-row">
+            <div class="swatch">
+                <div class="swatch-color" style="background:#F5F7F5;"></div>
+                <div class="swatch-label">Background</div>
+                <div class="swatch-hex">#F5F7F5</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#EDF2EE;"></div>
+                <div class="swatch-label">Surface</div>
+                <div class="swatch-hex">#EDF2EE</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#FFFFFF; border-color:#ddd;"></div>
+                <div class="swatch-label">White</div>
+                <div class="swatch-hex">#FFFFFF</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#1B2A1F;"></div>
+                <div class="swatch-label">Text</div>
+                <div class="swatch-hex">#1B2A1F</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#5A6E5F;"></div>
+                <div class="swatch-label">Text Light</div>
+                <div class="swatch-hex">#5A6E5F</div>
+            </div>
+        </div>
+        <p class="swatch-row-label">Feature Card Backgrounds</p>
+        <div class="swatch-row">
+            <div class="swatch">
+                <div class="swatch-color" style="background:#E8F5E9;"></div>
+                <div class="swatch-label">Green</div>
+                <div class="swatch-hex">#E8F5E9</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#FFF8E1;"></div>
+                <div class="swatch-label">Amber</div>
+                <div class="swatch-hex">#FFF8E1</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#E0F2F1;"></div>
+                <div class="swatch-label">Teal</div>
+                <div class="swatch-hex">#E0F2F1</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#F1F8E9;"></div>
+                <div class="swatch-label">Lime</div>
+                <div class="swatch-hex">#F1F8E9</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#FFF3E0;"></div>
+                <div class="swatch-label">Orange</div>
+                <div class="swatch-hex">#FFF3E0</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#E8EAF6;"></div>
+                <div class="swatch-label">Indigo</div>
+                <div class="swatch-hex">#E8EAF6</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#FCE4EC;"></div>
+                <div class="swatch-label">Pink</div>
+                <div class="swatch-hex">#FCE4EC</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:#E0F7FA;"></div>
+                <div class="swatch-label">Cyan</div>
+                <div class="swatch-hex">#E0F7FA</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Code block comparison -->
+    <div class="code-comparison">
+        <h2>Terminal / Code Blocks</h2>
+        <div class="code-pair">
+            <div class="code-sample">
+                <div class="code-sample-label old">Before</div>
+                <div class="code-sample-body old-code">
+                    $ copse approval acme/project cursor<br>
+                    <span style="color:#A8D8EA;">&#10003;</span> Enabled auto-merge on 3 PRs<br>
+                    <span style="color:#718096;"># Generic dark gray terminal</span>
+                </div>
+            </div>
+            <div class="code-sample">
+                <div class="code-sample-label new">After</div>
+                <div class="code-sample-body new-code">
+                    $ copse approval acme/project cursor<br>
+                    <span style="color:#52B788;">&#10003;</span> Enabled auto-merge on 3 PRs<br>
+                    <span style="color:#5A6E5F;"># Forest-tinted dark terminal</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
