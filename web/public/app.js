@@ -1,3 +1,73 @@
+/**
+ * Lightweight HTML sanitizer to prevent XSS when rendering body_html from the API.
+ * Allows safe markdown-rendered tags and strips everything else.
+ */
+function sanitizeHtml(html) {
+  const ALLOWED_TAGS = new Set([
+    "p", "a", "code", "pre", "em", "strong", "b", "i", "u",
+    "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+    "blockquote", "img", "br", "hr", "div", "span",
+    "table", "thead", "tbody", "tr", "th", "td",
+    "dl", "dt", "dd", "del", "ins", "sup", "sub", "details", "summary",
+    "kbd", "var", "samp", "abbr", "mark", "small",
+  ]);
+
+  const ALLOWED_ATTRS = {
+    a: new Set(["href", "title", "class"]),
+    img: new Set(["src", "alt", "title", "width", "height", "class"]),
+    td: new Set(["align", "class"]),
+    th: new Set(["align", "class"]),
+    code: new Set(["class"]),
+    pre: new Set(["class"]),
+    div: new Set(["class"]),
+    span: new Set(["class"]),
+    details: new Set(["open", "class"]),
+    summary: new Set(["class"]),
+  };
+
+  const SAFE_URL_PATTERN = /^https?:\/\//i;
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  function walk(node) {
+    const frag = document.createDocumentFragment();
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        frag.appendChild(document.createTextNode(child.textContent));
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const tag = child.tagName.toLowerCase();
+        if (ALLOWED_TAGS.has(tag)) {
+          const el = document.createElement(tag);
+          const allowed = ALLOWED_ATTRS[tag];
+          if (allowed) {
+            for (const attr of Array.from(child.attributes)) {
+              if (allowed.has(attr.name.toLowerCase())) {
+                const value = attr.value;
+                // Sanitize URL attributes: only allow http/https
+                if ((attr.name === "href" || attr.name === "src") && !SAFE_URL_PATTERN.test(value)) {
+                  continue;
+                }
+                el.setAttribute(attr.name, value);
+              }
+            }
+          }
+          el.appendChild(walk(child));
+          frag.appendChild(el);
+        } else {
+          // Disallowed tag: keep its children but discard the element itself
+          frag.appendChild(walk(child));
+        }
+      }
+      // Drop comments, processing instructions, etc.
+    }
+    return frag;
+  }
+
+  const container = document.createElement("div");
+  container.appendChild(walk(doc.body));
+  return container.innerHTML;
+}
+
 const statusRowsEl = document.getElementById("statusRows");
 const statusTextEl = document.getElementById("statusText");
 const reposInputEl = document.getElementById("reposInput");
@@ -1376,7 +1446,7 @@ function createCommentsPanel(row, state) {
     body.className = "comment-body";
     if (comment.body_html) {
       body.classList.add("comment-body-html");
-      body.innerHTML = comment.body_html;
+      body.innerHTML = sanitizeHtml(comment.body_html);
     } else {
       body.classList.add("comment-body-plain");
       body.textContent = formatCommentBody(comment.body);
@@ -1599,7 +1669,13 @@ function createDiffPanel(row, state) {
       : file.filename;
     const stats = document.createElement("span");
     stats.className = "diff-stats";
-    stats.innerHTML = `<span class="diff-added">+${file.additions}</span> <span class="diff-removed">-${file.deletions}</span>`;
+    const added = document.createElement("span");
+    added.className = "diff-added";
+    added.textContent = `+${file.additions}`;
+    const removed = document.createElement("span");
+    removed.className = "diff-removed";
+    removed.textContent = `-${file.deletions}`;
+    stats.append(added, document.createTextNode(" "), removed);
     header.append(badge, name, stats);
 
     const isOpen = state.openPatches.has(fileKey);
