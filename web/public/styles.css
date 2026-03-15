@@ -36,8 +36,16 @@ body {
   color: var(--text);
 }
 
-header {
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
   margin: 1rem 0;
+}
+
+.page-header-copy {
+  min-width: 0;
 }
 
 header h1 {
@@ -319,6 +327,12 @@ td.pr-cell {
   color: var(--accent-2);
   font-size: 0.7rem;
   line-height: 1.2;
+}
+
+.branch-badge {
+  background: rgba(30, 42, 34, 0.06);
+  border-color: rgba(30, 42, 34, 0.16);
+  color: var(--text-muted);
 }
 
 .clamp {
@@ -1061,7 +1075,16 @@ aside.panel {
 }
 
 #statusText {
+  min-width: 12rem;
+  min-height: 1.5rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
   color: var(--accent-2);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #chainMergeControls {
@@ -1074,10 +1097,6 @@ aside.panel {
 #selectedCount {
   font-size: 0.82rem;
   color: var(--text-muted);
-}
-
-#statusText {
-  margin-left: auto;
 }
 
 th input[type="checkbox"],
@@ -1296,6 +1315,12 @@ tr.is-expandable td {
 }
 
 @media (max-width: 900px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
   .layout {
     grid-template-columns: 1fr;
   }
@@ -1307,7 +1332,8 @@ tr.is-expandable td {
 
   #statusText {
     width: 100%;
-    margin-left: 0;
+    justify-content: flex-start;
+    text-align: left;
   }
 
   .actions {

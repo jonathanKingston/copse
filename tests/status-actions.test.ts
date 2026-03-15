@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chainMergePRs, getIssueTemplateComment, markPullRequestReady } from "../lib/services/status-actions.js";
+import { chainMergePRs, createPullRequestForBranch, getIssueTemplateComment, markPullRequestReady } from "../lib/services/status-actions.js";
 
 test("getIssueTemplateComment returns null for no-comment choice", () => {
   assert.equal(getIssueTemplateComment("cursor", 0), null);
@@ -26,6 +26,8 @@ test("markPullRequestReady marks draft PRs ready for review", async () => {
       return "";
     },
     addPRCommentAsync: async () => {},
+    getCommitInfoAsync: async () => ({ message: "Title\n\nBody", date: new Date("2026-03-15T00:00:00Z"), authorLogin: "alice" }),
+    getDefaultBranchAsync: async () => "main",
     invalidateStatusCache: () => {},
   };
 
@@ -46,6 +48,8 @@ test("markPullRequestReady is a no-op for non-draft PRs", async () => {
       return "false\n";
     },
     addPRCommentAsync: async () => {},
+    getCommitInfoAsync: async () => ({ message: "Title", date: new Date("2026-03-15T00:00:00Z"), authorLogin: "alice" }),
+    getDefaultBranchAsync: async () => "main",
     invalidateStatusCache: () => {},
   };
 
@@ -74,6 +78,8 @@ test("chainMergePRs retargets each PR and enables auto-merge in order", async ()
       return "";
     },
     addPRCommentAsync: async () => {},
+    getCommitInfoAsync: async () => ({ message: "Title", date: new Date("2026-03-15T00:00:00Z"), authorLogin: "alice" }),
+    getDefaultBranchAsync: async () => "main",
     invalidateStatusCache: () => {},
   };
 
@@ -118,6 +124,8 @@ test("chainMergePRs stops immediately when retargeting fails", async () => {
       return "";
     },
     addPRCommentAsync: async () => {},
+    getCommitInfoAsync: async () => ({ message: "Title", date: new Date("2026-03-15T00:00:00Z"), authorLogin: "alice" }),
+    getDefaultBranchAsync: async () => "main",
     invalidateStatusCache: () => {},
   };
 
@@ -166,6 +174,8 @@ test("chainMergePRs closes redundant PRs and continues queueing", async () => {
     addPRCommentAsync: async (commentRepo: string, prNumber: number, body: string) => {
       comments.push({ repo: commentRepo, prNumber, body });
     },
+    getCommitInfoAsync: async () => ({ message: "Title", date: new Date("2026-03-15T00:00:00Z"), authorLogin: "alice" }),
+    getDefaultBranchAsync: async () => "main",
     invalidateStatusCache: () => {},
   };
 
@@ -198,4 +208,41 @@ test("chainMergePRs closes redundant PRs and continues queueing", async () => {
     { action: "auto-merge", prNumber: 11, intoPR: 12, success: true, alreadyEnabled: false },
     { action: "auto-merge", prNumber: 12, intoPR: "default", success: true, alreadyEnabled: false },
   ]);
+});
+
+test("createPullRequestForBranch uses latest commit title and repo default branch", async () => {
+  const calls: string[][] = [];
+  let invalidated = 0;
+  const result = await createPullRequestForBranch("acme/repo", "cursor/feature", {
+    ghQuietAsync: async (...args: string[]) => {
+      calls.push(args);
+      return "https://github.com/acme/repo/pull/123\n";
+    },
+    addPRCommentAsync: async () => {},
+    getCommitInfoAsync: async () => ({
+      message: "Add dashboard branches\n\nImplements orphan branch rows.",
+      date: new Date("2026-03-15T00:00:00Z"),
+      authorLogin: "alice",
+    }),
+    getDefaultBranchAsync: async () => "main",
+    invalidateStatusCache: () => {
+      invalidated++;
+    },
+  });
+
+  assert.deepEqual(calls, [[
+    "pr", "create",
+    "--repo", "acme/repo",
+    "--base", "main",
+    "--head", "cursor/feature",
+    "--title", "Add dashboard branches",
+    "--body", "Implements orphan branch rows.",
+  ]]);
+  assert.equal(invalidated, 1);
+  assert.deepEqual(result, {
+    title: "Add dashboard branches",
+    body: "Implements orphan branch rows.",
+    baseBranch: "main",
+    url: "https://github.com/acme/repo/pull/123",
+  });
 });
