@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { setApiProvider, resetApiProvider } from "../lib/api-provider.js";
 import { MockApiProvider } from "../lib/mock-api-provider.js";
-import { fetchPRsWithStatus, invalidateStatusCache } from "../lib/services/status-service.js";
+import { fetchPRsWithStatus, filterStandaloneBranches, invalidateStatusCache } from "../lib/services/status-service.js";
 import { markPullRequestReady, retargetPullRequest, enableMergeWhenReady, rerunFailedWorkflowRuns } from "../lib/services/status-actions.js";
-import { getCurrentUser, getCommitInfoBatch, getCommitInfoBatchAsync } from "../lib/gh.js";
+import { getCurrentUser, getCommitInfoBatch, getCommitInfoBatchAsync, listBranches } from "../lib/gh.js";
 
 test("status + actions run through mock provider", async () => {
   const repo = "acme/mock-provider";
@@ -107,33 +107,31 @@ test("getCommitInfoBatchAsync delegates to mock provider", async () => {
   }
 });
 
-test("standalone branches appear via mock provider with batched commit info", async () => {
+test("standalone branch building delegates to mock provider for listBranches and batch commit info", () => {
   const repo = "acme/standalone-test";
   const mock = new MockApiProvider();
-  mock.currentUser = "alice";
-  mock.originRepo = repo;
-  mock.config = { repos: [repo], cursorApiKey: "cur_mock" };
   mock.addRepo(repo, { defaultBranch: "main" });
   mock.addBranch(repo, "cursor/has-pr", { message: "Has PR", authorLogin: "alice", date: new Date("2026-03-10T10:00:00Z") });
   mock.addBranch(repo, "cursor/standalone", { message: "Standalone work", authorLogin: "alice", date: new Date("2026-03-11T10:00:00Z") });
-  mock.addPR(repo, {
-    number: 1,
-    headRefName: "cursor/has-pr",
-    baseRefName: "main",
-    title: "Has PR",
-    isDraft: false,
-    reviewDecision: "APPROVED",
-  });
 
   setApiProvider(mock);
-  invalidateStatusCache();
   try {
-    const rows = await fetchPRsWithStatus({ repos: [repo], scope: "all" });
-    const branchRow = rows.find((row) => row.rowType === "branch" && row.headRefName === "cursor/standalone");
-    assert.ok(branchRow, "standalone branch should appear in status rows");
-    assert.equal(branchRow.title, "Standalone work");
+    const branches = listBranches(repo);
+    assert.ok(branches.includes("cursor/has-pr"));
+    assert.ok(branches.includes("cursor/standalone"));
+
+    const prs = [{ headRefName: "cursor/has-pr", baseRefName: "main", number: 1 }];
+    const standalone = filterStandaloneBranches(branches, prs);
+    assert.deepEqual(standalone, ["cursor/standalone"]);
+
+    const batchInfo = getCommitInfoBatch(repo, standalone, true);
+    assert.equal(batchInfo.size, 1);
+    const info = batchInfo.get("cursor/standalone");
+    assert.ok(info);
+    assert.equal(info.message, "Standalone work");
+    assert.equal(info.authorLogin, "alice");
+    assert.ok(info.date instanceof Date);
   } finally {
     resetApiProvider();
-    invalidateStatusCache();
   }
 });
