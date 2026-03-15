@@ -199,7 +199,20 @@ async function serveStatic(url: URL, res: ServerResponse): Promise<void> {
   }
   try {
     const content = await readFile(absolutePath);
-    res.writeHead(200, { "content-type": getMimeType(absolutePath) });
+    const mimeType = getMimeType(absolutePath);
+    const headers: Record<string, string> = { "content-type": mimeType };
+    if (mimeType.startsWith("text/html")) {
+      headers["content-security-policy"] = [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+      ].join("; ");
+      headers["x-content-type-options"] = "nosniff";
+      headers["x-frame-options"] = "DENY";
+    }
+    res.writeHead(200, headers);
     res.end(content);
   } catch {
     sendText(res, 404, "Not found");
