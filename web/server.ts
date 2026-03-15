@@ -35,6 +35,52 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
 const PUBLIC_DIR = resolve(fileURLToPath(new URL("./public", import.meta.url)));
 
+// ---------------------------------------------------------------------------
+// In-memory rate limiting for POST endpoints (30 requests/min per IP)
+// ---------------------------------------------------------------------------
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 30;
+
+interface RateLimitEntry {
+  count: number;
+  windowStart: number;
+}
+
+const rateLimitMap = new Map<string, RateLimitEntry>();
+
+// Periodically purge expired entries so the map doesn't grow without bound.
+const _rateLimitCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+      rateLimitMap.delete(ip);
+    }
+  }
+}, RATE_LIMIT_WINDOW_MS);
+_rateLimitCleanup.unref();
+
+/**
+ * Returns the Retry-After value in seconds if the request should be rejected,
+ * or 0 if the request is within the allowed limit.
+ */
+function checkRateLimit(ip: string): number {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(ip, { count: 1, windowStart: now });
+    return 0;
+  }
+
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX_REQUESTS) {
+    const retryAfterMs = RATE_LIMIT_WINDOW_MS - (now - entry.windowStart);
+    return Math.ceil(retryAfterMs / 1000);
+  }
+
+  return 0;
+}
+
 interface WebServerOptions {
   host?: string;
   port?: number;
@@ -584,6 +630,21 @@ export function startWebServer(options: WebServerOptions = {}): ReturnType<typeo
       return;
     }
     const url = new URL(req.url, `http://${host}:${port}`);
+
+    // Rate-limit POST requests to API endpoints (GET is read-only, skip it).
+    if (req.method === "POST" && url.pathname.startsWith("/api/")) {
+      const clientIp = req.socket.remoteAddress ?? "unknown";
+      const retryAfter = checkRateLimit(clientIp);
+      if (retryAfter > 0) {
+        res.writeHead(429, {
+          "content-type": "application/json; charset=utf-8",
+          "retry-after": String(retryAfter),
+        });
+        res.end(JSON.stringify({ error: "Too many requests. Please try again later." }));
+        return;
+      }
+    }
+
     try {
       if (url.pathname.startsWith("/api/")) {
         await handleApi(req, url, res);
