@@ -1371,3 +1371,263 @@ tr.is-expandable td {
     grid-column: auto;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Mobile-friendly breakpoint (<768px)                                */
+/* ------------------------------------------------------------------ */
+@media (max-width: 767px) {
+  /* --- Global spacing & typography --- */
+  body {
+    padding: 0 0.5rem 1.5rem;
+    font-size: 0.9rem;
+  }
+
+  header h1 {
+    font-size: 1.25rem;
+  }
+
+  header p {
+    font-size: 0.8rem;
+  }
+
+  /* --- Page header: stack vertically --- */
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+    margin: 0.75rem 0;
+  }
+
+  #statusText {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    text-align: left;
+    font-size: 0.78rem;
+  }
+
+  /* --- Filter bar: single-column stack --- */
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.6rem;
+  }
+
+  .controls label,
+  .controls label:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    font-size: 0.8rem;
+  }
+
+  .controls input[type="text"],
+  .controls input:not([type]),
+  .controls select {
+    font-size: 16px; /* prevent iOS zoom on focus */
+  }
+
+  #refreshBtn {
+    align-self: stretch;
+    padding: 0.55rem;
+    font-size: 0.88rem;
+  }
+
+  /* --- Bulk-action controls: wrap tightly --- */
+  #chainMergeControls {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  #chainMergeControls button {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.75rem;
+    padding: 0.4rem 0.35rem;
+  }
+
+  /* --- Layout: vertical stack --- */
+  .layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* --- Table: horizontal scroll wrapper --- */
+  .layout > .panel:first-child {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -0.5rem;
+    padding: 0.5rem;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
+  table {
+    font-size: 0.78rem;
+  }
+
+  th, td {
+    padding: 0.4rem 0.5rem;
+  }
+
+  .table-hint {
+    font-size: 0.78rem;
+  }
+
+  /* --- PR detail panel: full-width card --- */
+  .detail-row td {
+    padding: 0.25rem 0.35rem 0.6rem;
+  }
+
+  .detail-panel {
+    padding: 0.55rem;
+  }
+
+  .detail-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .detail-title {
+    font-size: 0.88rem;
+  }
+
+  .detail-controls {
+    width: 100%;
+  }
+
+  .detail-controls button {
+    flex: 1 1 auto;
+    font-size: 0.75rem;
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .detail-section {
+    padding: 0.5rem;
+  }
+
+  .detail-section-title {
+    font-size: 0.78rem;
+  }
+
+  .detail-meta-list {
+    font-size: 0.78rem;
+    gap: 0.25rem 0.5rem;
+  }
+
+  /* --- Comments: tighter on mobile --- */
+  .comment {
+    padding: 0.4rem;
+  }
+
+  .comment-body {
+    font-size: 0.78rem;
+  }
+
+  .comment textarea {
+    font-size: 16px; /* prevent iOS zoom */
+  }
+
+  .batch-reply-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+  }
+
+  .batch-reply-btn {
+    width: 100%;
+  }
+
+  /* --- Diff view: tighter --- */
+  .diff-patch {
+    font-size: 0.65rem;
+    padding: 0.3rem;
+  }
+
+  .diff-file-header {
+    font-size: 0.72rem;
+    padding: 0.25rem 0.4rem;
+  }
+
+  /* --- Panels & cards: reduced radius and padding --- */
+  .controls, .panel {
+    border-radius: 12px;
+    padding: 0.6rem;
+  }
+
+  /* --- Issue form --- */
+  #issueForm {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  #issueForm .field-body,
+  #issueForm .field-submit {
+    grid-column: auto;
+  }
+
+  #issueForm input,
+  #issueForm textarea,
+  #issueForm select {
+    font-size: 16px; /* prevent iOS zoom */
+  }
+
+  #issueForm .field-submit {
+    font-size: 0.88rem;
+    padding: 0.6rem;
+  }
+
+  /* --- Modal: near-full-screen on mobile --- */
+  .modal {
+    width: calc(100vw - 1rem);
+    max-height: calc(100vh - 2rem);
+  }
+
+  .modal-card {
+    padding: 1rem 0.85rem 0.85rem;
+    border-radius: 16px;
+  }
+
+  .modal-card h2 {
+    font-size: 1.15rem;
+  }
+
+  .modal-actions {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .modal-actions button {
+    width: 100%;
+    padding: 0.6rem;
+  }
+
+  /* --- Menu popover --- */
+  .menu-popover {
+    min-width: 180px;
+  }
+
+  /* --- Action buttons in table rows --- */
+  .actions button {
+    padding: 0.3rem 0.4rem;
+    font-size: 0.68rem;
+  }
+
+  /* --- PR title: allow full width --- */
+  .pr-title {
+    max-width: none;
+  }
+
+  /* --- Aside panel: full viewport height on mobile --- */
+  aside.panel {
+    max-height: none;
+  }
+}
