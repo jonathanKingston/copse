@@ -1,6 +1,12 @@
 /**
- * Loads copse config from .copserc (JSON).
- * Searches in order:
+ * Loads copse config from .copserc (JSON) and environment variables.
+ *
+ * Environment variables (take precedence over .copserc values):
+ *   - COPSE_REPOS: comma-separated list of repos (e.g. "owner/repo1,owner/repo2")
+ *   - COPSE_CURSOR_API_KEY: Cursor API key
+ *   - COPSE_COMMENT_TEMPLATES: path to comment templates directory
+ *
+ * File-based config searches in order:
  *   1. ~/.copserc (global config)
  *   2. .copserc in cwd or parent directories (local config)
  * Format: { "repos": ["owner/name", ...] }
@@ -56,19 +62,47 @@ function loadConfigFromPath(configPath: string): Copserc | null {
   return null;
 }
 
+export function loadEnvConfig(): Copserc {
+  const env: Copserc = {};
+  const reposRaw = process.env.COPSE_REPOS;
+  if (reposRaw) {
+    env.repos = reposRaw.split(",").map((r) => r.trim()).filter(Boolean);
+  }
+  if (process.env.COPSE_CURSOR_API_KEY) {
+    env.cursorApiKey = process.env.COPSE_CURSOR_API_KEY;
+  }
+  if (process.env.COPSE_COMMENT_TEMPLATES) {
+    env.commentTemplates = process.env.COPSE_COMMENT_TEMPLATES;
+  }
+  return env;
+}
+
 export function loadConfig(cwd: string = process.cwd()): Copserc | null {
   const provider = getApiProvider();
   if (provider?.loadConfig) {
     return provider.loadConfig(cwd);
   }
+
+  const envConfig = loadEnvConfig();
+
   const homeConfig = join(homedir(), CONFIG_FILENAME);
-  const globalConfig = loadConfigFromPath(homeConfig);
-  if (globalConfig) return globalConfig;
+  let fileConfig = loadConfigFromPath(homeConfig);
+  if (!fileConfig) {
+    const configDir = findConfigDir(cwd);
+    if (configDir) {
+      fileConfig = loadConfigFromPath(join(configDir, CONFIG_FILENAME));
+    }
+  }
 
-  const configDir = findConfigDir(cwd);
-  if (!configDir) return null;
+  // Merge: env vars take precedence over file config
+  const merged: Copserc = { ...fileConfig, ...envConfig };
 
-  return loadConfigFromPath(join(configDir, CONFIG_FILENAME));
+  // Return null only if nothing was found
+  if (!merged.repos && !merged.cursorApiKey && !merged.commentTemplates) {
+    return null;
+  }
+
+  return merged;
 }
 
 export function getConfiguredRepos(cwd: string = process.cwd()): string[] | null {
