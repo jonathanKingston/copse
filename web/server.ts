@@ -9,6 +9,7 @@ import { fetchPRsWithStatus } from "../lib/services/status-service.js";
 import {
   approvePullRequest,
   chainMergePRs,
+  createPullRequestForBranch,
   createIssueWithAgentComment,
   enableMergeWhenReady,
   markPullRequestReady,
@@ -394,6 +395,27 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       message: result.stoppedEarly
         ? `Stack queue stopped early after ${result.steps.length} step(s)`
         : `Stack queued: ${result.steps.length} step(s)`,
+    });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/branches/create-pr") {
+    const body = await readJsonBody(req);
+    const repo = String(body.repo || "");
+    const headRefName = String(body.headRefName || "");
+    validateRepo(repo);
+    if (!headRefName.trim()) {
+      throw new Error("headRefName cannot be empty");
+    }
+    const result = await createPullRequestForBranch(repo, headRefName);
+    sendJson(res, 200, {
+      ok: true,
+      repo,
+      headRefName,
+      baseBranch: result.baseBranch,
+      title: result.title,
+      url: result.url,
+      message: `Created PR for ${headRefName} into ${result.baseBranch}`,
     });
     return;
   }

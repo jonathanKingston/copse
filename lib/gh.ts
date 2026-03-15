@@ -464,6 +464,115 @@ export function listBranches(repo: string): string[] {
   return out.trim() ? out.trim().split("\n") : [];
 }
 
+export async function listBranchesAsync(repo: string): Promise<string[]> {
+  const out = await ghQuietAsync("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
+  return out.trim() ? out.trim().split("\n") : [];
+}
+
+export function getDefaultBranch(repo: string): string {
+  const out = gh("api", `repos/${repo}`, "-q", ".default_branch");
+  const branch = out.trim();
+  if (!branch) {
+    throw new Error(`Could not determine default branch for ${repo}`);
+  }
+  return branch;
+}
+
+export async function getDefaultBranchAsync(repo: string): Promise<string> {
+  const out = await ghQuietAsync("api", `repos/${repo}`, "-q", ".default_branch");
+  const branch = out.trim();
+  if (!branch) {
+    throw new Error(`Could not determine default branch for ${repo}`);
+  }
+  return branch;
+}
+
+function parseAheadBy(value: string, repo: string, baseBranch: string, headBranch: string): number {
+  const aheadBy = Number.parseInt(value.trim(), 10);
+  if (!Number.isInteger(aheadBy) || aheadBy < 0) {
+    throw new Error(
+      `Could not determine commit delta for ${repo} (${baseBranch}...${headBranch})`
+    );
+  }
+  return aheadBy;
+}
+
+export function branchHasUniqueCommits(repo: string, baseBranch: string, headBranch: string): boolean {
+  const out = gh(
+    "api",
+    `repos/${repo}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headBranch)}`,
+    "-q",
+    ".ahead_by"
+  );
+  return parseAheadBy(out, repo, baseBranch, headBranch) > 0;
+}
+
+export async function branchHasUniqueCommitsAsync(repo: string, baseBranch: string, headBranch: string): Promise<boolean> {
+  const out = await ghQuietAsync(
+    "api",
+    `repos/${repo}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headBranch)}`,
+    "-q",
+    ".ahead_by"
+  );
+  return parseAheadBy(out, repo, baseBranch, headBranch) > 0;
+}
+
+interface RepoCommitListItem {
+  commit?: {
+    message?: string;
+  };
+}
+
+export function mergeCommitMentionsBranch(message: string, branchName: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  const normalizedBranch = branchName.toLowerCase();
+  if (!normalizedMessage.includes("merge pull request")) {
+    return false;
+  }
+  return normalizedMessage.includes(`/${normalizedBranch}`) || normalizedMessage.includes(` ${normalizedBranch}`);
+}
+
+function parseRepoCommitList(output: string): RepoCommitListItem[] {
+  const parsed = JSON.parse(output || "[]") as unknown;
+  return Array.isArray(parsed) ? parsed as RepoCommitListItem[] : [];
+}
+
+export function hasNewerMergeCommitForBranch(
+  repo: string,
+  defaultBranch: string,
+  headBranch: string,
+  since: Date
+): boolean {
+  const out = gh(
+    "api",
+    `repos/${repo}/commits`,
+    "--paginate",
+    "-f", `sha=${defaultBranch}`,
+    "-f", `since=${since.toISOString()}`,
+    "-f", "per_page=100"
+  );
+  const commits = parseRepoCommitList(out);
+  return commits.some((item) => mergeCommitMentionsBranch(String(item.commit?.message || ""), headBranch));
+}
+
+export async function hasNewerMergeCommitForBranchAsync(
+  repo: string,
+  defaultBranch: string,
+  headBranch: string,
+  since: Date
+): Promise<boolean> {
+  const out = await ghQuietAsync(
+    "api",
+    `repos/${repo}/commits`,
+    "--paginate",
+    "-f", `sha=${defaultBranch}`,
+    "-f", `since=${since.toISOString()}`,
+    "-f", "per_page=100"
+  );
+  const commits = parseRepoCommitList(out);
+  return commits.some((item) => mergeCommitMentionsBranch(String(item.commit?.message || ""), headBranch));
+}
+
 const COMMIT_DELIM = "\x01";
 
 export interface CommitInfo {
@@ -817,4 +926,29 @@ export function getCommitInfo(repo: string, branchRef: string, includeMessage: b
       authorLogin: (authorLogin || "").trim(),
     };
   }
+}
+
+export async function getCommitInfoAsync(repo: string, branchRef: string, includeMessage: boolean = false): Promise<CommitInfo> {
+  const ref = encodeURIComponent(branchRef);
+  const query = includeMessage
+    ? `.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`
+    : `.commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`;
+
+  const out = await ghQuietAsync("api", `repos/${repo}/commits/${ref}`, "-q", query);
+  const parts = out.trim().split(COMMIT_DELIM);
+
+  if (includeMessage) {
+    const [message, dateStr, authorLogin] = parts;
+    return {
+      message: (message || "").trim(),
+      date: dateStr ? new Date(dateStr.trim()) : null,
+      authorLogin: (authorLogin || "").trim(),
+    };
+  }
+
+  const [dateStr, authorLogin] = parts;
+  return {
+    date: dateStr ? new Date(dateStr.trim()) : null,
+    authorLogin: (authorLogin || "").trim(),
+  };
 }

@@ -7,9 +7,12 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header>
-    <h1>Copse Web</h1>
-    <p>Status dashboard for agent PR workflows.</p>
+  <header class="page-header">
+    <div class="page-header-copy">
+      <h1>Copse Web</h1>
+      <p>Status dashboard for agent PR workflows.</p>
+    </div>
+    <span id="statusText"></span>
   </header>
 
   <main>
@@ -26,7 +29,7 @@
         Scope
         <select id="filterScopeInput">
           <option value="my-stacks" selected>My stacks</option>
-          <option value="all">All PRs</option>
+          <option value="all">All items</option>
         </select>
       </label>
       <label>
@@ -74,12 +77,11 @@
         <button id="bulkUpdateBtn" title="Merge main into selected PR branches">Update</button>
         <button id="chainMergeBtn" title="Retarget selected PRs into a stack and enable auto-merge in order">Chain Merge</button>
       </span>
-      <span id="statusText"></span>
     </section>
 
     <section class="layout">
       <div class="panel">
-        <div class="table-hint" id="tableHint">Tip: click a row (or use ↑/↓ and Enter) to load comments.</div>
+        <div class="table-hint" id="tableHint">Tip: click a PR row to load comments and changed files.</div>
         <table id="statusTable">
           <colgroup>
             <col class="col-select">
@@ -95,7 +97,7 @@
           <thead>
             <tr>
               <th class="select-cell"><input id="selectAllCheckbox" type="checkbox" title="Select all"></th>
-              <th class="pr-cell">PR</th>
+              <th class="pr-cell">Item</th>
               <th class="status-cell agent-cell">Agent</th>
               <th class="status-cell review-cell">Review</th>
               <th class="status-cell conflicts-cell">Conflicts</th>

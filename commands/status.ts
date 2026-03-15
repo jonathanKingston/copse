@@ -42,7 +42,7 @@ import {
   postPullRequestReply,
   rerunFailedWorkflowRuns,
 } from "../lib/services/status-actions.js";
-import { STALE_DAYS, WATCH_INTERVAL_MS, type PRWithStatus } from "../lib/services/status-types.js";
+import { STALE_DAYS, WATCH_INTERVAL_MS, type PRWithStatus, isPRWithStatus } from "../lib/services/status-types.js";
 import {
   loadTemplates,
   scaffoldTemplates,
@@ -206,7 +206,7 @@ function renderTable(prs: PRWithStatus[], singleRepo: boolean): void {
 }
 
 function runOnce(repos: string[], mineOnly: boolean): void {
-  const prs = fetchPRsWithStatusSync({ repos, scope: mineOnly ? "my-stacks" : "all" });
+  const prs = fetchPRsWithStatusSync({ repos, scope: mineOnly ? "my-stacks" : "all" }).filter(isPRWithStatus);
   renderTable(prs, repos.length === 1);
 }
 
@@ -1360,7 +1360,7 @@ function runWatch(
 
     (async () => {
       try {
-        const sortedPrs = await fetchPRsWithStatus({ repos, scope: mineOnlyFilter ? "my-stacks" : "all" });
+        const sortedPrs = (await fetchPRsWithStatus({ repos, scope: mineOnlyFilter ? "my-stacks" : "all" })).filter(isPRWithStatus);
         if (gen !== ciGeneration || isInterrupted()) return;
         const oldVirtualLen = virtualRows.length;
         currentPRs = sortedPrs;
