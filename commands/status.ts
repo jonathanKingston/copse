@@ -63,16 +63,25 @@ function execAsync(command: string, args: string[]): Promise<string> {
   });
 }
 
+// Cooldown between bulk operations (approve-all, update-all) to avoid
+// overwhelming the GitHub API with rapid sequential mutations.
 const BULK_COOLDOWN_MS = 2_000;
 
 export type Urgency = "red" | "amber" | "green";
 
+// Urgency drives row color in the TUI.  Red signals items that block merging
+// (CI failures, conflicts).  Amber signals items that need attention but are
+// not critically broken (staleness, requested changes, pending CI).
+// Green means the PR is in a healthy state.
 function getUrgency(pr: PRWithStatus): Urgency {
   if (pr.ciStatus === "fail" || pr.conflicts) return "red";
   if (pr.stale || pr.reviewDecision === "CHANGES_REQUESTED" || pr.ciStatus === "pending") return "amber";
   return "green";
 }
 
+// Fuzzy-ish search: check if the query appears as a substring in any of
+// several PR fields.  This lets users search by repo name, PR number, agent,
+// CI status, review state, or title without needing separate filter commands.
 function matchesSearch(pr: PRWithStatus, query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase();
@@ -102,11 +111,15 @@ const ANSI = {
   bold: "\x1b[1m",
 };
 
+// OSC 8 terminal hyperlink: wraps text so compatible terminals make it
+// clickable.  Falls back to plain text when stdout is not a TTY.
 function hyperlink(url: string, text: string): string {
   if (!process.stdout.isTTY) return text;
   return `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`;
 }
 
+// Strip ANSI escape sequences (colors) and OSC 8 hyperlink sequences to get
+// the actual visible character count, needed for correct column alignment.
 function visibleLength(text: string): number {
   return text.replace(/\x1b\[[0-9;]*m|\x1b\]8;;[^\x07]*\x07/g, "").length;
 }
@@ -280,6 +293,8 @@ function runWatch(
     return Math.max(1, termRows - ROW_START - 2);
   }
 
+  // Adjust scrollOffset so the selected row is always within the visible
+  // viewport.  The final clamp prevents scrolling past the end of the list.
   function ensureVisible(): void {
     const vh = getViewportHeight();
     if (selectedIndex < scrollOffset) {
@@ -312,6 +327,11 @@ function runWatch(
     else drawFooter();
   });
 
+  // Flatten the PR list into a linear array of virtual rows that the TUI can
+  // render one-per-line.  When a PR is expanded, its detail rows (comments,
+  // diff files, artifacts) are interleaved immediately after the PR row.
+  // This model lets arrow-key navigation and scrolling work uniformly across
+  // both PR rows and their nested detail rows.
   function rebuildVirtualRows(): void {
     virtualRows = [];
     for (let i = 0; i < currentPRs.length; i++) {
@@ -440,6 +460,9 @@ function runWatch(
     return prefix + truncatePlain(artifact.absolutePath || "", maxPath);
   }
 
+  // Use ANSI reverse video (\x1b[7m) to highlight the selected row.
+  // We must re-enable reverse video after every reset sequence in the row,
+  // otherwise mid-row color resets would break the highlight.
   function highlightRow(row: string): string {
     return `\x1b[7m${row.replace(/\x1b\[0m/g, "\x1b[0m\x1b[7m")}\x1b[0m`;
   }
@@ -505,6 +528,10 @@ function runWatch(
     drawFooter();
   }
 
+  // Toggle expand/collapse for the PR under the cursor.  If the same PR is
+  // already expanded, collapse it and move selection back to the PR header row.
+  // The async comment-loading uses expandedPRNumber as a guard: if the user
+  // navigates away before loading finishes, the stale result is discarded.
   function handleToggleExpand(): void {
     if (virtualRows.length === 0) return;
     const vr = virtualRows[selectedIndex];
@@ -1356,6 +1383,9 @@ function runWatch(
     ensureVisible();
   }
 
+  // Refresh fetches new PR data asynchronously.  The generation counter
+  // ensures that if a newer refresh is triggered before the current one
+  // completes, the stale result is silently discarded.
   function refresh(): void {
     ciGeneration++;
     const gen = ciGeneration;
@@ -1408,6 +1438,9 @@ function runWatch(
     })();
   }
 
+  // Move the selection cursor by `delta` rows, redrawing only the affected
+  // rows when scrolling is not needed.  When the scroll offset changes, we
+  // redraw all visible rows since every line shifts.
   function moveSelection(delta: number): void {
     if (virtualRows.length === 0) return;
     const prev = selectedIndex;

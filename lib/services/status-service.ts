@@ -53,7 +53,12 @@ interface SerializedCacheEntry extends CacheEntry {
 }
 
 const statusCache = new Map<string, CacheEntry>();
+// Deduplication map: prevents multiple concurrent fetches for the same
+// query options.  If a refresh is already in flight, callers receive the
+// same promise rather than starting a duplicate network request.
 const inflightRequests = new Map<string, Promise<StatusRow[]>>();
+// Store disk cache in the system temp directory so it survives process
+// restarts but is automatically cleaned up on reboot.
 const STATUS_CACHE_DIR = join(tmpdir(), "copse", "status-cache");
 let diskCacheDirPromise: Promise<string | null> | null = null;
 
@@ -68,6 +73,9 @@ export function invalidateStatusCache(): void {
   void clearDiskStatusCache();
 }
 
+// Sort order: youngest first (by age in days), then PRs before branches,
+// then by most-recently-updated, then alphabetically by branch name.
+// This surfaces the most actionable items at the top of the dashboard.
 function sortRows(rows: StatusRow[]): StatusRow[] {
   return rows.sort((a, b) => {
     if (a.ageDays !== b.ageDays) return a.ageDays - b.ageDays;
@@ -126,6 +134,10 @@ async function readDiskStatusCache(key: string, allowStale: boolean = false): Pr
   }
 }
 
+// Write cache to disk using an atomic rename pattern (write to temp, then
+// rename) to prevent readers from seeing a partially-written file.
+// The temp filename includes PID and timestamp to avoid collisions if
+// multiple copse processes run concurrently.
 async function writeDiskStatusCache(key: string, entry: CacheEntry): Promise<void> {
   const dir = await getDiskCacheDir();
   if (!dir) return;
@@ -156,6 +168,11 @@ async function clearDiskStatusCache(): Promise<void> {
   }
 }
 
+// Derive a single CI status from potentially many workflow runs.
+// Priority: any failure => "fail", any in-progress => "pending",
+// any success => "pass", otherwise "none".  A PR is considered
+// ready to merge only when CI passes, there are no conflicts,
+// and review is either approved or not required (null).
 export function applyCIStatus(row: StatusRow, runs: WorkflowRun[]): void {
   const failed = runs.filter((r) => r.conclusion === "failure");
   const inProgress = runs.filter(
@@ -177,6 +194,10 @@ export function applyCIStatus(row: StatusRow, runs: WorkflowRun[]): void {
     (row.reviewDecision === "APPROVED" || row.reviewDecision === null);
 }
 
+// GitHub exposes conflict status through two fields with different semantics.
+// `mergeable` is the newer, more reliable field.  We fall back to
+// `mergeStateStatus` only when `mergeable` is UNKNOWN (which happens
+// briefly after a push while GitHub recalculates mergeability).
 export function hasPRConflicts(raw: Pick<StatusBasePR, "mergeStateStatus" | "mergeable">): boolean {
   const mergeable = raw.mergeable ?? "UNKNOWN";
   if (mergeable === "CONFLICTING") return true;
@@ -202,6 +223,10 @@ export function filterStandaloneBranches(branches: string[], prs: Pick<StatusBas
   return filterStandaloneBranchesWithoutMerged(branches, prs, []);
 }
 
+// Identify agent branches that have no corresponding open PR and have not
+// been merged.  These "orphan" branches may represent abandoned work or
+// PRs that were closed without merging, and are surfaced in the dashboard
+// so the user can clean them up.
 export function filterStandaloneBranchesWithoutMerged(
   branches: string[],
   prs: Pick<StatusBasePR, "headRefName" | "baseRefName">[],
@@ -218,6 +243,11 @@ export function filterStandaloneBranchesWithoutMerged(
   );
 }
 
+// Determine which standalone branches have already been merged into the
+// default branch.  Uses two heuristics: (1) the branch has no unique
+// commits ahead of the default branch, or (2) a merge commit on the
+// default branch references this branch name (for squash-merged PRs
+// where the commit history diverges).
 function getMergedStandaloneBranches(
   repo: string,
   branches: string[],
@@ -326,6 +356,11 @@ function toBranchWithStatus(
   };
 }
 
+// Filter PRs to show only the current user's "stack" -- their own PRs plus
+// any PRs that are stacked on top of theirs (i.e., PRs whose base branch is
+// one of the user's PR branches).  This uses a BFS traversal: start with
+// the user's PRs, then iteratively discover children whose baseRefName
+// matches any already-included PR's headRefName.
 export function filterPRsByStatusScope(
   prs: StatusBasePR[],
   scope: StatusFilterScope,
@@ -352,6 +387,9 @@ export function filterPRsByStatusScope(
     childrenByBase.set(baseRefName, children);
   }
 
+  // BFS traversal: queuedBranches grows as we discover children, so the
+  // loop naturally processes newly-added branches in subsequent iterations.
+  // This handles arbitrarily deep stacks (A -> B -> C -> ...).
   for (let i = 0; i < queuedBranches.length; i++) {
     const branch = queuedBranches[i];
     const children = childrenByBase.get(branch) ?? [];
@@ -445,6 +483,9 @@ export function fetchPRsWithStatusSync(options: StatusQueryOptions): StatusRow[]
     }
   }
 
+  // Deduplicate workflow run fetches: multiple rows can share the same
+  // branch (e.g., a PR and its standalone branch entry), so we cache by
+  // repo+branch to avoid redundant API calls.
   const branchCache = new Map<string, WorkflowRun[]>();
   for (const row of result) {
     const key = `${row.repo}\0${row.headRefName}`;
@@ -515,6 +556,9 @@ async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<
   return sortRows(result);
 }
 
+// Start a background refresh and register it in inflightRequests so that
+// concurrent callers can share the same in-flight promise.  On completion,
+// the result is written to both in-memory and disk caches.
 function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<StatusRow[]> {
   const promise = fetchPRsWithStatusUncached(options).then(
     (result) => {
@@ -534,6 +578,17 @@ function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<S
   return promise;
 }
 
+/**
+ * Fetch PR status data with a stale-while-revalidate caching strategy.
+ *
+ * 1. If fresh in-memory cache exists, return immediately.
+ * 2. If a refresh is already in flight, return stale data (if available)
+ *    rather than waiting, to keep the TUI responsive.
+ * 3. If no in-memory cache, check the disk cache (survives process restarts).
+ * 4. Start a background refresh and return stale data while it completes.
+ *
+ * This ensures the TUI never blocks on a network request after the first load.
+ */
 export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<StatusRow[]> {
   const key = cacheKey(options);
   let cached = statusCache.get(key) ?? null;

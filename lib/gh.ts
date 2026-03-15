@@ -40,6 +40,9 @@ const ghReadCache = new Map<string, { expiresAt: number; value: string }>();
 
 function maybePruneGhReadCache(now: number): void {
   // Opportunistic prune: remove expired entries and cap size.
+  // We clear the entire cache when it exceeds the max rather than evicting
+  // individual entries, because a simple full-clear avoids the complexity
+  // of LRU tracking while still bounding memory in long-running TUI sessions.
   for (const [k, v] of ghReadCache) {
     if (v.expiresAt <= now) ghReadCache.delete(k);
   }
@@ -80,6 +83,15 @@ function isGraphqlMutation(query: string): boolean {
   return /\bmutation\b/i.test(query);
 }
 
+/**
+ * Determines whether a `gh` CLI invocation is safe to cache and for how long.
+ *
+ * Strategy: whitelist known read-only command shapes rather than blacklisting
+ * mutating ones, so new/unknown commands default to uncached (safe).
+ * Cache keys use null-byte-joined args to avoid collisions between args that
+ * contain spaces.  TTL is tied to WATCH_INTERVAL_MS so stale data never
+ * survives longer than a single TUI refresh cycle.
+ */
 function cacheDecisionForGhArgs(args: string[]): CacheDecision {
   if (args.length === 0) return { ok: false };
 
@@ -105,7 +117,8 @@ function cacheDecisionForGhArgs(args: string[]): CacheDecision {
 
   // These list commands are read-only and frequently repeated.
   if (sub === "pr" && args[1] === "list") {
-    // Avoid caching implicit-repo calls; require explicit --repo.
+    // Avoid caching implicit-repo calls; without --repo, gh infers the repo
+    // from the local git remote, which can vary across directories.
     if (!hasArg(args, "--repo")) return { ok: false };
     return { ok: true, key: `gh\0${args.join("\0")}`, ttlMs: WATCH_INTERVAL_MS };
   }
@@ -122,12 +135,18 @@ function isGhNotFound(e: unknown): boolean {
   return (e as { code?: string }).code === "ENOENT";
 }
 
+// Only retry on transient GitHub server errors (502 Bad Gateway, 503 Service
+// Unavailable).  Client errors (4xx) are not retried because they indicate a
+// permanent problem like bad auth or a missing resource.
 function isRetryableError(e: unknown): boolean {
   const stderr = ((e as { stderr?: string }).stderr || "").toString();
   const message = ((e as Error).message || "").toString();
   return /\b(502|503)\b/.test(stderr + message);
 }
 
+// Atomics.wait provides a true synchronous sleep without busy-waiting.
+// This is used in the synchronous gh() retry path where we cannot use
+// setTimeout because we need to block the thread between retries.
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -177,6 +196,14 @@ export function isInterrupted(): boolean { return _interrupted; }
 /** When enabled, gh() pipes stdio instead of inheriting the terminal (for TUI modes). */
 export function setPipeStdio(on: boolean): void { _pipeStdio = on; }
 
+/**
+ * Synchronous wrapper around the `gh` CLI with caching and retry.
+ *
+ * Retry strategy: exponential backoff (1s, 2s, 4s) on 502/503 errors only.
+ * SIGINT/SIGTERM from child processes propagate immediately so the TUI can
+ * shut down cleanly.  Successful read-only responses are cached to reduce
+ * GitHub API pressure during the TUI's periodic refresh cycle.
+ */
 export function gh(...args: string[]): string {
   const provider = activeProvider();
   if (provider?.gh) {
@@ -192,6 +219,8 @@ export function gh(...args: string[]): string {
       return cached.value;
     }
   }
+  // Infinite loop with explicit break on success or non-retryable error.
+  // The attempt counter gates the retry condition inside the catch block.
   for (let attempt = 0; ; attempt++) {
     try {
       const out = execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
@@ -202,8 +231,10 @@ export function gh(...args: string[]): string {
       return out;
     } catch (e: unknown) {
       if (isGhNotFound(e)) throw new GhNotFoundError();
+      // Propagate interrupt signals immediately so the TUI can clean up.
       const sig = (e as { signal?: string }).signal;
       if (sig === "SIGINT" || sig === "SIGTERM") { _interrupted = true; throw e; }
+      // Exponential backoff: 1s * 2^attempt (1s, 2s, 4s for attempts 0, 1, 2).
       if (attempt < MAX_RETRIES && isRetryableError(e)) {
         sleepSync(RETRY_BASE_MS * 2 ** attempt);
         continue;
@@ -343,6 +374,9 @@ export const AGENT_BRANCH_PATTERNS: Record<string, RegExp> = {
   copilot: /^copilot\//i,
 };
 
+// Two-mode matching: when `agent` is specified, check that specific agent's
+// patterns.  When `agent` is null, recursively test all known agents — this
+// lets callers ask "does this PR belong to any agent?" without enumerating.
 export function matchesAgent(pr: PR, agent: string | null): boolean {
   if (agent) {
     const pattern = AGENT_PATTERNS_WITH_LABELS[agent];
@@ -382,6 +416,10 @@ export function checkPRsForAgentCoAuthors(
 
   const matched = new Set<number>();
 
+  // Process PRs in chunks of GRAPHQL_CHUNK_SIZE to stay within GitHub's
+  // GraphQL query complexity limits.  Each chunk becomes a single batched
+  // query with aliased fields (pr_123, pr_456, etc.) to fetch data for
+  // multiple PRs in one round-trip.
   for (let i = 0; i < prs.length; i += GRAPHQL_CHUNK_SIZE) {
     const chunk = prs.slice(i, i + GRAPHQL_CHUNK_SIZE);
     const prFragments = chunk.map(
@@ -627,6 +665,9 @@ export async function hasNewerMergeCommitForBranchAsync(
   return commits.some((item) => mergeCommitMentionsBranch(String(item.commit?.message || ""), headBranch));
 }
 
+// Use SOH (Start of Heading, 0x01) as a field delimiter in jq expressions
+// because it will never appear in commit messages, dates, or login names,
+// unlike commas or pipes which could cause ambiguous splits.
 const COMMIT_DELIM = "\x01";
 
 export interface CommitInfo {
@@ -676,6 +717,9 @@ export function getResolvedCommentNodeIds(repo: string, prNumber: number): Set<s
   }
 }
 
+// Two-step approach: first fetch all review comments via the REST API, then
+// use GraphQL to identify resolved threads.  The REST API does not expose
+// thread resolution status, so we cross-reference node IDs to filter them out.
 export function listPRReviewComments(repo: string, prNumber: number): PRReviewComment[] {
   const provider = activeProvider();
   if (provider?.listPRReviewComments) {
@@ -736,6 +780,14 @@ export async function replyToPRCommentAsync(
   );
 }
 
+// GitHub's GraphQL mutation requires the thread ID, not the comment ID.
+// We must first fetch all threads, find the one containing our comment,
+// then resolve that thread.  This two-query dance is unavoidable because
+// the REST API comment ID cannot be directly used with the GraphQL mutation.
+// GitHub's GraphQL mutation requires the thread ID, not the comment ID.
+// We must first fetch all threads, find the one containing our comment,
+// then resolve that thread.  This two-query dance is unavoidable because
+// the REST API comment ID cannot be directly used with the GraphQL mutation.
 export function resolveReviewThread(repo: string, prNumber: number, commentNodeId: string): void {
   const [owner, name] = repo.split("/");
 
@@ -782,6 +834,9 @@ export function resolveReviewThread(repo: string, prNumber: number, commentNodeI
   );
 }
 
+// Batch-fetch unresolved comment counts for multiple PRs using chunked GraphQL
+// queries.  Each chunk uses aliased fields to query up to GRAPHQL_CHUNK_SIZE
+// PRs in a single request, avoiding N+1 API calls on the status dashboard.
 export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): Map<number, number> {
   const provider = activeProvider();
   if (provider?.getUnresolvedCommentCounts) {
