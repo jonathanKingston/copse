@@ -13,27 +13,42 @@ export const STATUS_FILTER_SCOPES = ["my-stacks", "all"] as const;
 
 export type StatusFilterScope = typeof STATUS_FILTER_SCOPES[number];
 
-export interface PRWithStatus {
+interface StatusRowBase {
+  rowType: "pr" | "branch";
   repo: string;
-  number: number;
   headRefName: string;
-  baseRefName: string;
-  labels: string[];
   title: string;
   author: { login: string };
+  updatedAt: string;
+  agent: string | null;
+  ciStatus: "pass" | "fail" | "pending" | "none";
+  ageDays: number;
+  stale: boolean;
+}
+
+export interface PRWithStatus extends StatusRowBase {
+  rowType: "pr";
+  number: number;
+  baseRefName: string;
+  labels: string[];
   isDraft: boolean;
   mergeStateStatus: string;
   mergeable: string;
   reviewDecision: string;
-  updatedAt: string;
-  agent: string | null;
   autoMerge: boolean;
-  ciStatus: "pass" | "fail" | "pending" | "none";
   conflicts: boolean;
-  ageDays: number;
-  stale: boolean;
   readyToMerge: boolean;
   commentCount: number;
+}
+
+export interface BranchWithStatus extends StatusRowBase {
+  rowType: "branch";
+}
+
+export type StatusRow = PRWithStatus | BranchWithStatus;
+
+export function isPRWithStatus(row: StatusRow): row is PRWithStatus {
+  return row.rowType === "pr";
 }
 
 export type StatusBasePR = PR & {

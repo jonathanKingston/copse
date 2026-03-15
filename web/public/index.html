@@ -26,7 +26,7 @@
         Scope
         <select id="filterScopeInput">
           <option value="my-stacks" selected>My stacks</option>
-          <option value="all">All PRs</option>
+          <option value="all">All items</option>
         </select>
       </label>
       <label>
@@ -79,7 +79,7 @@
 
     <section class="layout">
       <div class="panel">
-        <div class="table-hint" id="tableHint">Tip: click a row (or use ↑/↓ and Enter) to load comments.</div>
+        <div class="table-hint" id="tableHint">Tip: click a PR row to load comments and changed files.</div>
         <table id="statusTable">
           <colgroup>
             <col class="col-select">
@@ -95,7 +95,7 @@
           <thead>
             <tr>
               <th class="select-cell"><input id="selectAllCheckbox" type="checkbox" title="Select all"></th>
-              <th class="pr-cell">PR</th>
+              <th class="pr-cell">Item</th>
               <th class="status-cell agent-cell">Agent</th>
               <th class="status-cell review-cell">Review</th>
               <th class="status-cell conflicts-cell">Conflicts</th>

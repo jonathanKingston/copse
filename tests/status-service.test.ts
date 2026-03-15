@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyCIStatus, filterPRsByStatusScope, hasPRConflicts } from "../lib/services/status-service.js";
+import { applyCIStatus, filterPRsByStatusScope, filterStandaloneBranches, hasPRConflicts } from "../lib/services/status-service.js";
 import type { PRWithStatus, StatusBasePR } from "../lib/services/status-types.js";
 
 function makeRow(): PRWithStatus {
   return {
+    rowType: "pr",
     repo: "acme/repo",
     number: 1,
     headRefName: "cursor/feature",
@@ -109,4 +110,23 @@ test("filterPRsByStatusScope excludes ancestor PRs above mine", () => {
     filtered.map((pr) => pr.number),
     [21, 22]
   );
+});
+
+test("filterStandaloneBranches keeps only standalone agent branches", () => {
+  const filtered = filterStandaloneBranches(
+    [
+      "main",
+      "cursor/ready",
+      "cursor/has-pr",
+      "cursor/base-for-stack",
+      "feature/manual",
+      "claude/standalone",
+    ],
+    [
+      makeBasePR({ number: 30, headRefName: "cursor/has-pr", baseRefName: "main" }),
+      makeBasePR({ number: 31, headRefName: "cursor/child", baseRefName: "cursor/base-for-stack" }),
+    ]
+  );
+
+  assert.deepEqual(filtered, ["cursor/ready", "cursor/base-for-stack", "claude/standalone"]);
 });

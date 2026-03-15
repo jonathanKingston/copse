@@ -52,6 +52,51 @@ let selectedPRs = new Set();
 let expandedDetailKey = null;
 let detailStateByKey = new Map();
 
+const UI_STATE_STORAGE_KEY = "copse.web.uiState";
+
+function readStoredUIState() {
+  try {
+    const raw = window.localStorage.getItem(UI_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredUIState(partialState = {}) {
+  try {
+    const nextState = { ...readStoredUIState(), ...partialState };
+    window.localStorage.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(nextState));
+  } catch {
+    // Ignore storage failures and keep the page functional.
+  }
+}
+
+function applyStoredUIState() {
+  const state = readStoredUIState();
+  if (typeof state.repos === "string") reposInputEl.value = state.repos;
+  if (typeof state.textFilter === "string") textFilterInputEl.value = state.textFilter;
+  if (typeof state.scope === "string") filterScopeInputEl.value = state.scope;
+  if (typeof state.draftFilter === "string") draftFilterInputEl.value = state.draftFilter;
+  if (typeof state.conflictFilter === "string") conflictFilterInputEl.value = state.conflictFilter;
+  if (typeof state.reviewFilter === "string") reviewFilterInputEl.value = state.reviewFilter;
+  if (typeof state.commentFilter === "string") commentFilterInputEl.value = state.commentFilter;
+}
+
+function persistCurrentUIState() {
+  writeStoredUIState({
+    repos: reposInputEl.value,
+    textFilter: textFilterInputEl.value,
+    scope: filterScopeInputEl.value,
+    draftFilter: draftFilterInputEl.value,
+    conflictFilter: conflictFilterInputEl.value,
+    reviewFilter: reviewFilterInputEl.value,
+    commentFilter: commentFilterInputEl.value,
+  });
+}
+
 function createDetailState() {
   return {
     comments: null,
@@ -76,12 +121,24 @@ function createDetailState() {
   };
 }
 
+function isPRRow(row) {
+  return row.rowType === "pr";
+}
+
+function isBranchRow(row) {
+  return row.rowType === "branch";
+}
+
 function selectionKey(row) {
-  return `${row.repo}#${row.number}`;
+  return isPRRow(row) ? `${row.repo}#${row.number}` : `${row.repo}@${row.headRefName}`;
+}
+
+function selectableRows(rows) {
+  return rows.filter((row) => isPRRow(row));
 }
 
 function pruneSelectionToCurrentRows() {
-  const visibleKeys = new Set(currentRows.map((row) => selectionKey(row)));
+  const visibleKeys = new Set(selectableRows(currentRows).map((row) => selectionKey(row)));
   selectedPRs = new Set([...selectedPRs].filter((key) => visibleKeys.has(key)));
 }
 
@@ -114,23 +171,30 @@ function reviewDecisionLabel(value) {
 function matchesTextFilter(row, query) {
   if (!query) return true;
   const searchable = [
+    row.rowType,
     row.repo,
-    `#${row.number}`,
-    String(row.number),
     row.agent || "",
     row.ciStatus,
-    reviewDecisionLabel(row.reviewDecision),
-    normalizeReviewDecision(row.reviewDecision),
-    row.conflicts ? "conflicts" : "clean",
-    row.isDraft ? "draft" : "ready",
-    row.autoMerge ? "merge when ready" : "",
     `${row.ageDays}d`,
-    String(row.commentCount),
     row.title,
     row.author?.login || "",
     row.headRefName,
-    row.baseRefName || "",
   ];
+  if (isPRRow(row)) {
+    searchable.push(
+      `#${row.number}`,
+      String(row.number),
+      reviewDecisionLabel(row.reviewDecision),
+      normalizeReviewDecision(row.reviewDecision),
+      row.conflicts ? "conflicts" : "clean",
+      row.isDraft ? "draft" : "ready",
+      row.autoMerge ? "merge when ready" : "",
+      String(row.commentCount),
+      row.baseRefName || ""
+    );
+  } else {
+    searchable.push("branch", "create pr");
+  }
   return searchable.some((value) => String(value).toLowerCase().includes(query));
 }
 
@@ -159,10 +223,13 @@ function buildStackMeta(rows) {
       descendantCount: 0,
     };
     rowMetaByKey.set(key, meta);
-    rowByRepoBranch.set(`${row.repo}\0${row.headRefName}`, meta);
+    if (isPRRow(row)) {
+      rowByRepoBranch.set(`${row.repo}\0${row.headRefName}`, meta);
+    }
   }
 
   for (const meta of rowMetaByKey.values()) {
+    if (!isPRRow(meta.row)) continue;
     if (!meta.row.baseRefName) continue;
     const parent = rowByRepoBranch.get(`${meta.row.repo}\0${meta.row.baseRefName}`);
     if (!parent || parent.key === meta.key) continue;
@@ -175,6 +242,12 @@ function buildStackMeta(rows) {
 
 function matchesActiveFilters(row, filters) {
   if (!matchesTextFilter(row, filters.textQuery)) return false;
+  if (isBranchRow(row)) {
+    return filters.draftFilter === "any"
+      && filters.conflictFilter === "any"
+      && filters.reviewFilter === "any"
+      && (filters.commentFilter === "any" || filters.commentFilter === "0");
+  }
   if (filters.draftFilter === "draft" && !row.isDraft) return false;
   if (filters.draftFilter === "ready" && row.isDraft) return false;
   if (filters.conflictFilter === "conflict" && !row.conflicts) return false;
@@ -230,6 +303,19 @@ function updateLoadedStatus() {
 
 function formatPRCount(count) {
   return count === 1 ? "1 PR" : `${count} PRs`;
+}
+
+function formatBranchCount(count) {
+  return count === 1 ? "1 branch" : `${count} branches`;
+}
+
+function formatRepoSummary(rows) {
+  const prCount = rows.filter((row) => isPRRow(row)).length;
+  const branchCount = rows.length - prCount;
+  const parts = [];
+  if (prCount > 0) parts.push(formatPRCount(prCount));
+  if (branchCount > 0) parts.push(formatBranchCount(branchCount));
+  return parts.join(" · ") || "0 items";
 }
 
 function syncVisibleRows(updateStatus = false) {
@@ -347,6 +433,10 @@ function createDetailMetaSection(row) {
 function buildDisplayRows(rows) {
   const { rowMetaByKey } = buildStackMeta(rows);
 
+  function parentLabel(row) {
+    return isPRRow(row) ? `#${row.number}` : row.headRefName;
+  }
+
   function finalizeMeta(meta) {
     let subtreeMinIndex = meta.index;
     let descendantCount = 0;
@@ -381,7 +471,7 @@ function buildDisplayRows(rows) {
     displayRows.push({
       ...meta.row,
       stackDepth: depth,
-      stackParentNumber: meta.parent ? meta.parent.row.number : null,
+      stackParentLabel: meta.parent ? parentLabel(meta.parent.row) : "",
       stackChildCount: meta.descendantCount,
     });
     for (const child of meta.children) {
@@ -468,11 +558,11 @@ function prCell(row) {
   head.append(createCIIndicator(row.ciStatus));
   main.append(head);
 
-  if (row.stackParentNumber != null || row.stackChildCount > 0) {
+  if (row.stackParentLabel || row.stackChildCount > 0) {
     const stackMeta = document.createElement("div");
     stackMeta.className = "pr-stack-meta";
-    if (row.stackParentNumber != null) {
-      stackMeta.textContent = `into #${row.stackParentNumber}`;
+    if (row.stackParentLabel) {
+      stackMeta.textContent = `into ${row.stackParentLabel}`;
     } else if (row.stackChildCount === 1) {
       stackMeta.textContent = "1 stacked PR";
     } else if (row.stackChildCount > 1) {
@@ -502,6 +592,35 @@ function prCell(row) {
   return td;
 }
 
+function branchCell(row) {
+  const td = document.createElement("td");
+  td.className = "pr-cell";
+  td.title = row.title;
+
+  const main = document.createElement("div");
+  main.className = "pr-main";
+
+  const head = document.createElement("div");
+  head.className = "pr-head";
+
+  const kind = createBadge("branch", "branch-badge");
+  const branch = document.createElement("a");
+  branch.className = "pr-number";
+  branch.href = `https://github.com/${row.repo}/tree/${encodeURIComponent(row.headRefName)}`;
+  branch.target = "_blank";
+  branch.rel = "noreferrer";
+  branch.textContent = row.headRefName;
+  head.append(kind, branch, createCIIndicator(row.ciStatus));
+  main.append(head);
+
+  const title = document.createElement("div");
+  title.className = "pr-title clamp";
+  title.textContent = row.title || row.headRefName;
+  main.append(title);
+  td.append(main);
+  return td;
+}
+
 function createRepoSectionRow(repo, rows, totalCount = rows.length) {
   const tr = document.createElement("tr");
   tr.className = "repo-group-row";
@@ -525,10 +644,10 @@ function createRepoSectionRow(repo, rows, totalCount = rows.length) {
   const meta = document.createElement("span");
   meta.className = "repo-group-meta";
   const selectedInRepo = rows.filter((row) => selectedPRs.has(selectionKey(row))).length;
-  const visibleLabel = formatPRCount(rows.length);
-  const totalLabel = formatPRCount(totalCount);
-  const prLabel = rows.length === totalCount ? totalLabel : `${visibleLabel} of ${totalLabel}`;
-  meta.textContent = selectedInRepo > 0 ? `${prLabel} · ${selectedInRepo} selected` : prLabel;
+  const visibleLabel = formatRepoSummary(rows);
+  const totalLabel = totalCount === rows.length ? visibleLabel : formatRepoSummary(allRows.filter((row) => row.repo === repo));
+  const rowLabel = rows.length === totalCount ? totalLabel : `${visibleLabel} of ${totalLabel}`;
+  meta.textContent = selectedInRepo > 0 ? `${rowLabel} · ${selectedInRepo} selected` : rowLabel;
 
   button.append(marker, name, meta);
   button.addEventListener("click", () => {
@@ -628,6 +747,39 @@ function createPRRow(row) {
     if (interactive) return;
     void toggleDetail(row);
   });
+  return tr;
+}
+
+function createBranchRow(row) {
+  const tr = document.createElement("tr");
+  const checkTd = document.createElement("td");
+  checkTd.className = "select-cell";
+  tr.append(
+    checkTd,
+    branchCell(row),
+    rowCell(row.agent || "?"),
+    rowCell("-", "review-cell"),
+    rowCell("-"),
+    rowCell("-"),
+    rowCell(`${row.ageDays}d`),
+    rowCell("-")
+  );
+
+  const actionTd = document.createElement("td");
+  actionTd.className = "actions-cell";
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  actions.append(makeActionButton("Create PR", async () => {
+    try {
+      const result = await createBranchPullRequest(row);
+      await fetchStatus({ silentStatus: true });
+      setStatus(result.message || `Created PR for ${row.headRefName}`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }));
+  actionTd.append(actions);
+  tr.append(actionTd);
   return tr;
 }
 
@@ -858,6 +1010,16 @@ async function performAction(row, action, payload = {}) {
   return await api(path, {
     method: "POST",
     body: JSON.stringify({ headRefName: row.headRefName, ...payload }),
+  });
+}
+
+async function createBranchPullRequest(row) {
+  return await api("/api/branches/create-pr", {
+    method: "POST",
+    body: JSON.stringify({
+      repo: row.repo,
+      headRefName: row.headRefName,
+    }),
   });
 }
 
@@ -1545,6 +1707,7 @@ function createDetailRow(row) {
 
 function updateSelectionUI() {
   const count = selectedPRs.size;
+  const visibleSelectable = selectableRows(currentRows);
   chainMergeControlsEl.style.display = count > 0 ? "" : "none";
   selectedCountEl.textContent = `${count} selected`;
   markReadyBtnEl.disabled = count < 1;
@@ -1553,8 +1716,9 @@ function updateSelectionUI() {
   bulkRerunBtnEl.disabled = count < 1;
   bulkUpdateBtnEl.disabled = count < 1;
   chainMergeBtnEl.disabled = count < 2;
-  selectAllCheckboxEl.checked = currentRows.length > 0 && currentRows.every(r => selectedPRs.has(selectionKey(r)));
-  selectAllCheckboxEl.indeterminate = count > 0 && count < currentRows.length;
+  selectAllCheckboxEl.disabled = visibleSelectable.length === 0;
+  selectAllCheckboxEl.checked = visibleSelectable.length > 0 && visibleSelectable.every((row) => selectedPRs.has(selectionKey(row)));
+  selectAllCheckboxEl.indeterminate = count > 0 && count < visibleSelectable.length;
 }
 
 function togglePRSelection(row) {
@@ -1587,7 +1751,7 @@ async function refreshAfterBulk(message) {
 
 selectAllCheckboxEl.addEventListener("change", () => {
   if (selectAllCheckboxEl.checked) {
-    for (const row of currentRows) selectedPRs.add(selectionKey(row));
+    for (const row of selectableRows(currentRows)) selectedPRs.add(selectionKey(row));
   } else {
     selectedPRs.clear();
   }
@@ -1783,8 +1947,8 @@ function renderRows() {
     statusRowsEl.append(createRepoSectionRow(repo, repoRows, totalRowsByRepo.get(repo) ?? repoRows.length));
     if (collapsedRepos.has(repo)) continue;
     for (const row of repoRows) {
-      statusRowsEl.append(createPRRow(row));
-      if (expandedDetailKey === selectionKey(row)) {
+      statusRowsEl.append(isPRRow(row) ? createPRRow(row) : createBranchRow(row));
+      if (isPRRow(row) && expandedDetailKey === selectionKey(row)) {
         statusRowsEl.append(createDetailRow(row));
       }
     }
@@ -1807,6 +1971,7 @@ async function fetchStatus(options = {}) {
   if (typeof data.scope === "string") {
     filterScopeInputEl.value = data.scope;
   }
+  persistCurrentUIState();
   allRows = data.rows;
   pollIntervalMs = data.pollIntervalMs;
   cursorApiConfigured = Boolean(data.cursorApiConfigured);
@@ -1845,7 +2010,12 @@ refreshBtnEl.addEventListener("click", async () => {
   }
 });
 
+reposInputEl.addEventListener("input", () => {
+  persistCurrentUIState();
+});
+
 filterScopeInputEl.addEventListener("change", async () => {
+  persistCurrentUIState();
   try {
     await fetchStatus();
   } catch (error) {
@@ -1854,22 +2024,27 @@ filterScopeInputEl.addEventListener("change", async () => {
 });
 
 textFilterInputEl.addEventListener("input", () => {
+  persistCurrentUIState();
   syncVisibleRows(true);
 });
 
 draftFilterInputEl.addEventListener("change", () => {
+  persistCurrentUIState();
   syncVisibleRows(true);
 });
 
 conflictFilterInputEl.addEventListener("change", () => {
+  persistCurrentUIState();
   syncVisibleRows(true);
 });
 
 reviewFilterInputEl.addEventListener("change", () => {
+  persistCurrentUIState();
   syncVisibleRows(true);
 });
 
 commentFilterInputEl.addEventListener("change", () => {
+  persistCurrentUIState();
   syncVisibleRows(true);
 });
 
@@ -1895,6 +2070,7 @@ issueFormEl.addEventListener("submit", async (event) => {
 });
 
 // Load templates and status in parallel on startup
+applyStoredUIState();
 Promise.all([
   fetchTemplates(),
   fetchStatus(),

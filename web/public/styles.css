@@ -321,6 +321,12 @@ td.pr-cell {
   line-height: 1.2;
 }
 
+.branch-badge {
+  background: rgba(30, 42, 34, 0.06);
+  border-color: rgba(30, 42, 34, 0.16);
+  color: var(--text-muted);
+}
+
 .clamp {
   overflow: hidden;
   text-overflow: ellipsis;

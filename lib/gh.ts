@@ -464,6 +464,20 @@ export function listBranches(repo: string): string[] {
   return out.trim() ? out.trim().split("\n") : [];
 }
 
+export async function listBranchesAsync(repo: string): Promise<string[]> {
+  const out = await ghQuietAsync("api", `repos/${repo}/branches`, "--paginate", "-q", ".[].name");
+  return out.trim() ? out.trim().split("\n") : [];
+}
+
+export async function getDefaultBranchAsync(repo: string): Promise<string> {
+  const out = await ghQuietAsync("api", `repos/${repo}`, "-q", ".default_branch");
+  const branch = out.trim();
+  if (!branch) {
+    throw new Error(`Could not determine default branch for ${repo}`);
+  }
+  return branch;
+}
+
 const COMMIT_DELIM = "\x01";
 
 export interface CommitInfo {
@@ -817,4 +831,29 @@ export function getCommitInfo(repo: string, branchRef: string, includeMessage: b
       authorLogin: (authorLogin || "").trim(),
     };
   }
+}
+
+export async function getCommitInfoAsync(repo: string, branchRef: string, includeMessage: boolean = false): Promise<CommitInfo> {
+  const ref = encodeURIComponent(branchRef);
+  const query = includeMessage
+    ? `.commit.message + "${COMMIT_DELIM}" + .commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`
+    : `.commit.author.date + "${COMMIT_DELIM}" + (.author.login // "")`;
+
+  const out = await ghQuietAsync("api", `repos/${repo}/commits/${ref}`, "-q", query);
+  const parts = out.trim().split(COMMIT_DELIM);
+
+  if (includeMessage) {
+    const [message, dateStr, authorLogin] = parts;
+    return {
+      message: (message || "").trim(),
+      date: dateStr ? new Date(dateStr.trim()) : null,
+      authorLogin: (authorLogin || "").trim(),
+    };
+  }
+
+  const [dateStr, authorLogin] = parts;
+  return {
+    date: dateStr ? new Date(dateStr.trim()) : null,
+    authorLogin: (authorLogin || "").trim(),
+  };
 }

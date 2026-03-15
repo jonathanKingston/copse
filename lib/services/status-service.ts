@@ -1,8 +1,13 @@
 import {
+  AGENT_BRANCH_PATTERNS,
   getAgentForPR,
   getCurrentUser,
+  getCommitInfo,
+  getCommitInfoAsync,
   getUnresolvedCommentCounts,
   getUnresolvedCommentCountsAsync,
+  listBranches,
+  listBranchesAsync,
   listOpenPRs,
   listOpenPRsAsync,
   listWorkflowRuns,
@@ -18,9 +23,12 @@ import {
   STALE_DAYS,
   WATCH_INTERVAL_MS,
   STATUS_FIELDS,
+  type BranchWithStatus,
   type PRWithStatus,
+  type StatusRow,
   type StatusBasePR,
   type StatusFilterScope,
+  isPRWithStatus,
 } from "./status-types.js";
 
 export interface StatusQueryOptions {
@@ -29,7 +37,7 @@ export interface StatusQueryOptions {
 }
 
 interface CacheEntry {
-  result: PRWithStatus[];
+  result: StatusRow[];
   expiresAt: number;
 }
 
@@ -38,7 +46,7 @@ interface SerializedCacheEntry extends CacheEntry {
 }
 
 const statusCache = new Map<string, CacheEntry>();
-const inflightRequests = new Map<string, Promise<PRWithStatus[]>>();
+const inflightRequests = new Map<string, Promise<StatusRow[]>>();
 const STATUS_CACHE_DIR = join(tmpdir(), "copse", "status-cache");
 let diskCacheDirPromise: Promise<string | null> | null = null;
 
@@ -52,8 +60,13 @@ export function invalidateStatusCache(): void {
   void clearDiskStatusCache();
 }
 
-function sortPRs(prs: PRWithStatus[]): PRWithStatus[] {
-  return prs.sort((a, b) => a.ageDays - b.ageDays);
+function sortRows(rows: StatusRow[]): StatusRow[] {
+  return rows.sort((a, b) => {
+    if (a.ageDays !== b.ageDays) return a.ageDays - b.ageDays;
+    if (a.rowType !== b.rowType) return a.rowType === "pr" ? -1 : 1;
+    if (a.updatedAt !== b.updatedAt) return b.updatedAt.localeCompare(a.updatedAt);
+    return a.headRefName.localeCompare(b.headRefName);
+  });
 }
 
 function cacheFileName(key: string): string {
@@ -135,21 +148,25 @@ async function clearDiskStatusCache(): Promise<void> {
   }
 }
 
-export function applyCIStatus(pr: PRWithStatus, runs: WorkflowRun[]): void {
+export function applyCIStatus(row: StatusRow, runs: WorkflowRun[]): void {
   const failed = runs.filter((r) => r.conclusion === "failure");
   const inProgress = runs.filter(
     (r) => r.status === "in_progress" || r.status === "queued" || r.status === "requested"
   );
 
-  if (failed.length > 0) pr.ciStatus = "fail";
-  else if (inProgress.length > 0) pr.ciStatus = "pending";
-  else if (runs.some((r) => r.conclusion === "success")) pr.ciStatus = "pass";
-  else pr.ciStatus = "none";
+  if (failed.length > 0) row.ciStatus = "fail";
+  else if (inProgress.length > 0) row.ciStatus = "pending";
+  else if (runs.some((r) => r.conclusion === "success")) row.ciStatus = "pass";
+  else row.ciStatus = "none";
 
-  pr.readyToMerge =
-    pr.ciStatus === "pass" &&
-    !pr.conflicts &&
-    (pr.reviewDecision === "APPROVED" || pr.reviewDecision === null);
+  if (!isPRWithStatus(row)) {
+    return;
+  }
+
+  row.readyToMerge =
+    row.ciStatus === "pass" &&
+    !row.conflicts &&
+    (row.reviewDecision === "APPROVED" || row.reviewDecision === null);
 }
 
 export function hasPRConflicts(raw: Pick<StatusBasePR, "mergeStateStatus" | "mergeable">): boolean {
@@ -157,6 +174,29 @@ export function hasPRConflicts(raw: Pick<StatusBasePR, "mergeStateStatus" | "mer
   if (mergeable === "CONFLICTING") return true;
   if (mergeable === "MERGEABLE") return false;
   return (raw.mergeStateStatus ?? "") === "HAS_CONFLICTS";
+}
+
+function getAgentForBranch(headRefName: string): string | null {
+  for (const [agent, pattern] of Object.entries(AGENT_BRANCH_PATTERNS)) {
+    if (pattern.test(headRefName)) {
+      return agent;
+    }
+  }
+  return null;
+}
+
+function commitTitle(message: string | undefined, fallback: string): string {
+  const title = String(message || "").split("\n")[0]?.trim() || "";
+  return title || fallback;
+}
+
+export function filterStandaloneBranches(branches: string[], prs: Pick<StatusBasePR, "headRefName" | "baseRefName">[]): string[] {
+  const prHeadBranches = new Set<string>();
+  for (const pr of prs) {
+    prHeadBranches.add(pr.headRefName);
+  }
+
+  return branches.filter((branch) => getAgentForBranch(branch) && !prHeadBranches.has(branch));
 }
 
 function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithStatus {
@@ -170,6 +210,7 @@ function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithSta
     : 0;
 
   return {
+    rowType: "pr",
     repo,
     number: raw.number,
     headRefName: raw.headRefName,
@@ -190,6 +231,31 @@ function toPRWithStatus(repo: string, raw: StatusBasePR, now: number): PRWithSta
     stale: ageDays >= STALE_DAYS,
     readyToMerge: false,
     commentCount: 0,
+  };
+}
+
+function toBranchWithStatus(
+  repo: string,
+  headRefName: string,
+  now: number,
+  commitInfo: { message?: string; date: Date | null; authorLogin: string }
+): BranchWithStatus {
+  const updatedAt = commitInfo.date ? commitInfo.date.toISOString() : "";
+  const ageDays = commitInfo.date
+    ? Math.floor((now - commitInfo.date.getTime()) / (24 * 60 * 60 * 1000))
+    : 0;
+
+  return {
+    rowType: "branch",
+    repo,
+    headRefName,
+    title: commitTitle(commitInfo.message, headRefName),
+    author: { login: commitInfo.authorLogin || "unknown" },
+    updatedAt,
+    agent: getAgentForBranch(headRefName),
+    ciStatus: "none",
+    ageDays,
+    stale: ageDays >= STALE_DAYS,
   };
 }
 
@@ -232,8 +298,46 @@ export function filterPRsByStatusScope(
   return prs.filter((pr) => includedNumbers.has(pr.number));
 }
 
-export function fetchPRsWithStatusSync(options: StatusQueryOptions): PRWithStatus[] {
-  const result: PRWithStatus[] = [];
+function buildStandaloneBranchRowsSync(
+  repo: string,
+  prs: StatusBasePR[],
+  now: number
+): BranchWithStatus[] {
+  const candidateBranches = filterStandaloneBranches(listBranches(repo), prs);
+  const rows: BranchWithStatus[] = [];
+
+  for (const branch of candidateBranches) {
+    try {
+      const info = getCommitInfo(repo, branch, true);
+      rows.push(toBranchWithStatus(repo, branch, now, info));
+    } catch {
+      // Keep the dashboard responsive when individual branch metadata cannot be loaded.
+    }
+  }
+
+  return rows;
+}
+
+async function buildStandaloneBranchRows(
+  repo: string,
+  prs: StatusBasePR[],
+  now: number
+): Promise<BranchWithStatus[]> {
+  const candidateBranches = filterStandaloneBranches(await listBranchesAsync(repo), prs);
+  const rows = await Promise.all(candidateBranches.map(async (branch) => {
+    try {
+      const info = await getCommitInfoAsync(repo, branch, true);
+      return toBranchWithStatus(repo, branch, now, info);
+    } catch {
+      return null;
+    }
+  }));
+
+  return rows.filter((row): row is BranchWithStatus => row !== null);
+}
+
+export function fetchPRsWithStatusSync(options: StatusQueryOptions): StatusRow[] {
+  const result: StatusRow[] = [];
   const now = Date.now();
   const currentUser = options.scope === "my-stacks" ? getCurrentUser() : "";
 
@@ -244,16 +348,18 @@ export function fetchPRsWithStatusSync(options: StatusQueryOptions): PRWithStatu
     for (const pr of matching) {
       result.push(toPRWithStatus(repo, pr, now));
     }
+    result.push(...buildStandaloneBranchRowsSync(repo, rawPRs, now));
   }
 
-  const byRepo = new Map<string, PRWithStatus[]>();
-  for (const pr of result) {
-    const list = byRepo.get(pr.repo) ?? [];
-    list.push(pr);
-    byRepo.set(pr.repo, list);
+  const byRepo = new Map<string, StatusRow[]>();
+  for (const row of result) {
+    const list = byRepo.get(row.repo) ?? [];
+    list.push(row);
+    byRepo.set(row.repo, list);
   }
 
-  for (const [repo, repoPrs] of byRepo) {
+  for (const [repo, repoRows] of byRepo) {
+    const repoPrs = repoRows.filter(isPRWithStatus);
     try {
       const counts = getUnresolvedCommentCounts(repo, repoPrs.map(p => p.number));
       for (const pr of repoPrs) {
@@ -265,25 +371,25 @@ export function fetchPRsWithStatusSync(options: StatusQueryOptions): PRWithStatu
   }
 
   const branchCache = new Map<string, WorkflowRun[]>();
-  for (const pr of result) {
-    const key = `${pr.repo}\0${pr.headRefName}`;
+  for (const row of result) {
+    const key = `${row.repo}\0${row.headRefName}`;
     let runs = branchCache.get(key);
     if (runs === undefined) {
       try {
-        runs = listWorkflowRuns(pr.repo, pr.headRefName);
+        runs = listWorkflowRuns(row.repo, row.headRefName);
       } catch {
         runs = [];
       }
       branchCache.set(key, runs);
     }
-    applyCIStatus(pr, runs);
+    applyCIStatus(row, runs);
   }
 
-  return sortPRs(result);
+  return sortRows(result);
 }
 
-async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<PRWithStatus[]> {
-  const result: PRWithStatus[] = [];
+async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<StatusRow[]> {
+  const result: StatusRow[] = [];
   const now = Date.now();
   const currentUser = options.scope === "my-stacks" ? getCurrentUser() : "";
 
@@ -294,16 +400,18 @@ async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<
     for (const pr of matching) {
       result.push(toPRWithStatus(repo, pr, now));
     }
+    result.push(...await buildStandaloneBranchRows(repo, rawPRs, now));
   }
 
-  const byRepo = new Map<string, PRWithStatus[]>();
-  for (const pr of result) {
-    const list = byRepo.get(pr.repo) ?? [];
-    list.push(pr);
-    byRepo.set(pr.repo, list);
+  const byRepo = new Map<string, StatusRow[]>();
+  for (const row of result) {
+    const list = byRepo.get(row.repo) ?? [];
+    list.push(row);
+    byRepo.set(row.repo, list);
   }
 
-  for (const [repo, repoPrs] of byRepo) {
+  for (const [repo, repoRows] of byRepo) {
+    const repoPrs = repoRows.filter(isPRWithStatus);
     try {
       const counts = await getUnresolvedCommentCountsAsync(repo, repoPrs.map(p => p.number));
       for (const pr of repoPrs) {
@@ -315,24 +423,24 @@ async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<
   }
 
   const branchCache = new Map<string, WorkflowRun[]>();
-  for (const pr of result) {
-    const key = `${pr.repo}\0${pr.headRefName}`;
+  for (const row of result) {
+    const key = `${row.repo}\0${row.headRefName}`;
     let runs = branchCache.get(key);
     if (runs === undefined) {
       try {
-        runs = await listWorkflowRunsAsync(pr.repo, pr.headRefName);
+        runs = await listWorkflowRunsAsync(row.repo, row.headRefName);
       } catch {
         runs = [];
       }
       branchCache.set(key, runs);
     }
-    applyCIStatus(pr, runs);
+    applyCIStatus(row, runs);
   }
 
-  return sortPRs(result);
+  return sortRows(result);
 }
 
-function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<PRWithStatus[]> {
+function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<StatusRow[]> {
   const promise = fetchPRsWithStatusUncached(options).then(
     (result) => {
       const entry = { result, expiresAt: Date.now() + WATCH_INTERVAL_MS };
@@ -351,7 +459,7 @@ function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<P
   return promise;
 }
 
-export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<PRWithStatus[]> {
+export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<StatusRow[]> {
   const key = cacheKey(options);
   let cached = statusCache.get(key) ?? null;
 

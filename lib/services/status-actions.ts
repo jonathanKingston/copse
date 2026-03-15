@@ -1,4 +1,12 @@
-import { ghQuietAsync, addPRCommentAsync, replyToPRCommentAsync, validateAgent, validateRepo } from "../gh.js";
+import {
+  ghQuietAsync,
+  addPRCommentAsync,
+  getCommitInfoAsync,
+  getDefaultBranchAsync,
+  replyToPRCommentAsync,
+  validateAgent,
+  validateRepo,
+} from "../gh.js";
 import type { WorkflowRun } from "../types.js";
 import { sendReplyViaCursorApi } from "../cursor-replies.js";
 import { invalidateStatusCache } from "./status-service.js";
@@ -21,18 +29,75 @@ function includesAny(text: string, values: string[]): boolean {
 interface StatusActionDeps {
   ghQuietAsync: typeof ghQuietAsync;
   addPRCommentAsync: typeof addPRCommentAsync;
+  getCommitInfoAsync: typeof getCommitInfoAsync;
+  getDefaultBranchAsync: typeof getDefaultBranchAsync;
   invalidateStatusCache: typeof invalidateStatusCache;
 }
 
 const DEFAULT_DEPS: StatusActionDeps = {
   ghQuietAsync,
   addPRCommentAsync,
+  getCommitInfoAsync,
+  getDefaultBranchAsync,
   invalidateStatusCache,
 };
 const autoMergeStrategyCache = new Map<string, string>();
 
+function parseCommitMessage(message: string): { title: string; body: string } {
+  const lines = String(message || "").split("\n");
+  return {
+    title: (lines[0] || "").trim(),
+    body: lines.slice(1).join("\n").trim(),
+  };
+}
+
 export interface BulkResult {
   total: number;
+}
+
+export interface CreatePullRequestForBranchResult {
+  title: string;
+  body: string;
+  baseBranch: string;
+  url: string;
+}
+
+export async function createPullRequestForBranch(
+  repo: string,
+  headRefName: string,
+  deps: StatusActionDeps = DEFAULT_DEPS
+): Promise<CreatePullRequestForBranchResult> {
+  validateRepo(repo);
+  if (!headRefName.trim()) {
+    throw new Error("headRefName cannot be empty");
+  }
+
+  const [{ message }, baseBranch] = await Promise.all([
+    deps.getCommitInfoAsync(repo, headRefName, true),
+    deps.getDefaultBranchAsync(repo),
+  ]);
+  const parsed = parseCommitMessage(message || "");
+  const title = parsed.title || headRefName;
+  const body = parsed.body;
+  const args = [
+    "pr", "create",
+    "--repo", repo,
+    "--base", baseBranch,
+    "--head", headRefName,
+    "--title", title,
+  ];
+  if (body) {
+    args.push("--body", body);
+  }
+
+  const out = await deps.ghQuietAsync(...args);
+  const url = out.trim().split("\n").find((line) => /^https:\/\/github\.com\/.+\/pull\/\d+\/?$/.test(line.trim()))?.trim() || out.trim();
+  if (!url) {
+    throw new Error(`Failed to parse created PR URL for ${headRefName}`);
+  }
+
+  deps.invalidateStatusCache();
+  return { title, body, baseBranch, url };
 }
 
 export interface MergeBaseResult {
