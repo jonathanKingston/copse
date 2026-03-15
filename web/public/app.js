@@ -45,6 +45,7 @@ let currentRows = [];
 let pollTimer = null;
 let pollIntervalMs = 30000;
 let cursorApiConfigured = false;
+let commentTemplates = [];
 let collapsedRepos = new Set();
 /** @type {Set<string>} PRs currently selected for bulk actions */
 let selectedPRs = new Set();
@@ -68,6 +69,9 @@ function createDetailState() {
     artifactsError: "",
     newCommentDraft: "",
     replyDrafts: {},
+    replyDestination: "",
+    selectedCommentIds: new Set(),
+    selectedBatchTemplate: "",
     openPatches: new Set(),
   };
 }
@@ -79,6 +83,19 @@ function selectionKey(row) {
 function pruneSelectionToCurrentRows() {
   const visibleKeys = new Set(currentRows.map((row) => selectionKey(row)));
   selectedPRs = new Set([...selectedPRs].filter((key) => visibleKeys.has(key)));
+}
+
+function defaultReplyDestination() {
+  return cursorApiConfigured ? "cursor" : "github";
+}
+
+function normalizeReplyDestination(value) {
+  if (value === "cursor" && cursorApiConfigured) return "cursor";
+  return "github";
+}
+
+function replyDestinationLabel(value) {
+  return normalizeReplyDestination(value) === "cursor" ? "Cursor agent" : "GitHub thread";
 }
 
 function setStatus(message) {
@@ -993,6 +1010,7 @@ function createInlineMessage(text, className = "detail-empty") {
 function createCommentsPanel(row, state) {
   const panel = document.createElement("div");
   panel.className = "detail-tab-panel";
+  state.replyDestination = normalizeReplyDestination(state.replyDestination || defaultReplyDestination());
 
   if (state.comments === null) {
     panel.append(createInlineMessage("Loading comments...", "detail-loading"));
@@ -1026,7 +1044,46 @@ function createCommentsPanel(row, state) {
   addCommentContainer.append(addCommentTitle, addCommentText, addCommentActions);
   panel.append(addCommentContainer);
 
+  const replyControls = document.createElement("div");
+  replyControls.className = "reply-destination-controls";
+  const replyControlsLabel = document.createElement("label");
+  replyControlsLabel.className = "reply-destination-label";
+  replyControlsLabel.textContent = "Comment replies";
+  const replyDestinationSelect = document.createElement("select");
+  replyDestinationSelect.className = "batch-template-select";
+  if (cursorApiConfigured) {
+    const cursorOption = document.createElement("option");
+    cursorOption.value = "cursor";
+    cursorOption.textContent = "Cursor agent (default)";
+    replyDestinationSelect.append(cursorOption);
+  }
+  const githubOption = document.createElement("option");
+  githubOption.value = "github";
+  githubOption.textContent = "GitHub thread";
+  replyDestinationSelect.append(githubOption);
+  replyDestinationSelect.value = state.replyDestination;
+  replyDestinationSelect.addEventListener("change", () => {
+    state.replyDestination = normalizeReplyDestination(replyDestinationSelect.value);
+    renderRows();
+  });
+  replyControlsLabel.append(replyDestinationSelect);
+  replyControls.append(replyControlsLabel);
+
+  const replyControlsHelp = document.createElement("p");
+  replyControlsHelp.className = "reply-destination-help";
+  replyControlsHelp.textContent = state.replyDestination === "cursor"
+    ? "Replies send a Cursor follow-up for this PR. Batch replies include the selected comment context in one Cursor message."
+    : "Replies post directly to the GitHub review threads for the selected comments.";
+  replyControls.append(replyControlsHelp);
+  panel.append(replyControls);
+
   const comments = state.comments ?? [];
+  const availableCommentIds = new Set(comments.map((comment) => Number(comment.id)));
+  state.selectedCommentIds = new Set(
+    [...state.selectedCommentIds].filter((id) => availableCommentIds.has(id))
+  );
+  const selectedCount = state.selectedCommentIds.size;
+
   if (comments.length === 0) {
     panel.append(createInlineMessage(state.commentsLoading ? "Refreshing comments..." : "No open review comments yet."));
     return panel;
@@ -1036,12 +1093,123 @@ function createCommentsPanel(row, state) {
     panel.append(createInlineMessage("Refreshing comments...", "detail-loading"));
   }
 
+  const batchBar = document.createElement("div");
+  batchBar.className = "batch-reply-bar";
+  batchBar.style.display = "flex";
+
+  const selectAllLabel = document.createElement("label");
+  selectAllLabel.className = "batch-select-all";
+  const selectAllCb = document.createElement("input");
+  selectAllCb.type = "checkbox";
+  selectAllCb.checked = comments.length > 0 && selectedCount === comments.length;
+  selectAllCb.indeterminate = selectedCount > 0 && selectedCount < comments.length;
+  selectAllCb.addEventListener("change", () => {
+    if (selectAllCb.checked) {
+      state.selectedCommentIds = new Set(comments.map((comment) => Number(comment.id)));
+    } else {
+      state.selectedCommentIds = new Set();
+    }
+    renderRows();
+  });
+  selectAllLabel.append(selectAllCb, " Select all");
+
+  const countSpan = document.createElement("span");
+  countSpan.className = "batch-selected-count";
+  countSpan.textContent = `${selectedCount} comment(s) selected`;
+
+  const templateSelect = document.createElement("select");
+  templateSelect.className = "batch-template-select";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = commentTemplates.length > 0 ? "Select template..." : "No templates configured";
+  templateSelect.append(defaultOpt);
+  for (const tpl of commentTemplates) {
+    const opt = document.createElement("option");
+    opt.value = tpl.body;
+    opt.textContent = tpl.label;
+    opt.selected = tpl.body === state.selectedBatchTemplate;
+    templateSelect.append(opt);
+  }
+  templateSelect.value = state.selectedBatchTemplate || "";
+  templateSelect.addEventListener("change", () => {
+    state.selectedBatchTemplate = templateSelect.value;
+  });
+
+  const batchReplyBtn = document.createElement("button");
+  batchReplyBtn.className = "batch-reply-btn";
+  batchReplyBtn.textContent = state.replyDestination === "cursor"
+    ? "Send selected to Cursor"
+    : "Reply to selected in GitHub";
+  batchReplyBtn.disabled = selectedCount === 0 || commentTemplates.length === 0;
+  batchReplyBtn.addEventListener("click", async () => {
+    const body = state.selectedBatchTemplate || templateSelect.value;
+    if (!body) {
+      setStatus("Select a template first");
+      return;
+    }
+    if (state.selectedCommentIds.size === 0) {
+      setStatus("No comments selected");
+      return;
+    }
+    batchReplyBtn.disabled = true;
+    batchReplyBtn.textContent = "Sending...";
+    try {
+      const result = await performAction(row, "batch-reply", {
+        body,
+        commentIds: Array.from(state.selectedCommentIds),
+        delivery: state.replyDestination,
+      });
+      const deliveredCount = typeof result.total === "number"
+        ? result.total
+        : state.selectedCommentIds.size;
+      setStatus(
+        typeof result.message === "string" && result.message.trim()
+          ? result.message
+          : `Replied to ${deliveredCount} comment(s)`
+      );
+      state.selectedCommentIds = new Set();
+      await ensureCommentsLoaded(row, true);
+    } catch (error) {
+      setStatus(error.message);
+      batchReplyBtn.disabled = false;
+      batchReplyBtn.textContent = "Reply to selected";
+    }
+  });
+
+  const batchReplyNote = document.createElement("span");
+  batchReplyNote.className = "batch-reply-note";
+  batchReplyNote.textContent = state.replyDestination === "cursor"
+    ? "Sends one Cursor follow-up with selected comment context"
+    : "Posts GitHub thread replies";
+
+  batchBar.append(selectAllLabel, countSpan, templateSelect, batchReplyBtn, batchReplyNote);
+  panel.append(batchBar);
+
   for (const comment of comments) {
     const container = document.createElement("div");
     container.className = "comment";
 
+    const headRow = document.createElement("div");
+    headRow.className = "comment-header";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "comment-select";
+    checkbox.dataset.commentId = String(comment.id);
+    checkbox.checked = state.selectedCommentIds.has(Number(comment.id));
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        state.selectedCommentIds.add(Number(comment.id));
+      } else {
+        state.selectedCommentIds.delete(Number(comment.id));
+      }
+      renderRows();
+    });
+
     const head = document.createElement("p");
     head.textContent = `${comment.user.login} · ${comment.path}:${comment.line || comment.original_line || "?"}`;
+    headRow.append(checkbox, head);
+
     const body = document.createElement("div");
     body.className = "comment-body";
     if (comment.body_html) {
@@ -1061,14 +1229,24 @@ function createCommentsPanel(row, state) {
     const replyBtn = makeActionButton("Reply", async () => {
       const value = (state.replyDrafts[comment.id] || "").trim();
       if (!value) return;
-      await performAction(row, "reply", { body: value, inReplyToId: comment.id });
+      const result = await performAction(row, "reply", {
+        body: value,
+        inReplyToId: comment.id,
+        delivery: state.replyDestination,
+      });
       delete state.replyDrafts[comment.id];
+      setStatus(
+        typeof result.message === "string" && result.message.trim()
+          ? result.message
+          : `Reply sent via ${replyDestinationLabel(state.replyDestination)}`
+      );
       await ensureCommentsLoaded(row, true);
     });
+    replyBtn.textContent = state.replyDestination === "cursor" ? "Reply via Cursor" : "Reply in GitHub";
     const replyActions = document.createElement("div");
     replyActions.className = "comment-actions";
     replyActions.append(replyBtn);
-    container.append(head, body, replyText, replyActions);
+    container.append(headRow, body, replyText, replyActions);
     panel.append(container);
   }
 
@@ -1636,6 +1814,15 @@ async function fetchStatus(options = {}) {
   schedulePoll();
 }
 
+async function fetchTemplates() {
+  try {
+    const data = await api("/api/templates");
+    commentTemplates = data.templates || [];
+  } catch {
+    commentTemplates = [];
+  }
+}
+
 function schedulePoll() {
   if (pollTimer) {
     clearTimeout(pollTimer);
@@ -1707,4 +1894,8 @@ issueFormEl.addEventListener("submit", async (event) => {
   }
 });
 
-fetchStatus().catch((error) => setStatus(error.message));
+// Load templates and status in parallel on startup
+Promise.all([
+  fetchTemplates(),
+  fetchStatus(),
+]).catch((error) => setStatus(error.message));

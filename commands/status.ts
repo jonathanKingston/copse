@@ -253,7 +253,9 @@ function runWatch(
   let commentTarget:
     | { kind: "pr"; pr: PRWithStatus }
     | { kind: "comment"; pr: PRWithStatus; comment: PRReviewComment }
+    | { kind: "batch"; pr: PRWithStatus; comments: PRReviewComment[] }
     | null = null;
+  const selectedCommentIndices = new Set<number>();
 
   let searchMode = false;
   let searchBuffer = "";
@@ -410,10 +412,11 @@ function runWatch(
     }
   }
 
-  function formatCommentRow(comment: PRReviewComment): string {
+  function formatCommentRow(comment: PRReviewComment, commentIndex: number): string {
     const loc = String(comment.line ?? comment.original_line ?? "?");
     const pathLoc = `${comment.path}:${loc}`;
-    return `    ${ANSI.bold}${comment.user.login}${ANSI.reset} ${ANSI.dim}·${ANSI.reset} ${pathLoc}`;
+    const marker = selectedCommentIndices.has(commentIndex) ? `${ANSI.green}*${ANSI.reset} ` : "  ";
+    return `  ${marker}${ANSI.bold}${comment.user.login}${ANSI.reset} ${ANSI.dim}·${ANSI.reset} ${pathLoc}`;
   }
 
   function formatDiffFileRow(file: PRChangedFile): string {
@@ -448,7 +451,7 @@ function runWatch(
     if (vr.kind === "pr") {
       row = formatPRRow(currentPRs[vr.prIndex], singleRepo);
     } else if (vr.kind === "comment") {
-      row = formatCommentRow(expandedComments[vr.commentIndex]);
+      row = formatCommentRow(expandedComments[vr.commentIndex], vr.commentIndex);
     } else if (vr.kind === "comment-body") {
       row = vr.line;
     } else if (vr.kind === "diff-file") {
@@ -491,6 +494,7 @@ function runWatch(
     expandedCursorAgentId = null;
     expandedLoading = false;
     expandedMode = "comments";
+    selectedCommentIndices.clear();
     rebuildVirtualRows();
     clampSelection();
     drawAllRows();
@@ -789,13 +793,16 @@ function runWatch(
       return;
     }
     const isReply = target.kind === "comment";
+    const isBatch = target.kind === "batch";
     const targetExcerpt = isReply
       ? target.comment.body.replace(/\s+/g, " ").trim()
       : "";
-    const targetLine = isReply
-      ? `Reply target: #${target.pr.number} ${target.comment.path}:${target.comment.line ?? target.comment.original_line ?? "?"} · ${target.comment.user.login} · ${targetExcerpt}`
-      : `Comment target: #${target.pr.number} ${target.pr.title}`;
-    const inputPrefix = isReply ? "Reply: " : "Comment: ";
+    const targetLine = isBatch
+      ? `Batch reply: #${target.pr.number} — ${target.comments.length} comment(s)`
+      : isReply
+        ? `Reply target: #${target.pr.number} ${target.comment.path}:${target.comment.line ?? target.comment.original_line ?? "?"} · ${target.comment.user.login} · ${targetExcerpt}`
+        : `Comment target: #${target.pr.number} ${target.pr.title}`;
+    const inputPrefix = isBatch ? "Reply: " : isReply ? "Reply: " : "Comment: ";
     const maxInputLen = Math.max(0, termCols - inputPrefix.length - 1);
     const visibleBuffer = truncatePlain(commentBuffer, maxInputLen);
 
@@ -892,15 +899,37 @@ function runWatch(
       commentTarget = null;
       commentBuffer = "";
 
-      statusMsg = target.kind === "comment"
-        ? `${ANSI.amber}Posting reply on #${target.pr.number}…${ANSI.reset}`
-        : `${ANSI.amber}Posting comment on #${target.pr.number}…${ANSI.reset}`;
+      if (target.kind === "batch") {
+        statusMsg = `${ANSI.amber}Posting reply to ${target.comments.length} comment(s) on #${target.pr.number}…${ANSI.reset}`;
+      } else {
+        statusMsg = target.kind === "comment"
+          ? `${ANSI.amber}Posting reply on #${target.pr.number}…${ANSI.reset}`
+          : `${ANSI.amber}Posting comment on #${target.pr.number}…${ANSI.reset}`;
+      }
       process.stdout.write("\x1b[?25l");
       drawFooter();
 
       (async () => {
         try {
-          if (target.kind === "comment") {
+          if (target.kind === "batch") {
+            let succeeded = 0;
+            for (const comment of target.comments) {
+              try {
+                await postPullRequestReply({
+                  repo: target.pr.repo,
+                  prNumber: target.pr.number,
+                  inReplyToId: comment.id,
+                  body,
+                  cursorApiKey,
+                });
+                succeeded++;
+              } catch {
+                // Continue with remaining replies.
+              }
+            }
+            selectedCommentIndices.clear();
+            statusMsg = `${ANSI.green}Replied to ${succeeded}/${target.comments.length} comment(s) on #${target.pr.number}${ANSI.reset}`;
+          } else if (target.kind === "comment") {
             const result = await postPullRequestReply({
               repo: target.pr.repo,
               prNumber: target.pr.number,
@@ -918,9 +947,11 @@ function runWatch(
             statusMsg = `${ANSI.green}Comment posted on #${target.pr.number}${ANSI.reset}`;
           }
         } catch {
-          statusMsg = target.kind === "comment"
-            ? `${ANSI.red}Failed to post reply on #${target.pr.number}${ANSI.reset}`
-            : `${ANSI.red}Failed to post comment on #${target.pr.number}${ANSI.reset}`;
+          statusMsg = target.kind === "batch"
+            ? `${ANSI.red}Failed to post batch reply on #${target.pr.number}${ANSI.reset}`
+            : target.kind === "comment"
+              ? `${ANSI.red}Failed to post reply on #${target.pr.number}${ANSI.reset}`
+              : `${ANSI.red}Failed to post comment on #${target.pr.number}${ANSI.reset}`;
         }
         drawFooter();
       })();
@@ -1247,13 +1278,65 @@ function runWatch(
     process.stdout.write(title);
   }
 
+  function handleToggleCommentSelect(): void {
+    if (virtualRows.length === 0) return;
+    const vr = virtualRows[selectedIndex];
+    if (!vr) return;
+    if (vr.kind !== "comment" && vr.kind !== "comment-body") return;
+    const idx = vr.commentIndex;
+    if (selectedCommentIndices.has(idx)) {
+      selectedCommentIndices.delete(idx);
+    } else {
+      selectedCommentIndices.add(idx);
+    }
+    // Redraw this comment header row and any adjacent rows that may share the index
+    for (let i = 0; i < virtualRows.length; i++) {
+      const r = virtualRows[i];
+      if ((r.kind === "comment" || r.kind === "comment-body") && r.commentIndex === idx) {
+        drawRow(i);
+      }
+    }
+    const count = selectedCommentIndices.size;
+    statusMsg = count > 0
+      ? `${ANSI.dim}${count} comment(s) selected — [T] reply with template${ANSI.reset}`
+      : "";
+    drawFooter();
+  }
+
+  function startBatchTemplateReply(): void {
+    if (busy || expandedPRIndex === null) return;
+    if (selectedCommentIndices.size === 0) {
+      statusMsg = `${ANSI.dim}No comments selected — use Space to select${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+    if (templateLabels.length === 0) {
+      statusMsg = `${ANSI.red}No templates configured${ANSI.reset}`;
+      drawFooter();
+      return;
+    }
+    const pr = currentPRs[expandedPRIndex];
+    if (!pr) return;
+    const comments = Array.from(selectedCommentIndices)
+      .sort((a, b) => a - b)
+      .map(i => expandedComments[i])
+      .filter(Boolean);
+    if (comments.length === 0) return;
+
+    commentInputMode = true;
+    templatePickerMode = true;
+    commentTarget = { kind: "batch", pr, comments };
+    commentBuffer = pr.agent ? `@${pr.agent} ` : "";
+    drawCommentInput();
+  }
+
   function drawFooter(): void {
     const termRows = process.stdout.rows || 24;
     const footerLine = termRows - 1;
     process.stdout.write(`\x1b[${footerLine - 1};1H\x1b[2K`);
     process.stdout.write(`\x1b[${footerLine};1H\x1b[2K`);
     process.stdout.write(
-      `${ANSI.dim}↑↓ select  ⏎ expand  [d]iff  [p] artifacts  [D] download  [o]pen  [c]heckout  [C]omment/reply  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
+      `${ANSI.dim}↑↓ select  ⏎ expand  [d]iff  [p] artifacts  [D] download  [o]pen  [c]heckout  [C]omment/reply  Space mark  [T]emplate batch  [i]ssue  [r]erun  [u]pdate  [a]pprove  [m]erge  │  ` +
       `[R] all  [U] all  [q]uit${ANSI.reset}`
     );
     process.stdout.write(`\x1b[${footerLine + 1};1H\x1b[2K`);
@@ -1660,6 +1743,8 @@ function runWatch(
       if (key === "o") { handleOpenSelected(); return; }
       if (key === "c") { handleCheckout(); return; }
       if (key === "C") { startCommentInput(); return; }
+      if (key === " ") { handleToggleCommentSelect(); return; }
+      if (key === "T") { startBatchTemplateReply(); return; }
       if (key === "i") { startIssueCreate(); return; }
       if (key === "r") { handleRerunSelected(); return; }
       if (key === "u") { handleUpdateSelected(); return; }
@@ -1708,7 +1793,7 @@ Options:
   --all        Include PRs from all authors
 
 TUI keys:
-  ↑↓/jk navigate  ⏎ expand  [d]iff  [p]artifacts  [D]download  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  [i]ssue
+  ↑↓/jk navigate  ⏎ expand  [d]iff  [p]artifacts  [D]download  [/]filter  [f]mine/all  [o]pen  [c]heckout  [C]omment/reply  Space select  [T]emplate batch  [i]ssue
   [r]erun  [u]pdate main  [a]pprove  [m]erge when ready
   [R]erun all  [U]pdate all  [q]uit
 `;
