@@ -529,12 +529,32 @@ export function mergeCommitMentionsBranch(message: string, branchName: string): 
   if (!normalizedMessage.includes("merge pull request")) {
     return false;
   }
-  return normalizedMessage.includes(`/${normalizedBranch}`) || normalizedMessage.includes(` ${normalizedBranch}`);
+  // GitHub merge commit format: "Merge pull request #N from owner/branch"
+  // The owner is a single path segment (no slashes). Match the branch name
+  // exactly after "from <owner>/" to avoid substring false positives.
+  const escaped = normalizedBranch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`from [^/\\s]+\\/${escaped}(?:\\s|$)`);
+  return pattern.test(normalizedMessage);
 }
 
 function parseRepoCommitList(output: string): RepoCommitListItem[] {
-  const parsed = JSON.parse(output || "[]") as unknown;
-  return Array.isArray(parsed) ? parsed as RepoCommitListItem[] : [];
+  const trimmed = (output || "").trim();
+  if (!trimmed) return [];
+  // gh --paginate concatenates JSON arrays as "][" between pages.
+  // Wrap into a single array so JSON.parse always succeeds.
+  const normalized = "[" + trimmed.replace(/\]\s*\[/g, ",") + "]";
+  const parsed = JSON.parse(normalized) as unknown;
+  // After wrapping, the result is always nested: flatten one level.
+  if (!Array.isArray(parsed)) return [];
+  const flat: RepoCommitListItem[] = [];
+  for (const item of parsed) {
+    if (Array.isArray(item)) {
+      flat.push(...(item as RepoCommitListItem[]));
+    } else {
+      flat.push(item as RepoCommitListItem);
+    }
+  }
+  return flat;
 }
 
 export function hasNewerMergeCommitForBranch(

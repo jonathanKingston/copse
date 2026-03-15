@@ -182,3 +182,32 @@ test("mergeCommitMentionsBranch ignores non-merge commit messages that mention t
     false
   );
 });
+
+test("mergeCommitMentionsBranch is case insensitive", () => {
+  assert.equal(
+    mergeCommitMentionsBranch(
+      "Merge pull request #50 from JonathanKingston/Cursor/Web-Standalone-Branches",
+      "cursor/web-standalone-branches"
+    ),
+    true
+  );
+});
+
+test("mergeCommitMentionsBranch does not match substring branch names", () => {
+  // "fix/bar" should not match a merge of "feature/fix/bar"
+  assert.equal(
+    mergeCommitMentionsBranch(
+      "Merge pull request #60 from org/feature/fix/bar",
+      "fix/bar"
+    ),
+    false
+  );
+  // But the full branch should match
+  assert.equal(
+    mergeCommitMentionsBranch(
+      "Merge pull request #60 from org/fix/bar",
+      "fix/bar"
+    ),
+    true
+  );
+});
