@@ -1169,13 +1169,79 @@ function createInlineMessage(text, className = "detail-empty") {
   return el;
 }
 
+function createSkeletonBone(...classNames) {
+  const el = document.createElement("div");
+  el.className = ["skeleton-bone", ...classNames].join(" ");
+  return el;
+}
+
+function createSkeletonTableRow() {
+  const tr = document.createElement("tr");
+  tr.className = "skeleton-row";
+  const selectTd = document.createElement("td");
+  selectTd.className = "select-cell";
+  tr.append(selectTd);
+  const prTd = document.createElement("td");
+  prTd.className = "pr-cell";
+  prTd.append(createSkeletonBone("skeleton-pr-number"));
+  prTd.append(createSkeletonBone("skeleton-pr-title"));
+  const badges = document.createElement("div");
+  badges.className = "skeleton-pr-badges";
+  badges.append(createSkeletonBone("skeleton-badge"));
+  badges.append(createSkeletonBone("skeleton-badge"));
+  prTd.append(badges);
+  tr.append(prTd);
+  const statusWidths = ["skeleton-bone-short", "skeleton-bone-med", "skeleton-bone-short", "skeleton-bone-xs", "skeleton-bone-short", "skeleton-bone-xs"];
+  for (const w of statusWidths) {
+    const td = document.createElement("td");
+    td.className = "status-cell";
+    td.append(createSkeletonBone(w));
+    tr.append(td);
+  }
+  const actionsTd = document.createElement("td");
+  actionsTd.className = "actions-cell";
+  tr.append(actionsTd);
+  return tr;
+}
+
+function showTableSkeletons(count = 6) {
+  statusRowsEl.innerHTML = "";
+  for (let i = 0; i < count; i++) {
+    statusRowsEl.append(createSkeletonTableRow());
+  }
+}
+
+function createSkeletonComments(count = 3) {
+  const container = document.createElement("div");
+  container.className = "skeleton-detail-block";
+  for (let i = 0; i < count; i++) {
+    const comment = document.createElement("div");
+    comment.className = "skeleton-comment";
+    comment.append(createSkeletonBone("skeleton-comment-header"));
+    for (let j = 0; j < 3; j++) {
+      comment.append(createSkeletonBone("skeleton-comment-body-line"));
+    }
+    container.append(comment);
+  }
+  return container;
+}
+
+function createSkeletonDetailLines(count = 4) {
+  const container = document.createElement("div");
+  container.className = "skeleton-detail-block";
+  for (let i = 0; i < count; i++) {
+    container.append(createSkeletonBone("skeleton-detail-line"));
+  }
+  return container;
+}
+
 function createCommentsPanel(row, state) {
   const panel = document.createElement("div");
   panel.className = "detail-tab-panel";
   state.replyDestination = normalizeReplyDestination(state.replyDestination || defaultReplyDestination());
 
   if (state.comments === null) {
-    panel.append(createInlineMessage("Loading comments...", "detail-loading"));
+    panel.append(createSkeletonComments(3));
     return panel;
   }
 
@@ -1482,7 +1548,7 @@ function createArtifactsPanel(row, state) {
   panel.append(controls);
 
   if (state.agentsLoading && state.agents === null) {
-    panel.append(createInlineMessage("Loading Cursor agent runs...", "detail-loading"));
+    panel.append(createSkeletonDetailLines(3));
     return panel;
   }
 
@@ -1496,7 +1562,7 @@ function createArtifactsPanel(row, state) {
   }
 
   if (state.artifactsLoading && state.artifacts === null) {
-    panel.append(createInlineMessage("Loading artifacts...", "detail-loading"));
+    panel.append(createSkeletonDetailLines(3));
     return panel;
   }
 
@@ -1557,7 +1623,7 @@ function createDiffPanel(row, state) {
   panel.className = "detail-tab-panel";
 
   if (state.files === null) {
-    panel.append(createInlineMessage("Loading changed files...", "detail-loading"));
+    panel.append(createSkeletonDetailLines(4));
     return panel;
   }
 
@@ -2070,6 +2136,7 @@ issueFormEl.addEventListener("submit", async (event) => {
 });
 
 // Load templates and status in parallel on startup
+showTableSkeletons();
 applyStoredUIState();
 Promise.all([
   fetchTemplates(),
