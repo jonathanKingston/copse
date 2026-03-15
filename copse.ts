@@ -71,7 +71,7 @@ const COMMANDS: Record<string, CommandDef> = {
     ],
   },
   status: {
-    file: "status.js",
+    file: "status/index.js",
     description: "Unified dashboard: agent PRs across all repos (htop-style)",
     usage: "copse status [--no-watch] [--all]",
     args: [
