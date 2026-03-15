@@ -2,19 +2,20 @@ import { execFileSync, execFile } from "child_process";
 import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 import { WATCH_INTERVAL_MS } from "./services/status-types.js";
 import { getApiProvider } from "./api-provider.js";
+import { GitHubApiError, ValidationError } from "./errors.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
 export function validateRepo(repo: string): void {
   if (!REPO_PATTERN.test(repo)) {
-    throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
+    throw new ValidationError(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`, "repo");
   }
 }
 
 export function validateAgent(agent: string): string {
   const agentLower = agent.toLowerCase();
   if (!["cursor", "claude", "copilot"].includes(agentLower)) {
-    throw new Error(`agent must be "cursor", "claude", or "copilot", got "${agent}"`);
+    throw new ValidationError(`agent must be "cursor", "claude", or "copilot", got "${agent}"`, "agent");
   }
   return agentLower;
 }
@@ -523,7 +524,7 @@ export function getDefaultBranch(repo: string): string {
   const out = gh("api", `repos/${repo}`, "-q", ".default_branch");
   const branch = out.trim();
   if (!branch) {
-    throw new Error(`Could not determine default branch for ${repo}`);
+    throw new GitHubApiError(`Could not determine default branch for ${repo}`);
   }
   return branch;
 }
@@ -536,7 +537,7 @@ export async function getDefaultBranchAsync(repo: string): Promise<string> {
   const out = await ghQuietAsync("api", `repos/${repo}`, "-q", ".default_branch");
   const branch = out.trim();
   if (!branch) {
-    throw new Error(`Could not determine default branch for ${repo}`);
+    throw new GitHubApiError(`Could not determine default branch for ${repo}`);
   }
   return branch;
 }
@@ -544,7 +545,7 @@ export async function getDefaultBranchAsync(repo: string): Promise<string> {
 function parseAheadBy(value: string, repo: string, baseBranch: string, headBranch: string): number {
   const aheadBy = Number.parseInt(value.trim(), 10);
   if (!Number.isInteger(aheadBy) || aheadBy < 0) {
-    throw new Error(
+    throw new GitHubApiError(
       `Could not determine commit delta for ${repo} (${baseBranch}...${headBranch})`
     );
   }
@@ -766,7 +767,7 @@ export function resolveReviewThread(repo: string, prNumber: number, commentNodeI
   const threads = JSON.parse(out) as Array<{ id: string; comments: { nodes: Array<{ id: string }> } }>;
   const thread = threads.find(t => t.comments.nodes.some(c => c.id === commentNodeId));
   if (!thread) {
-    throw new Error("Could not find review thread for this comment");
+    throw new GitHubApiError("Could not find review thread for this comment");
   }
 
   const resolveMutation = `mutation($threadId: ID!) {

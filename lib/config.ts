@@ -10,6 +10,7 @@ import { readFileSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
 import { getApiProvider } from "./api-provider.js";
+import { ConfigError } from "./errors.js";
 
 const CONFIG_FILENAME = ".copserc";
 
@@ -50,10 +51,17 @@ function loadConfigFromPath(configPath: string): Copserc | null {
     if (hasRepos && hasCommentTemplates && hasCursorApiKey) {
       return config;
     }
-  } catch {
-    // Invalid JSON or missing
+    throw new ConfigError(
+      `Invalid config structure in ${configPath}: check repos, commentTemplates, and cursorApiKey fields`,
+      configPath,
+    );
+  } catch (e: unknown) {
+    if (e instanceof ConfigError) throw e;
+    throw new ConfigError(
+      `Invalid JSON in config file: ${configPath}` + (e instanceof Error ? `: ${e.message}` : ""),
+      configPath,
+    );
   }
-  return null;
 }
 
 export function loadConfig(cwd: string = process.cwd()): Copserc | null {

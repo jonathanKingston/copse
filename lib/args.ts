@@ -1,3 +1,5 @@
+import { ValidationError } from "./errors.js";
+
 export interface StandardFlags {
   dryRun: boolean;
   all: boolean;
@@ -28,11 +30,11 @@ export function parseStandardFlags(args: string[]): { flags: StandardFlags; filt
 export function parseHoursOption(args: string[], currentIndex: number): number {
   const value = args[currentIndex + 1];
   if (!value) {
-    throw new Error("--hours requires a value");
+    throw new ValidationError("--hours requires a value", "hours");
   }
   const hours = parseInt(value, 10);
   if (Number.isNaN(hours) || hours < 1) {
-    throw new Error("--hours must be a positive number");
+    throw new ValidationError("--hours must be a positive number", "hours");
   }
   return hours;
 }
@@ -40,7 +42,7 @@ export function parseHoursOption(args: string[], currentIndex: number): number {
 export function parseBaseOption(args: string[], currentIndex: number): string {
   const value = args[currentIndex + 1];
   if (!value) {
-    throw new Error("--base requires a value");
+    throw new ValidationError("--base requires a value", "base");
   }
   return value;
 }
@@ -48,7 +50,7 @@ export function parseBaseOption(args: string[], currentIndex: number): string {
 export function parseTemplateOption(args: string[], currentIndex: number): string {
   const value = args[currentIndex + 1];
   if (!value) {
-    throw new Error("--template requires a value");
+    throw new ValidationError("--template requires a value", "template");
   }
   return value;
 }
@@ -59,7 +61,7 @@ export function parseTemplatesOption(args: string[]): string | null {
   if (idx < 0) return null;
   const value = args[idx + 1];
   if (!value || value.startsWith("--")) {
-    throw new Error("--templates requires a value");
+    throw new ValidationError("--templates requires a value", "templates");
   }
   return value;
 }
