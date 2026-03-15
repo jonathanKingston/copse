@@ -1,3 +1,5 @@
+let csrfToken = "";
+
 const statusRowsEl = document.getElementById("statusRows");
 const statusTextEl = document.getElementById("statusText");
 const reposInputEl = document.getElementById("reposInput");
@@ -371,9 +373,23 @@ function getAgentRunUrl(agent) {
   return id ? `https://cursor.com/agents?id=${encodeURIComponent(id)}` : "";
 }
 
+async function fetchCsrfToken() {
+  try {
+    const response = await fetch("/api/csrf-token");
+    const data = await response.json();
+    csrfToken = data.csrfToken || "";
+  } catch {
+    console.error("Failed to fetch CSRF token");
+  }
+}
+
 async function api(path, options = {}) {
+  const headers = { "content-type": "application/json" };
+  if (options.method === "POST") {
+    headers["x-csrf-token"] = csrfToken;
+  }
   const response = await fetch(path, {
-    headers: { "content-type": "application/json" },
+    headers,
     ...options,
   });
   const body = await response.json().catch(() => ({}));
@@ -2069,9 +2085,11 @@ issueFormEl.addEventListener("submit", async (event) => {
   }
 });
 
-// Load templates and status in parallel on startup
+// Load CSRF token, templates, and status on startup
 applyStoredUIState();
-Promise.all([
-  fetchTemplates(),
-  fetchStatus(),
-]).catch((error) => setStatus(error.message));
+fetchCsrfToken().then(() => {
+  Promise.all([
+    fetchTemplates(),
+    fetchStatus(),
+  ]).catch((error) => setStatus(error.message));
+});

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -34,6 +35,7 @@ initializeRuntime();
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
 const PUBLIC_DIR = resolve(fileURLToPath(new URL("./public", import.meta.url)));
+const CSRF_TOKEN = randomBytes(32).toString("hex");
 
 interface WebServerOptions {
   host?: string;
@@ -209,6 +211,21 @@ async function serveStatic(url: URL, res: ServerResponse): Promise<void> {
 async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): Promise<void> {
   const method = req.method || "GET";
   const segments = parsePathSegments(url);
+
+  // Serve CSRF token to the client
+  if (method === "GET" && url.pathname === "/api/csrf-token") {
+    sendJson(res, 200, { csrfToken: CSRF_TOKEN });
+    return;
+  }
+
+  // Validate CSRF token on all POST requests
+  if (method === "POST") {
+    const csrfHeader = req.headers["x-csrf-token"];
+    if (!csrfHeader || csrfHeader !== CSRF_TOKEN) {
+      sendJson(res, 403, { error: "Invalid or missing CSRF token" });
+      return;
+    }
+  }
 
   if (method === "GET" && url.pathname === "/api/templates") {
     const config = loadConfig() ?? {};
