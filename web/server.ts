@@ -343,20 +343,33 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
     if (![0, 1, 2, 3].includes(templateChoice)) {
       throw new Error("templateChoice must be one of: 0, 1, 2, 3");
     }
+    const targetPr = body.pr ? Number(body.pr) : null;
+    if (targetPr !== null && (!Number.isInteger(targetPr) || targetPr <= 0)) {
+      throw new Error("pr must be a valid pull request number");
+    }
+    const cursorApiKey = loadConfig()?.cursorApiKey?.trim() || null;
     const result = await createIssueWithAgentComment({
       repo,
       title,
       body: issueBody,
       agent,
       templateChoice: templateChoice as 0 | 1 | 2 | 3,
+      cursorApiKey,
+      targetPr,
     });
     sendJson(res, 200, {
       ok: true,
       issueNumber: result.issueNumber,
       commentAdded: result.commentAdded,
-      message: result.commentAdded
-        ? `Created issue #${result.issueNumber} with comment`
-        : `Created issue #${result.issueNumber}`,
+      cursorAgentLaunched: result.cursorAgentLaunched,
+      targetPr: targetPr ?? undefined,
+      message: result.cursorAgentLaunched
+        ? targetPr
+          ? `Created issue #${result.issueNumber}, Cursor agent targeting PR #${targetPr}`
+          : `Created issue #${result.issueNumber}, Cursor agent launched`
+        : result.commentAdded
+          ? `Created issue #${result.issueNumber} with comment`
+          : `Created issue #${result.issueNumber}`,
     });
     return;
   }

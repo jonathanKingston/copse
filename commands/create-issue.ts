@@ -15,6 +15,7 @@
  *   --template PATH   Path to issue template (default: look in .github/issue_template.md, etc.)
  *   --no-template    Skip template, use only body
  *   --no-comment     Do not add the agent instruction comment
+ *   --pr NUMBER      Update an existing PR branch instead of creating a new one (Cursor API only)
  *   --dry-run        Show what would be created without creating
  *
  * Template lookup (first found): .github/issue_template.md,
@@ -31,7 +32,7 @@ import { tmpdir } from "os";
 import { REPO_PATTERN, validateRepo, validateAgent } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
 import { loadConfig } from "../lib/config.js";
-import { launchAgentForRepository } from "../lib/cursor-api.js";
+import { launchAgentForPrUrl, launchAgentForRepository } from "../lib/cursor-api.js";
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -198,11 +199,24 @@ async function sendInstructionViaCursorApi(
   agent: string,
   comment: string,
   cursorApiKey: string,
-  dryRun: boolean
+  dryRun: boolean,
+  targetPr: number | null
 ): Promise<void> {
   const issueUrl = `https://github.com/${repo}/issues/${issueNumber}`;
   const instruction = stripAgentMention(comment, agent);
   const prompt = `${instruction}\n\nIssue: ${issueUrl}`;
+
+  if (targetPr) {
+    const prUrl = `https://github.com/${repo}/pull/${targetPr}`;
+    if (dryRun) {
+      console.error(`Would launch Cursor agent targeting ${prUrl} with prompt: "${prompt.slice(0, 120)}${prompt.length > 120 ? "..." : ""}"`);
+      return;
+    }
+    const id = await launchAgentForPrUrl(cursorApiKey, prUrl, prompt);
+    console.error(`${ANSI.green}Cursor agent launched targeting PR #${targetPr}: ${id}${ANSI.reset}`);
+    return;
+  }
+
   if (dryRun) {
     console.error(`Would launch Cursor agent for ${issueUrl} with prompt: "${prompt.slice(0, 120)}${prompt.length > 120 ? "..." : ""}"`);
     return;
@@ -276,10 +290,18 @@ async function main(): Promise<void> {
   const bodyFilePath = bodyFileIdx >= 0 ? args[bodyFileIdx + 1] : null;
   const templateIdx = args.indexOf("--template");
   const templatePath = templateIdx >= 0 ? args[templateIdx + 1] : null;
+  const prIdx = args.indexOf("--pr");
+  const targetPrRaw = prIdx >= 0 ? args[prIdx + 1] : null;
+  const targetPr = targetPrRaw ? parseInt(targetPrRaw, 10) : null;
+  if (prIdx >= 0 && (!Number.isInteger(targetPr) || !targetPr || targetPr <= 0)) {
+    console.error("Error: --pr requires a valid pull request number");
+    process.exit(1);
+  }
   const filtered = args.filter((a, i) => {
-    if (["--dry-run", "--no-comment", "--no-template", "--body-file", "--template"].includes(a)) return false;
+    if (["--dry-run", "--no-comment", "--no-template", "--body-file", "--template", "--pr"].includes(a)) return false;
     if (bodyFileIdx >= 0 && i === bodyFileIdx + 1) return false;
     if (templateIdx >= 0 && i === templateIdx + 1) return false;
+    if (prIdx >= 0 && i === prIdx + 1) return false;
     return true;
   });
 
@@ -297,6 +319,7 @@ Options:
                      .github/ISSUE_TEMPLATE/issue_template.md, issue_template.md, docs/issue_template.md)
   --no-template      Skip template, use only body
   --no-comment       Do not add the agent instruction comment
+  --pr NUMBER        Update an existing PR branch instead of creating a new one (Cursor API only)
   --dry-run          Show what would be created without creating
 
 Examples:
@@ -395,6 +418,11 @@ Examples:
   const cursorApiKey = config?.cursorApiKey?.trim() || null;
   const shouldUseCursorApi = agent === "cursor" && cursorApiKey !== null;
 
+  if (targetPr && !shouldUseCursorApi) {
+    console.error("Error: --pr requires the Cursor API (agent=cursor with cursorApiKey configured)");
+    process.exit(1);
+  }
+
   const isInteractive = stdout.isTTY;
 
   if (!title && !isInteractive) {
@@ -438,7 +466,7 @@ Examples:
     if (issueNumber) {
       if (comment) {
         if (shouldUseCursorApi) {
-          await sendInstructionViaCursorApi(repo, issueNumber, agent, comment, cursorApiKey!, dryRun);
+          await sendInstructionViaCursorApi(repo, issueNumber, agent, comment, cursorApiKey!, dryRun, targetPr);
         } else {
           addComment(repo, issueNumber, comment, dryRun);
         }
@@ -446,7 +474,9 @@ Examples:
       const url = `https://github.com/${repo}/issues/${issueNumber}`;
       console.log(url);
       if (!dryRun && comment) {
-        if (shouldUseCursorApi) {
+        if (shouldUseCursorApi && targetPr) {
+          console.error(`${ANSI.green}Sent instruction to Cursor API targeting PR #${targetPr}.${ANSI.reset}`);
+        } else if (shouldUseCursorApi) {
           console.error(`${ANSI.green}Sent instruction to Cursor API (instead of issue comment).${ANSI.reset}`);
         } else {
           console.error(`${ANSI.green}Commented: ${comment}${ANSI.reset}`);
