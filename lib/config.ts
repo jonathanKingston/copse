@@ -10,11 +10,8 @@ import { readFileSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
 import { getApiProvider } from "./api-provider.js";
-import { ensureMockProviderConfigured } from "./mock-mode.js";
 
 const CONFIG_FILENAME = ".copserc";
-
-ensureMockProviderConfigured();
 
 export interface Copserc {
   repos?: string[];

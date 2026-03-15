@@ -2,7 +2,6 @@ import { execFileSync, execFile } from "child_process";
 import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 import { WATCH_INTERVAL_MS } from "./services/status-types.js";
 import { getApiProvider } from "./api-provider.js";
-import { ensureMockProviderConfigured } from "./mock-mode.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -30,10 +29,7 @@ const COAUTHOR_SCAN_COMMIT_COUNT = 100;
 let _interrupted = false;
 let _pipeStdio = false;
 
-ensureMockProviderConfigured();
-
 function activeProvider() {
-  ensureMockProviderConfigured();
   return getApiProvider();
 }
 

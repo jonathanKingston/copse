@@ -17,8 +17,11 @@ import { stdin, stdout } from "node:process";
 import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { homedir } from "os";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import { REPO_PATTERN } from "../lib/gh.js";
 import { getOriginRepo } from "../lib/utils.js";
+
+initializeRuntime();
 
 const ANSI = {
   reset: "\x1b[0m",

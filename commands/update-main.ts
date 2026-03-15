@@ -6,11 +6,14 @@
  */
 
 import type { ExecError, MergeResult } from "../lib/types.js";
+import { initializeRuntime } from "../lib/runtime-init.js";
 import {
   validateRepo, gh, listOpenPRs,
 } from "../lib/gh.js";
 import { parseStandardFlags, parseBaseOption } from "../lib/args.js";
 import { filterPRs, getUserForDisplay, buildFetchMessage } from "../lib/filters.js";
+
+initializeRuntime();
 
 function mergeMainIntoBranch(repo: string, headRef: string, baseRef: string, dryRun: boolean): MergeResult {
   if (dryRun) return { ok: true, skipped: true };

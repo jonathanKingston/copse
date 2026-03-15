@@ -7,11 +7,8 @@ import { readdirSync, readFileSync, mkdirSync, writeFileSync, existsSync } from 
 import { join } from "path";
 import { homedir } from "os";
 import { getApiProvider } from "./api-provider.js";
-import { ensureMockProviderConfigured } from "./mock-mode.js";
 
 const DEFAULT_TEMPLATES_DIR = ".copse/comment-templates";
-
-ensureMockProviderConfigured();
 
 const STARTER_TEMPLATES: Record<string, string> = {
   "please-fix.md": "Please fix this.",

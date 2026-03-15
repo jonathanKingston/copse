@@ -1,7 +1,4 @@
 import { getApiProvider } from "./api-provider.js";
-import { ensureMockProviderConfigured } from "./mock-mode.js";
-
-ensureMockProviderConfigured();
 
 const CURSOR_API_BASE_URL = "https://api.cursor.com";
 const DEFAULT_LIST_LIMIT = 100;
