@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mergeCommitMentionsBranch } from "../lib/gh.js";
 import {
   applyCIStatus,
   filterPRsByStatusScope,
@@ -150,4 +151,34 @@ test("filterStandaloneBranchesWithoutMerged excludes branches already merged int
   );
 
   assert.deepEqual(filtered, ["cursor/ready"]);
+});
+
+test("mergeCommitMentionsBranch matches GitHub merge commit messages for the branch", () => {
+  assert.equal(
+    mergeCommitMentionsBranch(
+      "Merge pull request #38 from jonathanKingston/cursor/web-standalone-branches",
+      "cursor/web-standalone-branches"
+    ),
+    true
+  );
+});
+
+test("mergeCommitMentionsBranch ignores unrelated merge commits", () => {
+  assert.equal(
+    mergeCommitMentionsBranch(
+      "Merge pull request #41 from jonathanKingston/cursor/some-other-branch",
+      "cursor/web-standalone-branches"
+    ),
+    false
+  );
+});
+
+test("mergeCommitMentionsBranch ignores non-merge commit messages that mention the branch", () => {
+  assert.equal(
+    mergeCommitMentionsBranch(
+      "Follow up on cursor/web-standalone-branches after review",
+      "cursor/web-standalone-branches"
+    ),
+    false
+  );
 });

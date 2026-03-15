@@ -2,6 +2,8 @@ import {
   AGENT_BRANCH_PATTERNS,
   branchHasUniqueCommits,
   branchHasUniqueCommitsAsync,
+  hasNewerMergeCommitForBranch,
+  hasNewerMergeCommitForBranchAsync,
   getAgentForPR,
   getCurrentUser,
   getCommitInfo,
@@ -224,6 +226,11 @@ function getMergedStandaloneBranches(
     try {
       if (!branchHasUniqueCommits(repo, defaultBranch, branch)) {
         mergedBranches.add(branch);
+        continue;
+      }
+      const branchTip = getCommitInfo(repo, branch);
+      if (branchTip.date && hasNewerMergeCommitForBranch(repo, defaultBranch, branch, branchTip.date)) {
+        mergedBranches.add(branch);
       }
     } catch {
       // Keep uncertain branches visible rather than hiding actionable work.
@@ -240,7 +247,14 @@ async function getMergedStandaloneBranchesAsync(
   const merged = await Promise.all(
     branches.map(async (branch) => {
       try {
-        return await branchHasUniqueCommitsAsync(repo, defaultBranch, branch) ? null : branch;
+        if (!await branchHasUniqueCommitsAsync(repo, defaultBranch, branch)) {
+          return branch;
+        }
+        const branchTip = await getCommitInfoAsync(repo, branch);
+        if (branchTip.date && await hasNewerMergeCommitForBranchAsync(repo, defaultBranch, branch, branchTip.date)) {
+          return branch;
+        }
+        return null;
       } catch {
         // Keep uncertain branches visible rather than hiding actionable work.
         return null;

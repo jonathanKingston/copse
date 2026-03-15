@@ -517,6 +517,62 @@ export async function branchHasUniqueCommitsAsync(repo: string, baseBranch: stri
   return parseAheadBy(out, repo, baseBranch, headBranch) > 0;
 }
 
+interface RepoCommitListItem {
+  commit?: {
+    message?: string;
+  };
+}
+
+export function mergeCommitMentionsBranch(message: string, branchName: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  const normalizedBranch = branchName.toLowerCase();
+  if (!normalizedMessage.includes("merge pull request")) {
+    return false;
+  }
+  return normalizedMessage.includes(`/${normalizedBranch}`) || normalizedMessage.includes(` ${normalizedBranch}`);
+}
+
+function parseRepoCommitList(output: string): RepoCommitListItem[] {
+  const parsed = JSON.parse(output || "[]") as unknown;
+  return Array.isArray(parsed) ? parsed as RepoCommitListItem[] : [];
+}
+
+export function hasNewerMergeCommitForBranch(
+  repo: string,
+  defaultBranch: string,
+  headBranch: string,
+  since: Date
+): boolean {
+  const out = gh(
+    "api",
+    `repos/${repo}/commits`,
+    "--paginate",
+    "-f", `sha=${defaultBranch}`,
+    "-f", `since=${since.toISOString()}`,
+    "-f", "per_page=100"
+  );
+  const commits = parseRepoCommitList(out);
+  return commits.some((item) => mergeCommitMentionsBranch(String(item.commit?.message || ""), headBranch));
+}
+
+export async function hasNewerMergeCommitForBranchAsync(
+  repo: string,
+  defaultBranch: string,
+  headBranch: string,
+  since: Date
+): Promise<boolean> {
+  const out = await ghQuietAsync(
+    "api",
+    `repos/${repo}/commits`,
+    "--paginate",
+    "-f", `sha=${defaultBranch}`,
+    "-f", `since=${since.toISOString()}`,
+    "-f", "per_page=100"
+  );
+  const commits = parseRepoCommitList(out);
+  return commits.some((item) => mergeCommitMentionsBranch(String(item.commit?.message || ""), headBranch));
+}
+
 const COMMIT_DELIM = "\x01";
 
 export interface CommitInfo {
