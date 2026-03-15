@@ -535,6 +535,12 @@ function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<S
 }
 
 export async function fetchPRsWithStatus(options: StatusQueryOptions): Promise<StatusRow[]> {
+  // Provider-backed calls (tests/mock mode) should always reflect current in-memory state.
+  // Returning stale disk cache across provider swaps can make tests flaky.
+  if (getApiProvider()) {
+    return fetchPRsWithStatusUncached(options);
+  }
+
   const key = cacheKey(options);
   let cached = statusCache.get(key) ?? null;
 
