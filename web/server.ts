@@ -24,6 +24,7 @@ import {
   type StatusFilterScope,
 } from "../lib/services/status-types.js";
 import { findLatestAgentByPrUrl, getArtifactDownloadUrl, listAgentArtifacts, listAgentsByPrUrl } from "../lib/cursor-api.js";
+import { sendReplyViaCursorApi } from "../lib/cursor-replies.js";
 import { loadTemplates, resolveTemplatesPath } from "../lib/templates.js";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -142,6 +143,39 @@ function parsePrTarget(segments: string[]): { repo: string; prNumber: number; ac
     throw new Error(`Invalid pull request number: "${prNumberRaw}"`);
   }
   return { repo, prNumber, action };
+}
+
+function parseReplyDelivery(value: unknown): "github" | "cursor" {
+  if (value == null || value === "") {
+    return "github";
+  }
+  if (value === "github" || value === "cursor") {
+    return value;
+  }
+  throw new Error('delivery must be either "github" or "cursor"');
+}
+
+function formatCommentLocation(comment: { path: string; line: number | null; original_line: number | null }): string {
+  return `${comment.path}:${comment.line ?? comment.original_line ?? "?"}`;
+}
+
+function buildCursorCommentReplyPrompt(
+  comments: Array<{ body: string; path: string; line: number | null; original_line: number | null; user: { login: string } }>,
+  replyText: string
+): string {
+  const commentSummary = comments.map((comment, index) => [
+    `${index + 1}. ${comment.user.login} on ${formatCommentLocation(comment)}`,
+    String(comment.body || "").trim(),
+  ].join("\n")).join("\n\n");
+
+  return [
+    "Please address these selected PR review comments.",
+    "",
+    commentSummary,
+    "",
+    "Use this reply/instruction:",
+    replyText.trim(),
+  ].join("\n");
 }
 
 function requireCursorApiKey(): string {
@@ -419,15 +453,39 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       if (!Number.isInteger(inReplyToId) || inReplyToId <= 0) {
         throw new Error("inReplyToId must be a positive number");
       }
-      const cursorApiKey = loadConfig()?.cursorApiKey?.trim() || null;
-      const result = await postPullRequestReply({
-        repo: target.repo,
-        prNumber: target.prNumber,
-        inReplyToId,
-        body: text,
-        cursorApiKey,
+      const delivery = parseReplyDelivery(body.delivery);
+      let result: { mode: "github" | "cursor-followup" | "cursor-launch" };
+      if (delivery === "cursor") {
+        const cursorApiKey = requireCursorApiKey();
+        const comments = await listPRReviewCommentsAsync(target.repo, target.prNumber);
+        const selectedComment = comments.find((comment) => comment.id === inReplyToId);
+        if (!selectedComment) {
+          throw new Error(`Could not load selected comment ${inReplyToId}`);
+        }
+        const cursorResult = await sendReplyViaCursorApi({
+          repo: target.repo,
+          prNumber: target.prNumber,
+          replyText: buildCursorCommentReplyPrompt([selectedComment], text),
+          cursorApiKey,
+        });
+        result = { mode: cursorResult.mode === "followup" ? "cursor-followup" : "cursor-launch" };
+      } else {
+        result = await postPullRequestReply({
+          repo: target.repo,
+          prNumber: target.prNumber,
+          inReplyToId,
+          body: text,
+        });
+      }
+      sendJson(res, 200, {
+        ok: true,
+        mode: result.mode,
+        message: result.mode === "cursor-followup"
+          ? "Reply sent to Cursor agent"
+          : result.mode === "cursor-launch"
+            ? "No linked agent found, so a new Cursor agent was launched"
+            : "Reply posted in GitHub thread",
       });
-      sendJson(res, 200, { ok: true, mode: result.mode, message: "Reply posted" });
       return;
     }
     if (target.action === "batch-reply") {
@@ -436,23 +494,52 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
       if (!Array.isArray(commentIds) || commentIds.length === 0) {
         throw new Error("commentIds must be a non-empty array");
       }
-      const cursorApiKey = loadConfig()?.cursorApiKey?.trim() || null;
-      let succeeded = 0;
-      for (const id of commentIds) {
+      const delivery = parseReplyDelivery(body.delivery);
+      const numericCommentIds = commentIds.map((id) => {
         const inReplyToId = Number(id);
-        if (!Number.isInteger(inReplyToId) || inReplyToId <= 0) continue;
-        try {
-          await postPullRequestReply({
-            repo: target.repo,
-            prNumber: target.prNumber,
-            inReplyToId,
-            body: text,
-            cursorApiKey,
-          });
-          succeeded++;
-        } catch {
-          // Continue with remaining replies.
+        if (!Number.isInteger(inReplyToId) || inReplyToId <= 0) {
+          throw new Error("commentIds must contain only positive numbers");
         }
+        return inReplyToId;
+      });
+
+      if (delivery === "cursor") {
+        const cursorApiKey = requireCursorApiKey();
+        const comments = await listPRReviewCommentsAsync(target.repo, target.prNumber);
+        const commentsById = new Map(comments.map((comment) => [comment.id, comment]));
+        const selectedComments = numericCommentIds.map((id) => {
+          const comment = commentsById.get(id);
+          if (!comment) {
+            throw new Error(`Could not load selected comment ${id}`);
+          }
+          return comment;
+        });
+        const result = await sendReplyViaCursorApi({
+          repo: target.repo,
+          prNumber: target.prNumber,
+          replyText: buildCursorCommentReplyPrompt(selectedComments, text),
+          cursorApiKey,
+        });
+        sendJson(res, 200, {
+          ok: true,
+          total: selectedComments.length,
+          mode: result.mode === "followup" ? "cursor-followup" : "cursor-launch",
+          message: result.mode === "followup"
+            ? `Sent Cursor follow-up with ${selectedComments.length} selected comment(s)`
+            : `Launched Cursor agent with ${selectedComments.length} selected comment(s)`,
+        });
+        return;
+      }
+
+      let succeeded = 0;
+      for (const inReplyToId of numericCommentIds) {
+        await postPullRequestReply({
+          repo: target.repo,
+          prNumber: target.prNumber,
+          inReplyToId,
+          body: text,
+        });
+        succeeded++;
       }
       sendJson(res, 200, { ok: true, total: succeeded, message: `Replied to ${succeeded} comment(s)` });
       return;

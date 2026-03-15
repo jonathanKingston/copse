@@ -720,6 +720,11 @@ tbody tr.details-row:hover td {
   white-space: nowrap;
 }
 
+.batch-reply-note {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .batch-template-select {
   flex: 1;
   min-width: 120px;
@@ -747,6 +752,34 @@ tbody tr.details-row:hover td {
 .batch-reply-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.reply-destination-controls {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(47, 111, 78, 0.04);
+}
+
+.reply-destination-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.reply-destination-label select {
+  min-width: 180px;
+}
+
+.reply-destination-help {
+  margin: 0.45rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
 }
 
 .detail-row td {
