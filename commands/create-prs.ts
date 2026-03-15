@@ -16,7 +16,7 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 import { initializeRuntime } from "../lib/runtime-init.js";
 import {
-  validateRepo, validateAgent, gh, getCommitInfo, AGENT_BRANCH_PATTERNS, listBranches,
+  validateRepo, validateAgent, gh, getCommitInfoBatch, AGENT_BRANCH_PATTERNS, listBranches,
 } from "../lib/gh.js";
 import { parseStandardFlags, parseHoursOption, parseBaseOption, parseTemplateOption, calculateSinceDate } from "../lib/args.js";
 import { getUserForDisplay } from "../lib/filters.js";
@@ -174,28 +174,37 @@ Examples:
   console.error(`Fetching open PR head branches...`);
   const prHeads = new Set(listOpenPRHeadBranches(repo));
 
-  const withCommits: { branch: string; message: string }[] = [];
-  for (const branch of agentBranches) {
+  // Filter out branches that already have PRs before fetching commit info.
+  const candidateBranches = agentBranches.filter((branch) => {
     if (prHeads.has(branch)) {
       console.error(`  Skipping ${branch} (PR already exists)`);
+      return false;
+    }
+    return true;
+  });
+
+  // Batch-fetch commit info for all candidate branches in a single GraphQL query.
+  const commitInfoMap = getCommitInfoBatch(repo, candidateBranches, true);
+
+  const withCommits: { branch: string; message: string }[] = [];
+  for (const branch of candidateBranches) {
+    const info = commitInfoMap.get(branch);
+    if (!info) {
+      console.error(`  Skipping ${branch}: could not fetch commit info`);
       continue;
     }
-    try {
-      const { message, date, authorLogin } = getCommitInfo(repo, branch, true);
-      if (date && date < since) {
-        console.error(`  Skipping ${branch} (last commit ${date.toISOString()} outside --hours ${hours})`);
+    const { message, date, authorLogin } = info;
+    if (date && date < since) {
+      console.error(`  Skipping ${branch} (last commit ${date.toISOString()} outside --hours ${hours})`);
+      continue;
+    }
+    if (mineOnly) {
+      if (authorLogin !== currentUser) {
+        console.error(`  Skipping ${branch} (latest commit by @${authorLogin || "unknown"}, not you)`);
         continue;
       }
-      if (mineOnly) {
-        if (authorLogin !== currentUser) {
-          console.error(`  Skipping ${branch} (latest commit by @${authorLogin || "unknown"}, not you)`);
-          continue;
-        }
-      }
-      withCommits.push({ branch, message: message! });
-    } catch (e: unknown) {
-      console.error(`  Skipping ${branch}: ${(e as Error).message}`);
     }
+    withCommits.push({ branch, message: message! });
   }
 
   if (withCommits.length === 0) {

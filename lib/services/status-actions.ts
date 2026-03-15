@@ -111,7 +111,7 @@ export async function rerunFailedWorkflowRuns(repo: string, headRefName: string)
     "run", "list",
     "--repo", repo,
     "--branch", headRefName,
-    "--limit", "100",
+    "--limit", "25",
     "--json", "databaseId,name,conclusion,attempt,status,displayTitle"
   );
   const runs = JSON.parse(runsJson || "[]") as WorkflowRun[];
