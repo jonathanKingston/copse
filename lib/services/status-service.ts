@@ -37,6 +37,7 @@ import {
   isPRWithStatus,
 } from "./status-types.js";
 import { getApiProvider } from "../api-provider.js";
+import { mapWithConcurrency } from "../utils.js";
 
 export interface StatusQueryOptions {
   repos: string[];
@@ -463,30 +464,24 @@ export function fetchPRsWithStatusSync(options: StatusQueryOptions): StatusRow[]
   return sortRows(result);
 }
 
-async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<StatusRow[]> {
-  const result: StatusRow[] = [];
-  const now = Date.now();
-  const currentUser = options.scope === "my-stacks" ? getCurrentUser() : "";
+/** Maximum number of repos to fetch in parallel to avoid GitHub API rate limits. */
+const REPO_FETCH_CONCURRENCY = 4;
 
-  for (const repo of options.repos) {
-    validateRepo(repo);
-    const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS) as StatusBasePR[];
-    const matching = filterPRsByStatusScope(rawPRs, options.scope, currentUser);
-    for (const pr of matching) {
-      result.push(toPRWithStatus(repo, pr, now));
-    }
-    result.push(...await buildStandaloneBranchRows(repo, rawPRs, now));
-  }
+async function fetchSingleRepo(
+  repo: string,
+  scope: StatusFilterScope,
+  currentUser: string,
+  now: number,
+): Promise<StatusRow[]> {
+  validateRepo(repo);
+  const rawPRs = await listOpenPRsAsync(repo, STATUS_FIELDS) as StatusBasePR[];
+  const matching = filterPRsByStatusScope(rawPRs, scope, currentUser);
+  const rows: StatusRow[] = matching.map((pr) => toPRWithStatus(repo, pr, now));
+  rows.push(...await buildStandaloneBranchRows(repo, rawPRs, now));
 
-  const byRepo = new Map<string, StatusRow[]>();
-  for (const row of result) {
-    const list = byRepo.get(row.repo) ?? [];
-    list.push(row);
-    byRepo.set(row.repo, list);
-  }
-
-  for (const [repo, repoRows] of byRepo) {
-    const repoPrs = repoRows.filter(isPRWithStatus);
+  // Enrich PRs with unresolved comment counts.
+  const repoPrs = rows.filter(isPRWithStatus);
+  if (repoPrs.length > 0) {
     try {
       const counts = await getUnresolvedCommentCountsAsync(repo, repoPrs.map(p => p.number));
       for (const pr of repoPrs) {
@@ -497,8 +492,9 @@ async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<
     }
   }
 
+  // Enrich all rows with CI status.
   const branchCache = new Map<string, WorkflowRun[]>();
-  for (const row of result) {
+  for (const row of rows) {
     const key = `${row.repo}\0${row.headRefName}`;
     let runs = branchCache.get(key);
     if (runs === undefined) {
@@ -512,7 +508,22 @@ async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<
     applyCIStatus(row, runs);
   }
 
-  return sortRows(result);
+  return rows;
+}
+
+async function fetchPRsWithStatusUncached(options: StatusQueryOptions): Promise<StatusRow[]> {
+  const now = Date.now();
+  const currentUser = options.scope === "my-stacks" ? getCurrentUser() : "";
+
+  const repoResults = await mapWithConcurrency(
+    options.repos,
+    REPO_FETCH_CONCURRENCY,
+    (repo) => fetchSingleRepo(repo, options.scope, currentUser, now).catch(
+      (): StatusRow[] => [],
+    ),
+  );
+
+  return sortRows(repoResults.flat());
 }
 
 function startStatusRefresh(key: string, options: StatusQueryOptions): Promise<StatusRow[]> {

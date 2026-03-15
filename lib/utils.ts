@@ -36,3 +36,47 @@ export function hyperlink(url: string, text: string): string {
 export function getTerminalColumns(): number {
   return process.stdout.columns || 80;
 }
+
+/**
+ * Like Promise.all(items.map(fn)), but limits the number of concurrent
+ * invocations to `concurrency`.  Each item is processed exactly once and
+ * results are returned in the same order as the input array.
+ *
+ * If any task rejects, the remaining in-flight tasks are allowed to settle
+ * but no new tasks are started and the first rejection is propagated.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  let firstError: unknown = undefined;
+  let hasError = false;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length && !hasError) {
+      const idx = nextIndex++;
+      try {
+        results[idx] = await fn(items[idx]);
+      } catch (err) {
+        if (!hasError) {
+          hasError = true;
+          firstError = err;
+        }
+      }
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+
+  if (hasError) {
+    throw firstError;
+  }
+  return results;
+}
