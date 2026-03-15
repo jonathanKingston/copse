@@ -10,6 +10,10 @@ export function isBotComment(comment: PRReviewComment): boolean {
   return login.endsWith("-bot") || login.endsWith("[bot]");
 }
 
+/**
+ * Detect the GitHub repository from the git remote origin URL.
+ * @returns Repository in "owner/name" format, or null if not detectable
+ */
 export function getOriginRepo(): string | null {
   const provider = getApiProvider();
   if (provider?.getOriginRepo) {
@@ -33,6 +37,10 @@ export function hyperlink(url: string, text: string): string {
   return `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`;
 }
 
+/**
+ * Get the current terminal width in columns.
+ * @returns Number of columns, defaulting to 80 if not available
+ */
 export function getTerminalColumns(): number {
   return process.stdout.columns || 80;
 }

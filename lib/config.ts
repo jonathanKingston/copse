@@ -56,6 +56,11 @@ function loadConfigFromPath(configPath: string): Copserc | null {
   return null;
 }
 
+/**
+ * Load copse configuration from .copserc, searching global then local paths.
+ * @param cwd - Working directory to start searching from
+ * @returns Parsed config object, or null if not found or invalid
+ */
 export function loadConfig(cwd: string = process.cwd()): Copserc | null {
   const provider = getApiProvider();
   if (provider?.loadConfig) {
@@ -71,6 +76,11 @@ export function loadConfig(cwd: string = process.cwd()): Copserc | null {
   return loadConfigFromPath(join(configDir, CONFIG_FILENAME));
 }
 
+/**
+ * Get the list of configured repositories from .copserc.
+ * @param cwd - Working directory to start searching from
+ * @returns Array of "owner/name" repo strings, or null if unconfigured
+ */
 export function getConfiguredRepos(cwd: string = process.cwd()): string[] | null {
   const provider = getApiProvider();
   if (provider?.getConfiguredRepos) {

@@ -81,6 +81,12 @@ async function cursorRequest<T>(
   }
 }
 
+/**
+ * List all Cursor agents associated with a pull request URL.
+ * @param apiKey - Cursor API key for authentication
+ * @param prUrl - Full GitHub pull request URL
+ * @returns Array of Cursor agent objects
+ */
 export async function listAgentsByPrUrl(apiKey: string, prUrl: string): Promise<CursorAgent[]> {
   const provider = getApiProvider();
   if (provider?.cursorListAgentsByPrUrl) {
@@ -108,6 +114,12 @@ export async function listAgentsByPrUrl(apiKey: string, prUrl: string): Promise<
   return agents;
 }
 
+/**
+ * Find the most recently created Cursor agent for a pull request URL.
+ * @param apiKey - Cursor API key for authentication
+ * @param prUrl - Full GitHub pull request URL
+ * @returns The latest agent, or null if none found
+ */
 export async function findLatestAgentByPrUrl(apiKey: string, prUrl: string): Promise<CursorAgent | null> {
   const provider = getApiProvider();
   if (provider?.cursorFindLatestAgentByPrUrl) {
@@ -124,6 +136,13 @@ export async function findLatestAgentByPrUrl(apiKey: string, prUrl: string): Pro
   return sorted[0] ?? null;
 }
 
+/**
+ * Send a follow-up prompt to an existing Cursor agent.
+ * @param apiKey - Cursor API key for authentication
+ * @param agentId - ID of the agent to follow up with
+ * @param text - The follow-up prompt text
+ * @returns The agent ID from the response
+ */
 export async function addFollowup(apiKey: string, agentId: string, text: string): Promise<string> {
   const provider = getApiProvider();
   if (provider?.cursorAddFollowup) {
@@ -148,6 +167,13 @@ export async function addFollowup(apiKey: string, agentId: string, text: string)
   return response.id;
 }
 
+/**
+ * Launch a new Cursor agent targeting an existing pull request.
+ * @param apiKey - Cursor API key for authentication
+ * @param prUrl - Full GitHub pull request URL to target
+ * @param text - The prompt text for the agent
+ * @returns The newly created agent ID
+ */
 export async function launchAgentForPrUrl(apiKey: string, prUrl: string, text: string): Promise<string> {
   const provider = getApiProvider();
   if (provider?.cursorLaunchAgentForPrUrl) {
@@ -171,6 +197,14 @@ export async function launchAgentForPrUrl(apiKey: string, prUrl: string, text: s
   return response.id;
 }
 
+/**
+ * Launch a new Cursor agent targeting a repository.
+ * @param apiKey - Cursor API key for authentication
+ * @param repository - Repository identifier
+ * @param text - The prompt text for the agent
+ * @param target - Optional launch target options
+ * @returns The newly created agent ID
+ */
 export async function launchAgentForRepository(
   apiKey: string,
   repository: string,
@@ -196,6 +230,12 @@ export async function launchAgentForRepository(
   return response.id;
 }
 
+/**
+ * List artifacts produced by a Cursor agent.
+ * @param apiKey - Cursor API key for authentication
+ * @param agentId - ID of the agent
+ * @returns Array of artifact descriptors
+ */
 export async function listAgentArtifacts(apiKey: string, agentId: string): Promise<CursorArtifact[]> {
   const provider = getApiProvider();
   if (provider?.cursorListAgentArtifacts) {
@@ -209,6 +249,13 @@ export async function listAgentArtifacts(apiKey: string, agentId: string): Promi
   return response.artifacts ?? [];
 }
 
+/**
+ * Get a temporary download URL for a Cursor agent artifact.
+ * @param apiKey - Cursor API key for authentication
+ * @param agentId - ID of the agent that produced the artifact
+ * @param absolutePath - Absolute file path of the artifact
+ * @returns Object with the download URL and optional expiry timestamp
+ */
 export async function getArtifactDownloadUrl(
   apiKey: string,
   agentId: string,

@@ -29,10 +29,22 @@ const defaultClient: CursorReplyClient = {
   launchAgentForPrUrl,
 };
 
+/**
+ * Build the full GitHub URL for a pull request.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @returns The full GitHub PR URL
+ */
 export function buildPrUrl(repo: string, prNumber: number): string {
   return `https://github.com/${repo}/pull/${prNumber}`;
 }
 
+/**
+ * Send a reply to a PR via the Cursor API, either as a follow-up or by launching a new agent.
+ * @param input - Parameters including repo, PR number, reply text, and API key
+ * @param client - Optional Cursor API client (defaults to production client)
+ * @returns Result indicating whether a follow-up or new launch was performed
+ */
 export async function sendReplyViaCursorApi(
   input: SendReplyViaCursorApiInput,
   client: CursorReplyClient = defaultClient

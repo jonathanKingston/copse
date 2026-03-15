@@ -5,12 +5,23 @@ import { getApiProvider } from "./api-provider.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
+/**
+ * Validate that a repo string is in "owner/name" format.
+ * @param repo - Repository identifier to validate
+ * @throws Error if the format is invalid
+ */
 export function validateRepo(repo: string): void {
   if (!REPO_PATTERN.test(repo)) {
     throw new Error(`Invalid repo: "${repo}". Use owner/name format (e.g. acme/cool-project)`);
   }
 }
 
+/**
+ * Validate and normalize an agent name to lowercase.
+ * @param agent - Agent name ("cursor", "claude", or "copilot")
+ * @returns The lowercased agent name
+ * @throws Error if the agent name is not recognized
+ */
 export function validateAgent(agent: string): string {
   const agentLower = agent.toLowerCase();
   if (!["cursor", "claude", "copilot"].includes(agentLower)) {
@@ -177,6 +188,12 @@ export function isInterrupted(): boolean { return _interrupted; }
 /** When enabled, gh() pipes stdio instead of inheriting the terminal (for TUI modes). */
 export function setPipeStdio(on: boolean): void { _pipeStdio = on; }
 
+/**
+ * Execute a GitHub CLI command synchronously with caching and retry logic.
+ * @param args - Arguments to pass to the `gh` command
+ * @returns The stdout output from the command
+ * @throws GhNotFoundError if `gh` is not installed
+ */
 export function gh(...args: string[]): string {
   const provider = activeProvider();
   if (provider?.gh) {
@@ -292,6 +309,10 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
 }
 
 let _cachedUser: string | null = null;
+/**
+ * Get the currently authenticated GitHub user login (cached after first call).
+ * @returns The GitHub username of the authenticated user
+ */
 export function getCurrentUser(): string {
   const provider = activeProvider();
   if (provider?.getCurrentUser) {
@@ -303,6 +324,12 @@ export function getCurrentUser(): string {
   return _cachedUser;
 }
 
+/**
+ * Format an ExecError into a human-readable string.
+ * @param e - The error from a failed child process execution
+ * @param context - Optional prefix to prepend to the error message
+ * @returns A formatted error message string
+ */
 export function formatGhError(e: ExecError, context: string = ""): string {
   const stderr = e.stderr ?? (e.output?.[2] ?? "");
   const msg = (stderr || e.message || "").trim();
@@ -314,10 +341,20 @@ export const BOT_AUTHORS: Record<string, string> = {
   "app/dependabot": "depbot",
 };
 
+/**
+ * Check whether a PR was authored by a known bot account.
+ * @param pr - The pull request to check
+ * @returns True if the PR author is a recognized bot
+ */
 export function isBotPR(pr: PR): boolean {
   return (pr.author?.login ?? "") in BOT_AUTHORS;
 }
 
+/**
+ * Get the agent label for a bot-authored PR.
+ * @param pr - The pull request to check
+ * @returns The bot agent identifier, or null if not a bot PR
+ */
 export function getBotAgent(pr: PR): string | null {
   return BOT_AUTHORS[pr.author?.login ?? ""] ?? null;
 }
@@ -343,6 +380,12 @@ export const AGENT_BRANCH_PATTERNS: Record<string, RegExp> = {
   copilot: /^copilot\//i,
 };
 
+/**
+ * Check if a PR matches a specific agent (or any agent if null) by branch name or labels.
+ * @param pr - The pull request to check
+ * @param agent - Agent name to match, or null to match any agent
+ * @returns True if the PR matches the specified agent
+ */
 export function matchesAgent(pr: PR, agent: string | null): boolean {
   if (agent) {
     const pattern = AGENT_PATTERNS_WITH_LABELS[agent];
@@ -431,6 +474,12 @@ export function checkPRsForAgentCoAuthors(
   return matched;
 }
 
+/**
+ * List open pull requests for a repository.
+ * @param repo - Repository in "owner/name" format
+ * @param fields - JSON field names to include in the response
+ * @returns Array of open PRs with the requested fields
+ */
 export function listOpenPRs(repo: string, fields: string[]): PR[] {
   const provider = activeProvider();
   if (provider?.listOpenPRs) {
@@ -446,6 +495,12 @@ export function listOpenPRs(repo: string, fields: string[]): PR[] {
   return JSON.parse(out) as PR[];
 }
 
+/**
+ * Async variant of listOpenPRs.
+ * @param repo - Repository in "owner/name" format
+ * @param fields - JSON field names to include in the response
+ * @returns Promise resolving to an array of open PRs
+ */
 export async function listOpenPRsAsync(repo: string, fields: string[]): Promise<PR[]> {
   const provider = activeProvider();
   if (provider?.listOpenPRsAsync) {
@@ -461,6 +516,12 @@ export async function listOpenPRsAsync(repo: string, fields: string[]): Promise<
   return JSON.parse(out) as PR[];
 }
 
+/**
+ * List GitHub Actions workflow runs for a branch.
+ * @param repo - Repository in "owner/name" format
+ * @param branch - Branch name to filter runs by
+ * @returns Array of workflow runs, or empty array on failure
+ */
 export function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
   const provider = activeProvider();
   if (provider?.listWorkflowRuns) {
@@ -481,6 +542,12 @@ export function listWorkflowRuns(repo: string, branch: string): WorkflowRun[] {
   }
 }
 
+/**
+ * Async variant of listWorkflowRuns.
+ * @param repo - Repository in "owner/name" format
+ * @param branch - Branch name to filter runs by
+ * @returns Promise resolving to an array of workflow runs
+ */
 export async function listWorkflowRunsAsync(repo: string, branch: string): Promise<WorkflowRun[]> {
   const provider = activeProvider();
   if (provider?.listWorkflowRunsAsync) {
@@ -501,6 +568,11 @@ export async function listWorkflowRunsAsync(repo: string, branch: string): Promi
   }
 }
 
+/**
+ * List all branch names for a repository.
+ * @param repo - Repository in "owner/name" format
+ * @returns Array of branch name strings
+ */
 export function listBranches(repo: string): string[] {
   const provider = activeProvider();
   if (provider?.listBranches) {
@@ -510,6 +582,11 @@ export function listBranches(repo: string): string[] {
   return out.trim() ? out.trim().split("\n") : [];
 }
 
+/**
+ * Async variant of listBranches.
+ * @param repo - Repository in "owner/name" format
+ * @returns Promise resolving to an array of branch name strings
+ */
 export async function listBranchesAsync(repo: string): Promise<string[]> {
   const provider = activeProvider();
   if (provider?.listBranchesAsync) {
@@ -519,6 +596,12 @@ export async function listBranchesAsync(repo: string): Promise<string[]> {
   return out.trim() ? out.trim().split("\n") : [];
 }
 
+/**
+ * Get the default branch name for a repository.
+ * @param repo - Repository in "owner/name" format
+ * @returns The default branch name
+ * @throws Error if the default branch cannot be determined
+ */
 export function getDefaultBranch(repo: string): string {
   const out = gh("api", `repos/${repo}`, "-q", ".default_branch");
   const branch = out.trim();
@@ -528,6 +611,11 @@ export function getDefaultBranch(repo: string): string {
   return branch;
 }
 
+/**
+ * Async variant of getDefaultBranch.
+ * @param repo - Repository in "owner/name" format
+ * @returns Promise resolving to the default branch name
+ */
 export async function getDefaultBranchAsync(repo: string): Promise<string> {
   const provider = activeProvider();
   if (provider?.getDefaultBranchAsync) {
@@ -551,6 +639,13 @@ function parseAheadBy(value: string, repo: string, baseBranch: string, headBranc
   return aheadBy;
 }
 
+/**
+ * Check whether a head branch has commits not present in the base branch.
+ * @param repo - Repository in "owner/name" format
+ * @param baseBranch - The base branch to compare against
+ * @param headBranch - The head branch to check for unique commits
+ * @returns True if the head branch is ahead of the base branch
+ */
 export function branchHasUniqueCommits(repo: string, baseBranch: string, headBranch: string): boolean {
   const out = gh(
     "api",
@@ -561,6 +656,13 @@ export function branchHasUniqueCommits(repo: string, baseBranch: string, headBra
   return parseAheadBy(out, repo, baseBranch, headBranch) > 0;
 }
 
+/**
+ * Async variant of branchHasUniqueCommits.
+ * @param repo - Repository in "owner/name" format
+ * @param baseBranch - The base branch to compare against
+ * @param headBranch - The head branch to check for unique commits
+ * @returns Promise resolving to true if the head branch is ahead
+ */
 export async function branchHasUniqueCommitsAsync(repo: string, baseBranch: string, headBranch: string): Promise<boolean> {
   const out = await ghQuietAsync(
     "api",
@@ -577,6 +679,12 @@ interface RepoCommitListItem {
   };
 }
 
+/**
+ * Check if a merge commit message references a specific branch name.
+ * @param message - The commit message to inspect
+ * @param branchName - The branch name to look for
+ * @returns True if the message is a merge commit that mentions the branch
+ */
 export function mergeCommitMentionsBranch(message: string, branchName: string): boolean {
   const normalizedMessage = message.toLowerCase();
   const normalizedBranch = branchName.toLowerCase();
@@ -591,6 +699,14 @@ function parseRepoCommitList(output: string): RepoCommitListItem[] {
   return Array.isArray(parsed) ? parsed as RepoCommitListItem[] : [];
 }
 
+/**
+ * Check if the default branch has a merge commit for the given head branch since a date.
+ * @param repo - Repository in "owner/name" format
+ * @param defaultBranch - The default branch to scan
+ * @param headBranch - The branch name to look for in merge commit messages
+ * @param since - Only consider commits after this date
+ * @returns True if a merge commit mentioning the branch was found
+ */
 export function hasNewerMergeCommitForBranch(
   repo: string,
   defaultBranch: string,
@@ -609,6 +725,14 @@ export function hasNewerMergeCommitForBranch(
   return commits.some((item) => mergeCommitMentionsBranch(String(item.commit?.message || ""), headBranch));
 }
 
+/**
+ * Async variant of hasNewerMergeCommitForBranch.
+ * @param repo - Repository in "owner/name" format
+ * @param defaultBranch - The default branch to scan
+ * @param headBranch - The branch name to look for in merge commit messages
+ * @param since - Only consider commits after this date
+ * @returns Promise resolving to true if a merge commit was found
+ */
 export async function hasNewerMergeCommitForBranchAsync(
   repo: string,
   defaultBranch: string,
@@ -635,6 +759,12 @@ export interface CommitInfo {
   authorLogin: string;
 }
 
+/**
+ * Fetch the node IDs of all comments belonging to resolved review threads.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @returns Set of GraphQL node IDs for comments in resolved threads
+ */
 export function getResolvedCommentNodeIds(repo: string, prNumber: number): Set<string> {
   const [owner, name] = repo.split("/");
   const query = `query($owner: String!, $name: String!, $number: Int!) {
@@ -676,6 +806,12 @@ export function getResolvedCommentNodeIds(repo: string, prNumber: number): Set<s
   }
 }
 
+/**
+ * List unresolved review comments on a pull request.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @returns Array of review comments excluding those in resolved threads
+ */
 export function listPRReviewComments(repo: string, prNumber: number): PRReviewComment[] {
   const provider = activeProvider();
   if (provider?.listPRReviewComments) {
@@ -698,6 +834,13 @@ export function listPRReviewComments(repo: string, prNumber: number): PRReviewCo
   }
 }
 
+/**
+ * Post a reply to a specific PR review comment.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @param inReplyToId - The REST API ID of the comment to reply to
+ * @param body - The reply body text
+ */
 export function replyToPRComment(
   repo: string,
   prNumber: number,
@@ -717,6 +860,13 @@ export function replyToPRComment(
   );
 }
 
+/**
+ * Async variant of replyToPRComment.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @param inReplyToId - The REST API ID of the comment to reply to
+ * @param body - The reply body text
+ */
 export async function replyToPRCommentAsync(
   repo: string,
   prNumber: number,
@@ -736,6 +886,13 @@ export async function replyToPRCommentAsync(
   );
 }
 
+/**
+ * Resolve a review thread on a PR containing the given comment.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @param commentNodeId - The GraphQL node ID of a comment in the thread
+ * @throws Error if the review thread cannot be found
+ */
 export function resolveReviewThread(repo: string, prNumber: number, commentNodeId: string): void {
   const [owner, name] = repo.split("/");
 
@@ -782,6 +939,12 @@ export function resolveReviewThread(repo: string, prNumber: number, commentNodeI
   );
 }
 
+/**
+ * Batch-fetch unresolved review thread counts for multiple PRs.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumbers - PR numbers to query
+ * @returns Map from PR number to count of unresolved review threads
+ */
 export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): Map<number, number> {
   const provider = activeProvider();
   if (provider?.getUnresolvedCommentCounts) {
@@ -833,6 +996,12 @@ export function getUnresolvedCommentCounts(repo: string, prNumbers: number[]): M
   return counts;
 }
 
+/**
+ * Async variant of getUnresolvedCommentCounts.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumbers - PR numbers to query
+ * @returns Promise resolving to a map from PR number to unresolved thread count
+ */
 export async function getUnresolvedCommentCountsAsync(repo: string, prNumbers: number[]): Promise<Map<number, number>> {
   const provider = activeProvider();
   if (provider?.getUnresolvedCommentCountsAsync) {
@@ -884,6 +1053,12 @@ export async function getUnresolvedCommentCountsAsync(repo: string, prNumbers: n
   return counts;
 }
 
+/**
+ * Async variant of getResolvedCommentNodeIds.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @returns Promise resolving to a set of node IDs for resolved thread comments
+ */
 export async function getResolvedCommentNodeIdsAsync(repo: string, prNumber: number): Promise<Set<string>> {
   const [owner, name] = repo.split("/");
   const query = `query($owner: String!, $name: String!, $number: Int!) {
@@ -925,6 +1100,12 @@ export async function getResolvedCommentNodeIdsAsync(repo: string, prNumber: num
   }
 }
 
+/**
+ * Async variant of listPRReviewComments.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @returns Promise resolving to an array of unresolved review comments
+ */
 export async function listPRReviewCommentsAsync(repo: string, prNumber: number): Promise<PRReviewComment[]> {
   const provider = activeProvider();
   if (provider?.listPRReviewCommentsAsync) {
@@ -947,6 +1128,12 @@ export async function listPRReviewCommentsAsync(repo: string, prNumber: number):
   }
 }
 
+/**
+ * Add a general comment to a pull request.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @param body - The comment body text
+ */
 export async function addPRCommentAsync(repo: string, prNumber: number, body: string): Promise<void> {
   const provider = activeProvider();
   if (provider?.addPRCommentAsync) {
@@ -956,6 +1143,12 @@ export async function addPRCommentAsync(repo: string, prNumber: number, body: st
   await ghQuietAsync("pr", "comment", String(prNumber), "--repo", repo, "--body", body);
 }
 
+/**
+ * List files changed in a pull request.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @returns Array of changed file descriptors
+ */
 export function listPRFiles(repo: string, prNumber: number): PRChangedFile[] {
   const provider = activeProvider();
   if (provider?.listPRFiles) {
@@ -976,6 +1169,12 @@ export function listPRFiles(repo: string, prNumber: number): PRChangedFile[] {
   }
 }
 
+/**
+ * Async variant of listPRFiles.
+ * @param repo - Repository in "owner/name" format
+ * @param prNumber - The pull request number
+ * @returns Promise resolving to an array of changed file descriptors
+ */
 export async function listPRFilesAsync(repo: string, prNumber: number): Promise<PRChangedFile[]> {
   const provider = activeProvider();
   if (provider?.listPRFilesAsync) {
@@ -996,6 +1195,13 @@ export async function listPRFilesAsync(repo: string, prNumber: number): Promise<
   }
 }
 
+/**
+ * Fetch commit metadata for a specific branch ref.
+ * @param repo - Repository in "owner/name" format
+ * @param branchRef - Branch name or commit ref to look up
+ * @param includeMessage - Whether to include the commit message
+ * @returns Commit info including date, author login, and optionally message
+ */
 export function getCommitInfo(repo: string, branchRef: string, includeMessage: boolean = false): CommitInfo {
   const provider = activeProvider();
   if (provider?.getCommitInfo) {
@@ -1030,6 +1236,13 @@ export function getCommitInfo(repo: string, branchRef: string, includeMessage: b
   }
 }
 
+/**
+ * Async variant of getCommitInfo.
+ * @param repo - Repository in "owner/name" format
+ * @param branchRef - Branch name or commit ref to look up
+ * @param includeMessage - Whether to include the commit message
+ * @returns Promise resolving to commit info
+ */
 export async function getCommitInfoAsync(repo: string, branchRef: string, includeMessage: boolean = false): Promise<CommitInfo> {
   const provider = activeProvider();
   if (provider?.getCommitInfoAsync) {

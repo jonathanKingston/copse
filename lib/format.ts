@@ -12,6 +12,11 @@ const ANSI = {
 const BYTES_STEP = 1024;
 const BYTES_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
 
+/**
+ * Format a byte count into a human-readable string (e.g. "1.5MB").
+ * @param bytes - Number of bytes, or null/undefined
+ * @returns Formatted string with appropriate unit, or "?" if invalid
+ */
 export function formatBytes(bytes: number | null | undefined): string {
   const value = typeof bytes === "number" ? bytes : NaN;
   if (!Number.isFinite(value) || value < 0) return "?";
