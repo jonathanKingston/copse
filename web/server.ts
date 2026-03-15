@@ -33,6 +33,7 @@ initializeRuntime();
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
+const API_REQUEST_TIMEOUT_MS = 60_000;
 const PUBLIC_DIR = resolve(fileURLToPath(new URL("./public", import.meta.url)));
 
 interface WebServerOptions {
@@ -586,12 +587,31 @@ export function startWebServer(options: WebServerOptions = {}): ReturnType<typeo
     const url = new URL(req.url, `http://${host}:${port}`);
     try {
       if (url.pathname.startsWith("/api/")) {
-        await handleApi(req, url, res);
+        const timeoutSignal = AbortSignal.timeout(API_REQUEST_TIMEOUT_MS);
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = (): void => {
+            reject(timeoutSignal.reason);
+          };
+          if (timeoutSignal.aborted) {
+            onAbort();
+            return;
+          }
+          timeoutSignal.addEventListener("abort", onAbort, { once: true });
+          handleApi(req, url, res).then(resolve, reject).finally(() => {
+            timeoutSignal.removeEventListener("abort", onAbort);
+          });
+        });
       } else {
         await serveStatic(url, res);
       }
     } catch (error: unknown) {
-      sendJson(res, 400, { error: (error as Error).message });
+      if (!res.headersSent) {
+        if (error instanceof DOMException && error.name === "TimeoutError") {
+          sendJson(res, 504, { error: "Gateway Timeout" });
+        } else {
+          sendJson(res, 400, { error: (error as Error).message });
+        }
+      }
     }
   });
 
