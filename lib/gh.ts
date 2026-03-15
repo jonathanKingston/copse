@@ -2,6 +2,7 @@ import { execFileSync, execFile } from "child_process";
 import type { PR, AgentPatternWithLabels, ExecError, WorkflowRun, PRReviewComment, PRChangedFile } from "./types.js";
 import { WATCH_INTERVAL_MS } from "./services/status-types.js";
 import { getApiProvider } from "./api-provider.js";
+import { logGhCall, logGhTiming } from "./verbose.js";
 
 export const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -192,15 +193,19 @@ export function gh(...args: string[]): string {
       return cached.value;
     }
   }
+  logGhCall(args);
+  const t0 = Date.now();
   for (let attempt = 0; ; attempt++) {
     try {
       const out = execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio });
+      logGhTiming(args, Date.now() - t0);
       if (decision.ok) {
         const now = Date.now();
         ghReadCache.set(decision.key, { value: out, expiresAt: now + decision.ttlMs });
       }
       return out;
     } catch (e: unknown) {
+      logGhTiming(args, Date.now() - t0);
       if (isGhNotFound(e)) throw new GhNotFoundError();
       const sig = (e as { signal?: string }).signal;
       if (sig === "SIGINT" || sig === "SIGTERM") { _interrupted = true; throw e; }
@@ -228,15 +233,19 @@ export function ghQuiet(...args: string[]): string {
       return cached.value;
     }
   }
+  logGhCall(args);
+  const t0 = Date.now();
   for (let attempt = 0; ; attempt++) {
     try {
       const out = execFileSync("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS, stdio: "pipe" });
+      logGhTiming(args, Date.now() - t0);
       if (decision.ok) {
         const now = Date.now();
         ghReadCache.set(decision.key, { value: out, expiresAt: now + decision.ttlMs });
       }
       return out;
     } catch (e: unknown) {
+      logGhTiming(args, Date.now() - t0);
       if (isGhNotFound(e)) throw new GhNotFoundError();
       const sig = (e as { signal?: string }).signal;
       if (sig === "SIGINT" || sig === "SIGTERM") { _interrupted = true; throw e; }
@@ -264,11 +273,14 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
       return Promise.resolve(cached.value);
     }
   }
+  logGhCall(args);
+  const t0 = Date.now();
   return new Promise((resolve, reject) => {
     let attempt = 0;
     function tryExec(): void {
       execFile("gh", args, { encoding: "utf-8", timeout: GH_TIMEOUT_MS }, (error, stdout) => {
         if (error) {
+          logGhTiming(args, Date.now() - t0);
           if (isGhNotFound(error)) { reject(new GhNotFoundError()); return; }
           const sig = (error as { signal?: string }).signal;
           if (sig === "SIGINT" || sig === "SIGTERM") { _interrupted = true; reject(error); return; }
@@ -280,6 +292,7 @@ export function ghQuietAsync(...args: string[]): Promise<string> {
           reject(error);
           return;
         }
+        logGhTiming(args, Date.now() - t0);
         if (decision.ok) {
           const now = Date.now();
           ghReadCache.set(decision.key, { value: stdout, expiresAt: now + decision.ttlMs });

@@ -15,7 +15,7 @@ export function parseStandardFlags(args: string[]): { flags: StandardFlags; filt
       i++;
       continue;
     }
-    if (["--dry-run", "--all", "--mine"].includes(args[i])) continue;
+    if (["--dry-run", "--all", "--mine", "--verbose"].includes(args[i])) continue;
     filtered.push(args[i]);
   }
 

@@ -6,6 +6,7 @@ import { dirname, join } from "path";
 import type { CommandDef } from "./lib/types.js";
 import { ensureGh, GhNotFoundError, GhNotAuthenticatedError } from "./lib/gh.js";
 import { initializeRuntime } from "./lib/runtime-init.js";
+import { setVerbose } from "./lib/verbose.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -157,6 +158,9 @@ Commands:`);
   console.log(`  ${"completion".padEnd(maxLen)}  Output shell completion script (bash/zsh)`);
 
   console.log(`
+Global flags:
+  --verbose  Log gh subprocess commands and timing to stderr
+
 Run 'copse <command>' to see arguments for that command.
 Run 'copse <command> --help' for detailed help.
 
@@ -349,8 +353,13 @@ function runCommand(command: string, args: string[]): void {
   }
 
   const commandPath = join(__dirname, "commands", cmd.file);
+  const env = { ...process.env };
+  if (process.env.COPSE_VERBOSE === "1") {
+    env.COPSE_VERBOSE = "1";
+  }
   const child = spawn("node", [commandPath, ...args], {
     stdio: "inherit",
+    env,
   });
 
   child.on("exit", (code, signal) => {
@@ -364,7 +373,14 @@ function runCommand(command: string, args: string[]): void {
 
 function main(): void {
   initializeRuntime();
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
+
+  // Global --verbose flag: enable debug logging for gh subprocess calls.
+  if (args.includes("--verbose")) {
+    setVerbose(true);
+    process.env.COPSE_VERBOSE = "1";
+    args = args.filter(a => a !== "--verbose");
+  }
 
   if (args.length === 0) {
     showHelp();
