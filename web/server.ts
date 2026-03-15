@@ -33,15 +33,24 @@ initializeRuntime();
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
+export const DEFAULT_MAX_BODY_BYTES = 1024 * 1024; // 1 MB
 const PUBLIC_DIR = resolve(fileURLToPath(new URL("./public", import.meta.url)));
 
 interface WebServerOptions {
   host?: string;
   port?: number;
+  maxBodyBytes?: number;
 }
 
 interface JsonMap {
   [key: string]: unknown;
+}
+
+export class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds maximum allowed size of ${maxBytes} bytes`);
+    this.name = "PayloadTooLargeError";
+  }
 }
 
 function sendJson(res: ServerResponse, statusCode: number, body: JsonMap): void {
@@ -54,10 +63,16 @@ function sendText(res: ServerResponse, statusCode: number, body: string): void {
   res.end(body);
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<JsonMap> {
+async function readJsonBody(req: IncomingMessage, maxBytes: number = DEFAULT_MAX_BODY_BYTES): Promise<JsonMap> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buf.length;
+    if (totalBytes > maxBytes) {
+      throw new PayloadTooLargeError(maxBytes);
+    }
+    chunks.push(buf);
   }
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw.trim()) {
@@ -206,7 +221,7 @@ async function serveStatic(url: URL, res: ServerResponse): Promise<void> {
   }
 }
 
-async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): Promise<void> {
+async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse, maxBodyBytes: number): Promise<void> {
   const method = req.method || "GET";
   const segments = parsePathSegments(url);
 
@@ -337,7 +352,7 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
   }
 
   if (method === "POST" && url.pathname === "/api/issues") {
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, maxBodyBytes);
     const repo = String(body.repo || "");
     const title = String(body.title || "");
     const issueBody = String(body.body || "");
@@ -365,7 +380,7 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
   }
 
   if (method === "POST" && url.pathname === "/api/chain-merge") {
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, maxBodyBytes);
     const repo = String(body.repo || "");
     validateRepo(repo);
     const prs = body.prs as Array<{ number: number; headRefName: string }> | undefined;
@@ -390,7 +405,7 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
   }
 
   if (method === "POST" && url.pathname === "/api/branches/create-pr") {
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, maxBodyBytes);
     const repo = String(body.repo || "");
     const headRefName = String(body.headRefName || "");
     validateRepo(repo);
@@ -412,7 +427,7 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
 
   const target = parsePrTarget(segments);
   if (method === "POST" && target) {
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, maxBodyBytes);
     if (target.action === "rerun") {
       const result = await rerunFailedWorkflowRuns(target.repo, String(body.headRefName || ""));
       sendJson(res, 200, { ok: true, total: result.total, message: `Reran ${result.total} workflow(s)` });
@@ -577,6 +592,7 @@ async function handleApi(req: IncomingMessage, url: URL, res: ServerResponse): P
 export function startWebServer(options: WebServerOptions = {}): ReturnType<typeof createServer> {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
   const server = createServer(async (req, res) => {
     if (!req.url) {
@@ -586,12 +602,16 @@ export function startWebServer(options: WebServerOptions = {}): ReturnType<typeo
     const url = new URL(req.url, `http://${host}:${port}`);
     try {
       if (url.pathname.startsWith("/api/")) {
-        await handleApi(req, url, res);
+        await handleApi(req, url, res, maxBodyBytes);
       } else {
         await serveStatic(url, res);
       }
     } catch (error: unknown) {
-      sendJson(res, 400, { error: (error as Error).message });
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(res, 413, { error: error.message });
+      } else {
+        sendJson(res, 400, { error: (error as Error).message });
+      }
     }
   });
 
